@@ -29,8 +29,8 @@ using System.Runtime.CompilerServices;
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
 //
-[assembly: AssemblyTitle("IKVM.NET Compiler")]
-[assembly: AssemblyDescription("")]
+[assembly: AssemblyTitle("IKVM.NET Runtime")]
+[assembly: AssemblyDescription("JVM for Mono and .NET")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("")]
 [assembly: AssemblyProduct("IKVM.NET")]
