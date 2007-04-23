@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2002-2010 Jeroen Frijters
+  Copyright (C) 2002, 2003, 2004, 2005, 2006, 2007 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -23,41 +23,18 @@
 */
 
 using System;
-using System.Collections.Generic;
 using System.Xml.Serialization;
-using IKVM.Reflection;
-using IKVM.Reflection.Emit;
-using Type = IKVM.Reflection.Type;
+using System.Collections;
+using System.Reflection;
+using System.Reflection.Emit;
 using System.Diagnostics;
 using IKVM.Attributes;
-using IKVM.Internal;
+
+using ILGenerator = IKVM.Internal.CountingILGenerator;
+using Label = IKVM.Internal.CountingLabel;
 
 namespace IKVM.Internal.MapXml
 {
-	sealed class CodeGenContext
-	{
-		private ClassLoaderWrapper classLoader;
-		private readonly Dictionary<string, object> h = new Dictionary<string, object>();
-
-		internal CodeGenContext(ClassLoaderWrapper classLoader)
-		{
-			this.classLoader = classLoader;
-		}
-
-		internal object this[string key]
-		{
-			get
-			{
-				object val;
-				h.TryGetValue(key, out val);
-				return val;
-			}
-			set { h[key] = value; }
-		}
-
-		internal ClassLoaderWrapper ClassLoader { get { return classLoader; } }
-	}
-
 	public abstract class Instruction
 	{
 		private int lineNumber = Root.LineNumber;
@@ -70,39 +47,7 @@ namespace IKVM.Internal.MapXml
 			}
 		}
 
-		internal abstract void Generate(CodeGenContext context, CodeEmitter ilgen);
-
-		public override string ToString()
-		{
-			System.Text.StringBuilder sb = new System.Text.StringBuilder();
-			sb.Append('<');
-			object[] attr = GetType().GetCustomAttributes(typeof(XmlTypeAttribute), false);
-			if (attr.Length == 1)
-			{
-				sb.Append(((XmlTypeAttribute)attr[0]).TypeName);
-			}
-			else
-			{
-				sb.Append(GetType().Name);
-			}
-			foreach (System.Reflection.FieldInfo field in GetType().GetFields())
-			{
-				if (!field.IsStatic)
-				{
-					object value = field.GetValue(this);
-					if (value != null)
-					{
-						attr = field.GetCustomAttributes(typeof(XmlAttributeAttribute), false);
-						if (attr.Length == 1)
-						{
-							sb.AppendFormat(" {0}=\"{1}\"", ((XmlAttributeAttribute)attr[0]).AttributeName, value);
-						}
-					}
-				}
-			}
-			sb.Append(" />");
-			return sb.ToString();
-		}
+		internal abstract void Generate(Hashtable context, ILGenerator ilgen);
 	}
 
 	[XmlType("ldstr")]
@@ -111,7 +56,7 @@ namespace IKVM.Internal.MapXml
 		[XmlAttribute("value")]
 		public string Value;
 
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		internal override void Generate(Hashtable context, ILGenerator ilgen)
 		{
 			ilgen.Emit(OpCodes.Ldstr, Value);
 		}
@@ -148,14 +93,14 @@ namespace IKVM.Internal.MapXml
 
 		private OpCode opcode;
 
-		internal sealed override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		internal sealed override void Generate(Hashtable context, ILGenerator ilgen)
 		{
 			Debug.Assert(Name != null);
 			if(Name == ".ctor")
 			{
 				Debug.Assert(Class == null && type != null);
-				Type[] argTypes = context.ClassLoader.ArgTypeListFromSig(Sig);
-				ConstructorInfo ci = StaticCompiler.GetTypeForMapXml(context.ClassLoader, type).GetConstructor(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance, null, CallingConventions.Standard, argTypes, null);
+				Type[] argTypes = ClassLoaderWrapper.GetBootstrapClassLoader().ArgTypeListFromSig(Sig);
+				ConstructorInfo ci = StaticCompiler.GetType(type).GetConstructor(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance, null, CallingConventions.Standard, argTypes, null);
 				if(ci == null)
 				{
 					throw new InvalidOperationException("Missing .ctor: " + type + "..ctor" + Sig);
@@ -168,7 +113,7 @@ namespace IKVM.Internal.MapXml
 				if(Class != null)
 				{
 					Debug.Assert(Sig != null);
-					MethodWrapper method = context.ClassLoader.LoadClassByDottedName(Class).GetMethodWrapper(Name, Sig, false);
+					MethodWrapper method = ClassLoaderWrapper.GetBootstrapClassLoader().LoadClassByDottedName(Class).GetMethodWrapper(Name, Sig, false);
 					if(method == null)
 					{
 						throw new InvalidOperationException("method not found: " + Class + "." + Name + Sig);
@@ -181,7 +126,7 @@ namespace IKVM.Internal.MapXml
 					{
 						if(argTypeWrappers[i].IsGhost)
 						{
-							CodeEmitterLocal[] temps = new CodeEmitterLocal[argTypeWrappers.Length + (method.IsStatic ? 0 : 1)];
+							LocalBuilder[] temps = new LocalBuilder[argTypeWrappers.Length + (method.IsStatic ? 0 : 1)];
 							for(int j = temps.Length - 1; j >= 0; j--)
 							{
 								TypeWrapper tw;
@@ -228,8 +173,7 @@ namespace IKVM.Internal.MapXml
 					}
 					else
 					{
-						// ldftn or ldvirtftn
-						ilgen.Emit(opcode, (MethodInfo)method.GetMethod());
+						throw new InvalidOperationException();
 					}
 				}
 				else
@@ -237,11 +181,7 @@ namespace IKVM.Internal.MapXml
 					Type[] argTypes;
 					if(Sig.StartsWith("("))
 					{
-						argTypes = context.ClassLoader.ArgTypeListFromSig(Sig);
-					}
-					else if(Sig == "")
-					{
-						argTypes = Type.EmptyTypes;
+						argTypes = ClassLoaderWrapper.GetBootstrapClassLoader().ArgTypeListFromSig(Sig);
 					}
 					else
 					{
@@ -249,10 +189,10 @@ namespace IKVM.Internal.MapXml
 						argTypes = new Type[types.Length];
 						for(int i = 0; i < types.Length; i++)
 						{
-							argTypes[i] = StaticCompiler.GetTypeForMapXml(context.ClassLoader, types[i]);
+							argTypes[i] = StaticCompiler.GetType(types[i]);
 						}
 					}
-					MethodInfo mi = StaticCompiler.GetTypeForMapXml(context.ClassLoader, type).GetMethod(Name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static, null, argTypes, null);
+					MethodInfo mi = StaticCompiler.GetType(type).GetMethod(Name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static, null, argTypes, null);
 					if(mi == null)
 					{
 						throw new InvalidOperationException("Missing method: " + type + "." + Name + Sig);
@@ -279,22 +219,6 @@ namespace IKVM.Internal.MapXml
 		}
 	}
 
-	[XmlType("ldftn")]
-	public sealed class Ldftn : Call
-	{
-		public Ldftn() : base(OpCodes.Ldftn)
-		{
-		}
-	}
-
-	[XmlType("ldvirtftn")]
-	public sealed class Ldvirtftn : Call
-	{
-		public Ldvirtftn() : base(OpCodes.Ldvirtftn)
-		{
-		}
-	}
-
 	public abstract class Simple : Instruction
 	{
 		private OpCode opcode;
@@ -304,7 +228,7 @@ namespace IKVM.Internal.MapXml
 			this.opcode = opcode;
 		}
 
-		internal sealed override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		internal sealed override void Generate(Hashtable context, ILGenerator ilgen)
 		{
 			ilgen.Emit(opcode);
 		}
@@ -319,11 +243,10 @@ namespace IKVM.Internal.MapXml
 	}
 
 	[XmlType("pop")]
-	public sealed class Pop : Instruction
+	public sealed class Pop : Simple
 	{
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		public Pop() : base(OpCodes.Pop)
 		{
-			ilgen.Emit(OpCodes.Pop);
 		}
 	}
 
@@ -337,18 +260,18 @@ namespace IKVM.Internal.MapXml
 		internal TypeWrapper typeWrapper;
 		internal Type typeType;
 
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		internal override void Generate(Hashtable context, ILGenerator ilgen)
 		{
 			if(typeWrapper == null && typeType == null)
 			{
 				Debug.Assert(Class == null ^ type == null);
 				if(Class != null)
 				{
-					typeWrapper = context.ClassLoader.LoadClassByDottedName(Class);
+					typeWrapper = ClassLoaderWrapper.GetBootstrapClassLoader().LoadClassByDottedName(Class);
 				}
 				else
 				{
-					typeType = StaticCompiler.GetTypeForMapXml(context.ClassLoader, type);
+					typeType = StaticCompiler.GetType(type);
 				}
 			}
 		}
@@ -360,8 +283,8 @@ namespace IKVM.Internal.MapXml
 		public IsInst()
 		{
 		}
-
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
+	
+		internal override void Generate(Hashtable context, ILGenerator ilgen)
 		{
 			base.Generate(context, ilgen);
 			if(typeType != null)
@@ -373,9 +296,11 @@ namespace IKVM.Internal.MapXml
 				if(typeWrapper.IsGhost || typeWrapper.IsGhostArray)
 				{
 					ilgen.Emit(OpCodes.Dup);
-					typeWrapper.EmitInstanceOf(ilgen);
-					CodeEmitterLabel endLabel = ilgen.DefineLabel();
-					ilgen.EmitBrtrue(endLabel);
+					// NOTE we pass a null context, but that shouldn't be a problem, because
+					// typeWrapper should never be an UnloadableTypeWrapper
+					typeWrapper.EmitInstanceOf(null, ilgen);
+					Label endLabel = ilgen.DefineLabel();
+					ilgen.Emit(OpCodes.Brtrue_S, endLabel);
 					ilgen.Emit(OpCodes.Pop);
 					ilgen.Emit(OpCodes.Ldnull);
 					ilgen.MarkLabel(endLabel);
@@ -395,7 +320,7 @@ namespace IKVM.Internal.MapXml
 		{
 		}
 
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		internal override void Generate(Hashtable context, ILGenerator ilgen)
 		{
 			base.Generate(context, ilgen);
 			if(typeType != null)
@@ -404,24 +329,10 @@ namespace IKVM.Internal.MapXml
 			}
 			else
 			{
-				typeWrapper.EmitCheckcast(ilgen);
+				// NOTE we pass a null context, but that shouldn't be a problem, because
+				// typeWrapper should never be an UnloadableTypeWrapper
+				typeWrapper.EmitCheckcast(null, ilgen);
 			}
-		}
-	}
-
-	[XmlType("castclass_impl")]
-	public sealed class Castclass_impl : Instruction
-	{
-		[XmlAttribute("class")]
-		public string Class;
-
-		public Castclass_impl()
-		{
-		}
-
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
-		{
-			ilgen.Emit(OpCodes.Castclass, context.ClassLoader.LoadClassByDottedName(Class).TypeAsBaseType);
 		}
 	}
 
@@ -438,12 +349,12 @@ namespace IKVM.Internal.MapXml
 			this.opcode = opcode;
 		}
 
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		internal override void Generate(Hashtable context, ILGenerator ilgen)
 		{
 			if(typeType == null)
 			{
 				Debug.Assert(type != null);
-				typeType = StaticCompiler.GetTypeForMapXml(context.ClassLoader, type);
+				typeType = StaticCompiler.GetType(type);
 			}
 			ilgen.Emit(opcode, typeType);
 		}
@@ -475,9 +386,16 @@ namespace IKVM.Internal.MapXml
 
 	public abstract class Branch : Instruction
 	{
-		internal sealed override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		private OpCode opcode;
+
+		public Branch(OpCode opcode)
 		{
-			CodeEmitterLabel l;
+			this.opcode = opcode;
+		}
+
+		internal sealed override void Generate(Hashtable context, ILGenerator ilgen)
+		{
+			Label l;
 			if(context[Name] == null)
 			{
 				l = ilgen.DefineLabel();
@@ -485,12 +403,10 @@ namespace IKVM.Internal.MapXml
 			}
 			else
 			{
-				l = (CodeEmitterLabel)context[Name];
+				l = (Label)context[Name];
 			}
-			Emit(ilgen, l);
+			ilgen.Emit(opcode, l);
 		}
-
-		internal abstract void Emit(CodeEmitter ilgen, CodeEmitterLabel label);
 
 		[XmlAttribute("name")]
 		public string Name;
@@ -499,81 +415,74 @@ namespace IKVM.Internal.MapXml
 	[XmlType("brfalse")]
 	public sealed class BrFalse : Branch
 	{
-		internal override void Emit(CodeEmitter ilgen, CodeEmitterLabel label)
+		public BrFalse() : base(OpCodes.Brfalse)
 		{
-			ilgen.EmitBrfalse(label);
 		}
 	}
 
 	[XmlType("brtrue")]
 	public sealed class BrTrue : Branch
 	{
-		internal override void Emit(CodeEmitter ilgen, CodeEmitterLabel label)
+		public BrTrue() : base(OpCodes.Brtrue)
 		{
-			ilgen.EmitBrtrue(label);
 		}
 	}
 
 	[XmlType("br")]
 	public sealed class Br : Branch
 	{
-		internal override void Emit(CodeEmitter ilgen, CodeEmitterLabel label)
+		public Br() : base(OpCodes.Br)
 		{
-			ilgen.EmitBr(label);
 		}
 	}
 
 	[XmlType("beq")]
 	public sealed class Beq : Branch
 	{
-		internal override void Emit(CodeEmitter ilgen, CodeEmitterLabel label)
+		public Beq()
+			: base(OpCodes.Beq)
 		{
-			ilgen.EmitBeq(label);
 		}
 	}
 
 	[XmlType("bne_un")]
 	public sealed class Bne_Un : Branch
 	{
-		internal override void Emit(CodeEmitter ilgen, CodeEmitterLabel label)
+		public Bne_Un()
+			: base(OpCodes.Bne_Un)
 		{
-			ilgen.EmitBne_Un(label);
 		}
 	}
 
 	[XmlType("bge_un")]
 	public sealed class Bge_Un : Branch
 	{
-		internal override void Emit(CodeEmitter ilgen, CodeEmitterLabel label)
+		public Bge_Un() : base(OpCodes.Bge_Un)
 		{
-			ilgen.EmitBge_Un(label);
 		}
 	}
 
 	[XmlType("ble_un")]
 	public sealed class Ble_Un : Branch
 	{
-		internal override void Emit(CodeEmitter ilgen, CodeEmitterLabel label)
+		public Ble_Un() : base(OpCodes.Ble_Un)
 		{
-			ilgen.EmitBle_Un(label);
 		}
 	}
 
 	[XmlType("blt")]
 	public sealed class Blt : Branch
 	{
-		internal override void Emit(CodeEmitter ilgen, CodeEmitterLabel label)
+		public Blt() : base(OpCodes.Blt)
 		{
-			ilgen.EmitBlt(label);
 		}
 	}
 
 	[XmlType("blt_un")]
 	public sealed class Blt_Un : Branch
 	{
-		internal override void Emit(CodeEmitter ilgen, CodeEmitterLabel label)
+		public Blt_Un() : base(OpCodes.Blt_Un)
 		{
-			ilgen.EmitBlt_Un(label);
 		}
 	}
 
@@ -583,9 +492,9 @@ namespace IKVM.Internal.MapXml
 		[XmlAttribute("name")]
 		public string Name;
 
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		internal override void Generate(Hashtable context, ILGenerator ilgen)
 		{
-			CodeEmitterLabel l;
+			Label l;
 			if(context[Name] == null)
 			{
 				l = ilgen.DefineLabel();
@@ -593,7 +502,7 @@ namespace IKVM.Internal.MapXml
 			}
 			else
 			{
-				l = (CodeEmitterLabel)context[Name];
+				l = (Label)context[Name];
 			}
 			ilgen.MarkLabel(l);
 		}
@@ -612,9 +521,9 @@ namespace IKVM.Internal.MapXml
 		private TypeWrapper typeWrapper;
 		private Type typeType;
 
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		internal override void Generate(Hashtable context, ILGenerator ilgen)
 		{
-			CodeEmitterLocal lb = (CodeEmitterLocal)context[Name];
+			LocalBuilder lb = (LocalBuilder)context[Name];
 			if(lb == null)
 			{
 				if(typeWrapper == null && typeType == null)
@@ -622,11 +531,11 @@ namespace IKVM.Internal.MapXml
 					Debug.Assert(Class == null ^ type == null);
 					if(type != null)
 					{
-						typeType = StaticCompiler.GetTypeForMapXml(context.ClassLoader, type);
+						typeType = StaticCompiler.GetType(type);
 					}
 					else
 					{
-						typeWrapper = context.ClassLoader.LoadClassByDottedName(Class);
+						typeWrapper = ClassLoaderWrapper.GetBootstrapClassLoader().LoadClassByDottedName(Class);
 					}
 				}
 				lb = ilgen.DeclareLocal(typeType != null ? typeType : typeWrapper.TypeAsTBD);
@@ -641,10 +550,10 @@ namespace IKVM.Internal.MapXml
 	{
 		[XmlAttribute("name")]
 		public string Name;
-
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		
+		internal override void Generate(Hashtable context, ILGenerator ilgen)
 		{
-			ilgen.Emit(OpCodes.Ldloc, (CodeEmitterLocal)context[Name]);
+			ilgen.Emit(OpCodes.Ldloc, (LocalBuilder)context[Name]);
 		}
 	}
 
@@ -654,21 +563,9 @@ namespace IKVM.Internal.MapXml
 		[XmlAttribute("argNum")]
 		public ushort ArgNum;
 
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		internal override void Generate(Hashtable context, ILGenerator ilgen)
 		{
-			ilgen.EmitLdarga(ArgNum);
-		}
-	}
-
-	[XmlType("ldarg_s")]
-	public sealed class LdArg_S : Instruction
-	{
-		[XmlAttribute("argNum")]
-		public byte ArgNum;
-
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
-		{
-			ilgen.EmitLdarg(ArgNum);
+			ilgen.Emit(OpCodes.Ldarga, (short)ArgNum);
 		}
 	}
 
@@ -784,15 +681,6 @@ namespace IKVM.Internal.MapXml
 		}
 	}
 
-	[XmlType("stind_i8")]
-	public sealed class Stind_i8 : Simple
-	{
-		public Stind_i8()
-			: base(OpCodes.Stind_I8)
-		{
-		}
-	}
-
 	[XmlType("stind_ref")]
 	public sealed class Stind_ref : Simple
 	{
@@ -827,9 +715,9 @@ namespace IKVM.Internal.MapXml
 		[XmlAttribute("sig")]
 		public string Sig;
 
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		internal override void Generate(Hashtable context, ILGenerator ilgen)
 		{
-			FieldWrapper fw = StaticCompiler.GetClassForMapXml(context.ClassLoader, Class).GetFieldWrapper(Name, Sig);
+			FieldWrapper fw = ClassLoaderWrapper.LoadClassCritical(Class).GetFieldWrapper(Name, Sig);
 			fw.Link();
 			ilgen.Emit(OpCodes.Ldflda, fw.GetField());
 		}
@@ -845,12 +733,11 @@ namespace IKVM.Internal.MapXml
 		[XmlAttribute("sig")]
 		public string Sig;
 
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		internal override void Generate(Hashtable context, ILGenerator ilgen)
 		{
-			FieldWrapper fw = StaticCompiler.GetClassForMapXml(context.ClassLoader, Class).GetFieldWrapper(Name, Sig);
+			FieldWrapper fw = ClassLoaderWrapper.LoadClassCritical(Class).GetFieldWrapper(Name, Sig);
 			fw.Link();
-			// we don't use fw.EmitGet because we don't want automatic unboxing and whatever
-			ilgen.Emit(OpCodes.Ldfld, fw.GetField());
+			fw.EmitGet(ilgen);
 		}
 	}
 
@@ -866,18 +753,17 @@ namespace IKVM.Internal.MapXml
 		[XmlAttribute("sig")]
 		public string Sig;
 
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		internal override void Generate(Hashtable context, ILGenerator ilgen)
 		{
 			if(Type != null)
 			{
-				ilgen.Emit(OpCodes.Ldsfld, StaticCompiler.GetTypeForMapXml(context.ClassLoader, Type).GetField(Name, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic));
+				ilgen.Emit(OpCodes.Ldsfld, StaticCompiler.GetType(Type).GetField(Name, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic));
 			}
 			else
 			{
-				FieldWrapper fw = StaticCompiler.GetClassForMapXml(context.ClassLoader, Class).GetFieldWrapper(Name, Sig);
+				FieldWrapper fw = ClassLoaderWrapper.LoadClassCritical(Class).GetFieldWrapper(Name, Sig);
 				fw.Link();
-				// we don't use fw.EmitGet because we don't want automatic unboxing and whatever
-				ilgen.Emit(OpCodes.Ldsfld, fw.GetField());
+				fw.EmitGet(ilgen);
 			}
 		}
 	}
@@ -892,9 +778,9 @@ namespace IKVM.Internal.MapXml
 		[XmlAttribute("sig")]
 		public string Sig;
 
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		internal override void Generate(Hashtable context, ILGenerator ilgen)
 		{
-			FieldWrapper fw = StaticCompiler.GetClassForMapXml(context.ClassLoader, Class).GetFieldWrapper(Name, Sig);
+			FieldWrapper fw = ClassLoaderWrapper.LoadClassCritical(Class).GetFieldWrapper(Name, Sig);
 			fw.Link();
 			// we don't use fw.EmitSet because we don't want automatic unboxing and whatever
 			ilgen.Emit(OpCodes.Stfld, fw.GetField());
@@ -911,9 +797,9 @@ namespace IKVM.Internal.MapXml
 		[XmlAttribute("sig")]
 		public string Sig;
 
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		internal override void Generate(Hashtable context, ILGenerator ilgen)
 		{
-			FieldWrapper fw = StaticCompiler.GetClassForMapXml(context.ClassLoader, Class).GetFieldWrapper(Name, Sig);
+			FieldWrapper fw = ClassLoaderWrapper.LoadClassCritical(Class).GetFieldWrapper(Name, Sig);
 			fw.Link();
 			// we don't use fw.EmitSet because we don't want automatic unboxing and whatever
 			ilgen.Emit(OpCodes.Stsfld, fw.GetField());
@@ -926,9 +812,9 @@ namespace IKVM.Internal.MapXml
 		[XmlAttribute("value")]
 		public int val;
 
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		internal override void Generate(Hashtable context, ILGenerator ilgen)
 		{
-			ilgen.EmitLdc_I4(val);
+			ilgen.Emit(OpCodes.Ldc_I4, val);
 		}
 	}
 
@@ -1061,51 +947,15 @@ namespace IKVM.Internal.MapXml
 		}
 	}
 
-	[XmlType("and")]
-	public sealed class And : Simple
-	{
-		public And()
-			: base(OpCodes.And)
-		{
-		}
-	}
-
-	[XmlType("or")]
-	public sealed class Or : Simple
-	{
-		public Or()
-			: base(OpCodes.Or)
-		{
-		}
-	}
-
-	[XmlType("xor")]
-	public sealed class Xor : Simple
-	{
-		public Xor()
-			: base(OpCodes.Xor)
-		{
-		}
-	}
-
-	[XmlType("not")]
-	public sealed class Not : Simple
-	{
-		public Not()
-			: base(OpCodes.Not)
-		{
-		}
-	}
-
 	[XmlType("unaligned")]
 	public sealed class Unaligned : Instruction
 	{
 		[XmlAttribute("alignment")]
 		public int Alignment;
 
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		internal override void Generate(Hashtable context, ILGenerator ilgen)
 		{
-			ilgen.EmitUnaligned((byte)Alignment);
+			ilgen.Emit(OpCodes.Unaligned, (byte)Alignment);
 		}
 	}
 
@@ -1125,23 +975,6 @@ namespace IKVM.Internal.MapXml
 		}
 	}
 
-	[XmlType("leave")]
-	public sealed class Leave : Branch
-	{
-		internal override void Emit(CodeEmitter ilgen, CodeEmitterLabel label)
-		{
-			ilgen.EmitLeave(label);
-		}
-	}
-
-	[XmlType("endfinally")]
-	public sealed class Endfinally : Simple
-	{
-		public Endfinally() : base(OpCodes.Endfinally)
-		{
-		}
-	}
-
 	[XmlType("exceptionBlock")]
 	public sealed class ExceptionBlock : Instruction
 	{
@@ -1149,7 +982,7 @@ namespace IKVM.Internal.MapXml
 		public CatchBlock @catch;
 		public InstructionList @finally;
 
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		internal override void Generate(Hashtable context, ILGenerator ilgen)
 		{
 			ilgen.BeginExceptionBlock();
 			@try.Generate(context, ilgen);
@@ -1158,11 +991,11 @@ namespace IKVM.Internal.MapXml
 				Type type;
 				if(@catch.type != null)
 				{
-					type = StaticCompiler.GetTypeForMapXml(context.ClassLoader, @catch.type);
+					type = StaticCompiler.GetType(@catch.type);
 				}
 				else
 				{
-					type = context.ClassLoader.LoadClassByDottedName(@catch.Class).TypeAsExceptionType;
+					type = ClassLoaderWrapper.GetBootstrapClassLoader().LoadClassByDottedName(@catch.Class).TypeAsExceptionType;
 				}
 				ilgen.BeginCatchBlock(type);
 				@catch.Generate(context, ilgen);
@@ -1176,7 +1009,7 @@ namespace IKVM.Internal.MapXml
 		}
 	}
 
-	public sealed class CatchBlock : InstructionList
+	public class CatchBlock : InstructionList
 	{
 		[XmlAttribute("type")]
 		public string type;
@@ -1185,13 +1018,13 @@ namespace IKVM.Internal.MapXml
 	}
 
 	[XmlType("conditional")]
-	public sealed class ConditionalInstruction : Instruction
+	public class ConditionalInstruction : Instruction
 	{
 		[XmlAttribute("framework")]
 		public string framework;
 		public InstructionList code;
 
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		internal override void Generate(Hashtable context, CountingILGenerator ilgen)
 		{
 			if (Environment.Version.ToString().StartsWith(framework))
 			{
@@ -1214,21 +1047,9 @@ namespace IKVM.Internal.MapXml
 		[XmlAttribute("sig")]
 		public string Sig;
 
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		internal override void Generate(Hashtable context, ILGenerator ilgen)
 		{
-			ilgen.Emit(OpCodes.Ldelema, context.ClassLoader.FieldTypeWrapperFromSig(Sig).TypeAsArrayType);
-		}
-	}
-
-	[XmlType("newarr")]
-	public sealed class Newarr : Instruction
-	{
-		[XmlAttribute("sig")]
-		public string Sig;
-
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
-		{
-			ilgen.Emit(OpCodes.Newarr, context.ClassLoader.FieldTypeWrapperFromSig(Sig).TypeAsArrayType);
+			ilgen.Emit(OpCodes.Ldelema, ClassLoaderWrapper.GetBootstrapClassLoader().FieldTypeWrapperFromSig(Sig).TypeAsArrayType);
 		}
 	}
 
@@ -1237,168 +1058,22 @@ namespace IKVM.Internal.MapXml
 	{
 		[XmlAttribute("type")]
 		public string type;
-		[XmlAttribute("class")]
-		public string Class;
-		[XmlAttribute("method")]
-		public string Method;
-		[XmlAttribute("field")]
-		public string Field;
-		[XmlAttribute("sig")]
-		public string Sig;
 
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
+		internal override void Generate(Hashtable context, ILGenerator ilgen)
 		{
-			if (!Validate())
-			{
-				return;
-			}
-
-			MemberInfo member = Resolve(context);
-			Type type = member as Type;
-			MethodInfo method = member as MethodInfo;
-			ConstructorInfo constructor = member as ConstructorInfo;
-			FieldInfo field = member as FieldInfo;
-
-			if (type != null)
-			{
-				ilgen.Emit(OpCodes.Ldtoken, type);
-			}
-			else if (method != null)
-			{
-				ilgen.Emit(OpCodes.Ldtoken, method);
-			}
-			else if (constructor != null)
-			{
-				ilgen.Emit(OpCodes.Ldtoken, constructor);
-			}
-			else if (field != null)
-			{
-				ilgen.Emit(OpCodes.Ldtoken, field);
-			}
-			else
-			{
-				StaticCompiler.IssueMessage(Message.MapXmlUnableToResolveOpCode, ToString());
-			}
-		}
-
-		private bool Validate()
-		{
-			if (type != null && Class == null)
-			{
-				if (Method != null || Field != null || Sig != null)
-				{
-					StaticCompiler.IssueMessage(Message.MapXmlError, "not implemented: cannot use 'type' attribute with 'method' or 'field' attribute for ldtoken");
-					return false;
-				}
-				return true;
-			}
-			else if (Class != null && type == null)
-			{
-				if (Method == null && Field == null)
-				{
-					if (Sig != null)
-					{
-						StaticCompiler.IssueMessage(Message.MapXmlError, "cannot specify 'sig' attribute without either 'method' or 'field' attribute for ldtoken");
-					}
-					return true;
-				}
-				if (Method != null && Field != null)
-				{
-					StaticCompiler.IssueMessage(Message.MapXmlError, "cannot specify both 'method' and 'field' attribute for ldtoken");
-					return false;
-				}
-				return true;
-			}
-			else
-			{
-				StaticCompiler.IssueMessage(Message.MapXmlError, "must specify either 'type' or 'class' attribute for ldtoken");
-				return false;
-			}
-		}
-
-		private MemberInfo Resolve(CodeGenContext context)
-		{
-			if (type != null)
-			{
-				if (Class != null || Method != null || Field != null || Sig != null)
-				{
-					throw new NotImplementedException();
-				}
-				return StaticCompiler.GetTypeForMapXml(context.ClassLoader, type);
-			}
-			else if (Class != null)
-			{
-				TypeWrapper tw = context.ClassLoader.LoadClassByDottedNameFast(Class);
-				if (tw == null)
-				{
-					return null;
-				}
-				else if (Method != null)
-				{
-					MethodWrapper mw = tw.GetMethodWrapper(Method, Sig, false);
-					if (mw == null)
-					{
-						return null;
-					}
-					return mw.GetMethod();
-				}
-				else if (Field != null)
-				{
-					FieldWrapper fw = tw.GetFieldWrapper(Field, Sig);
-					if (fw == null)
-					{
-						return null;
-					}
-					return fw.GetField();
-				}
-				else
-				{
-					return tw.TypeAsBaseType;
-				}
-			}
-			else
-			{
-				return null;
-			}
+			ilgen.Emit(OpCodes.Ldtoken, StaticCompiler.GetType(type));
 		}
 	}
 
-	[XmlType("runclassinit")]
-	public sealed class RunClassInit : Instruction
-	{
-		[XmlAttribute("class")]
-		public string Class;
-
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
-		{
-			context.ClassLoader.LoadClassByDottedName(Class).EmitRunClassConstructor(ilgen);
-		}
-	}
-
-	[XmlType("exceptionMapping")]
-	public sealed class EmitExceptionMapping : Instruction
-	{
-		internal ExceptionMapping[] mapping;
-
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
-		{
-			CompilerClassLoader.ExceptionMapEmitter emitter = new CompilerClassLoader.ExceptionMapEmitter(mapping);
-			emitter.Emit(context, ilgen);
-		}
-	}
-
-	public class InstructionList
+	public class InstructionList : CodeEmitter
 	{
 		[XmlElement(typeof(Ldstr))]
 		[XmlElement(typeof(Call))]
 		[XmlElement(typeof(Callvirt))]
-		[XmlElement(typeof(Ldftn))]
-		[XmlElement(typeof(Ldvirtftn))]
 		[XmlElement(typeof(Dup))]
 		[XmlElement(typeof(Pop))]
 		[XmlElement(typeof(IsInst))]
 		[XmlElement(typeof(Castclass))]
-		[XmlElement(typeof(Castclass_impl))]
 		[XmlElement(typeof(Ldobj))]
 		[XmlElement(typeof(Unbox))]
 		[XmlElement(typeof(Box))]
@@ -1416,7 +1091,6 @@ namespace IKVM.Internal.MapXml
 		[XmlElement(typeof(StLoc))]
 		[XmlElement(typeof(LdLoc))]
 		[XmlElement(typeof(LdArga))]
-		[XmlElement(typeof(LdArg_S))]
 		[XmlElement(typeof(LdArg_0))]
 		[XmlElement(typeof(LdArg_1))]
 		[XmlElement(typeof(LdArg_2))]
@@ -1431,7 +1105,6 @@ namespace IKVM.Internal.MapXml
 		[XmlElement(typeof(Stind_i1))]
 		[XmlElement(typeof(Stind_i2))]
 		[XmlElement(typeof(Stind_i4))]
-		[XmlElement(typeof(Stind_i8))]
 		[XmlElement(typeof(Stind_ref))]
 		[XmlElement(typeof(Ret))]
 		[XmlElement(typeof(Throw))]
@@ -1459,25 +1132,16 @@ namespace IKVM.Internal.MapXml
 		[XmlElement(typeof(Add))]
 		[XmlElement(typeof(Sub))]
 		[XmlElement(typeof(Mul))]
-		[XmlElement(typeof(And))]
-		[XmlElement(typeof(Or))]
-		[XmlElement(typeof(Xor))]
-		[XmlElement(typeof(Not))]
 		[XmlElement(typeof(Unaligned))]
 		[XmlElement(typeof(Cpblk))]
 		[XmlElement(typeof(Ceq))]
 		[XmlElement(typeof(ConditionalInstruction))]
 		[XmlElement(typeof(Volatile))]
 		[XmlElement(typeof(Ldelema))]
-		[XmlElement(typeof(Newarr))]
 		[XmlElement(typeof(Ldtoken))]
-		[XmlElement(typeof(Leave))]
-		[XmlElement(typeof(Endfinally))]
-		[XmlElement(typeof(RunClassInit))]
-		[XmlElement(typeof(EmitExceptionMapping))]
 		public Instruction[] invoke;
 
-		internal void Generate(CodeGenContext context, CodeEmitter ilgen)
+		internal void Generate(Hashtable context, ILGenerator ilgen)
 		{
 			if(invoke != null)
 			{
@@ -1492,19 +1156,36 @@ namespace IKVM.Internal.MapXml
 			}
 		}
 
-		internal void Emit(ClassLoaderWrapper loader, CodeEmitter ilgen)
+		internal sealed override void Emit(ILGenerator ilgen)
 		{
-			Generate(new CodeGenContext(loader), ilgen);
+			Generate(new Hashtable(), ilgen);
 		}
 	}
 
-	public sealed class Throws
+	public class Throws
 	{
 		[XmlAttribute("class")]
 		public string Class;
 	}
 
-	public sealed class Redirect
+	public class Constructor
+	{
+		[XmlAttribute("sig")]
+		public string Sig;
+		[XmlAttribute("modifiers")]
+		public MapModifiers Modifiers;
+		[XmlElement("parameter")]
+		public Param[] Params;
+		public InstructionList body;
+		public InstructionList alternateBody;
+		public Redirect redirect;
+		[XmlElement("throws", typeof(Throws))]
+		public Throws[] throws;
+		[XmlElement("attribute")]
+		public Attribute[] Attributes;
+	}
+
+	public class Redirect
 	{
 		private int linenum = Root.LineNumber;
 
@@ -1525,21 +1206,21 @@ namespace IKVM.Internal.MapXml
 		[XmlAttribute("type")]
 		public string Type;
 
-		internal void Emit(ClassLoaderWrapper loader, CodeEmitter ilgen)
+		internal void Emit(ILGenerator ilgen)
 		{
 			if(Type != "static" || Class == null || Name == null || Sig == null)
 			{
 				throw new NotImplementedException();
 			}
-			Type[] redirParamTypes = loader.ArgTypeListFromSig(Sig);
+			Type[] redirParamTypes = ClassLoaderWrapper.GetBootstrapClassLoader().ArgTypeListFromSig(Sig);
 			for(int i = 0; i < redirParamTypes.Length; i++)
 			{
-				ilgen.EmitLdarg(i);
+				ilgen.Emit(OpCodes.Ldarg, (short)i);
 			}
 			// HACK if the class name contains a comma, we assume it is a .NET type
 			if(Class.IndexOf(',') >= 0)
 			{
-				Type type = StaticCompiler.Universe.GetType(Class, true);
+				Type type = System.Type.GetType(Class, true);
 				MethodInfo mi = type.GetMethod(Name, redirParamTypes);
 				if(mi == null)
 				{
@@ -1549,7 +1230,7 @@ namespace IKVM.Internal.MapXml
 			}
 			else
 			{
-				TypeWrapper tw = loader.LoadClassByDottedName(Class);
+				TypeWrapper tw = ClassLoaderWrapper.LoadClassCritical(Class);
 				MethodWrapper mw = tw.GetMethodWrapper(Name, Sig, false);
 				if(mw == null)
 				{
@@ -1563,101 +1244,52 @@ namespace IKVM.Internal.MapXml
 		}
 	}
 
-	public sealed class Override
+	public class Override
 	{
-		[XmlAttribute("class")]
-		public string Class;
 		[XmlAttribute("name")]
 		public string Name;
 	}
 
-	public sealed class ReplaceMethodCall
+	public class Method
 	{
-		[XmlAttribute("class")]
-		public string Class;
 		[XmlAttribute("name")]
 		public string Name;
-		[XmlAttribute("sig")]
-		public string Sig;
-		public InstructionList code;
-	}
-
-	public abstract class MethodBase
-	{
-		[XmlAttribute("attributes")]
-		public MethodAttributes MethodAttributes;
-		public InstructionList body;
-		[XmlElement("throws", typeof(Throws))]
-		public Throws[] throws;
-		[XmlElement("attribute")]
-		public Attribute[] Attributes;
-		[XmlElement("replace-method-call")]
-		public ReplaceMethodCall[] ReplaceMethodCalls;
-		public InstructionList prologue;
-
-		internal abstract MethodKey ToMethodKey(string className);
-	}
-
-	public abstract class MethodConstructorBase : MethodBase
-	{
 		[XmlAttribute("sig")]
 		public string Sig;
 		[XmlAttribute("modifiers")]
 		public MapModifiers Modifiers;
+		[XmlAttribute("attributes")]
+		public MethodAttributes MethodAttributes;
+		[XmlAttribute("type")]
+		public string Type;
+		[XmlAttribute("nonullcheck")]
+		public bool NoNullCheck;
 		[XmlElement("parameter")]
 		public Param[] Params;
+		public InstructionList body;
 		public InstructionList alternateBody;
+		public InstructionList nonvirtualAlternateBody;
 		public Redirect redirect;
+		public Override @override;
+		[XmlElement("throws", typeof(Throws))]
+		public Throws[] throws;
+		[XmlElement("attribute")]
+		public Attribute[] Attributes;
 
-		internal void Emit(ClassLoaderWrapper loader, CodeEmitter ilgen)
+		internal void Emit(ILGenerator ilgen)
 		{
-			if(prologue != null)
-			{
-				prologue.Emit(loader, ilgen);
-			}
 			if(redirect != null)
 			{
-				redirect.Emit(loader, ilgen);
+				redirect.Emit(ilgen);
 			}
 			else
 			{
-				body.Emit(loader, ilgen);
+				body.Emit(ilgen);
 			}
 		}
 	}
 
-	public sealed class Method : MethodConstructorBase
-	{
-		[XmlAttribute("name")]
-		public string Name;
-		[XmlAttribute("nonullcheck")]
-		public bool NoNullCheck;
-		public InstructionList nonvirtualAlternateBody;
-		public Override @override;
-
-		internal override MethodKey ToMethodKey(string className)
-		{
-			return new MethodKey(className, Name, Sig);
-		}
-	}
-
-	public sealed class Constructor : MethodConstructorBase
-	{
-		internal override MethodKey ToMethodKey(string className)
-		{
-			return new MethodKey(className, StringConstants.INIT, Sig);
-		}
-	}
-
-	public sealed class ClassInitializer : MethodBase
-	{
-		internal override MethodKey ToMethodKey(string className)
-		{
-			return new MethodKey(className, StringConstants.CLINIT, StringConstants.SIG_VOID);
-		}
-	}
-
-	public sealed class Field
+	public class Field
 	{
 		[XmlAttribute("name")]
 		public string Name;
@@ -1667,11 +1299,12 @@ namespace IKVM.Internal.MapXml
 		public MapModifiers Modifiers;
 		[XmlAttribute("constant")]
 		public string Constant;
+		public Redirect redirect;
 		[XmlElement("attribute")]
 		public Attribute[] Attributes;
 	}
 
-	public sealed class Property
+	public class Property
 	{
 		[XmlAttribute("name")]
 		public string Name;
@@ -1683,7 +1316,7 @@ namespace IKVM.Internal.MapXml
 		public Attribute[] Attributes;
 	}
 
-	public sealed class Interface
+	public class Interface
 	{
 		[XmlAttribute("class")]
 		public string Name;
@@ -1707,11 +1340,7 @@ namespace IKVM.Internal.MapXml
 		[XmlEnum("static")]
 		Static = Modifiers.Static,
 		[XmlEnum("abstract")]
-		Abstract = Modifiers.Abstract,
-		[XmlEnum("ACC_BRIDGE")]
-		Bridge = Modifiers.Bridge,
-		[XmlEnum("ACC_SYNTHETIC")]
-		Synthetic = Modifiers.Synthetic,
+		Abstract = Modifiers.Abstract
 	}
 
 	public enum Scope
@@ -1722,13 +1351,13 @@ namespace IKVM.Internal.MapXml
 		Private = 1
 	}
 
-	public sealed class Element
+	public class Element
 	{
 		[XmlText]
 		public string Value;
 	}
 
-	public sealed class Param
+	public class Param
 	{
 		[XmlText]
 		public string Value;
@@ -1742,7 +1371,7 @@ namespace IKVM.Internal.MapXml
 		public Attribute[] Attributes;
 	}
 
-	public sealed class Attribute
+	public class Attribute
 	{
 		[XmlAttribute("type")]
 		public string Type;
@@ -1759,7 +1388,7 @@ namespace IKVM.Internal.MapXml
 	}
 
 	[XmlType("class")]
-	public sealed class Class
+	public class Class
 	{
 		[XmlAttribute("name")]
 		public string Name;
@@ -1780,12 +1409,12 @@ namespace IKVM.Internal.MapXml
 		[XmlElement("implements")]
 		public Interface[] Interfaces;
 		[XmlElement("clinit")]
-		public ClassInitializer Clinit;
+		public Method Clinit;
 		[XmlElement("attribute")]
 		public Attribute[] Attributes;
 	}
 
-	public sealed class Assembly
+	public class Assembly
 	{
 		[XmlElement("class")]
 		public Class[] Classes;
@@ -1794,7 +1423,7 @@ namespace IKVM.Internal.MapXml
 	}
 
 	[XmlType("exception")]
-	public sealed class ExceptionMapping
+	public class ExceptionMapping
 	{
 		[XmlAttribute]
 		public string src;
@@ -1804,9 +1433,10 @@ namespace IKVM.Internal.MapXml
 	}
 
 	[XmlRoot("root")]
-	public sealed class Root
+	public class Root
 	{
 		internal static System.Xml.XmlTextReader xmlReader;
+		internal static string filename;
 
 		internal static int LineNumber
 		{
