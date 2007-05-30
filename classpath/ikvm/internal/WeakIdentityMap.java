@@ -38,8 +38,7 @@ public final class WeakIdentityMap
         {
             keys[i] = new WeakReference(null, true);
             // NOTE we suppress finalization, to make sure the WeakReference continues to work
-            // while the AppDomain is finalizing for unload (note that for this to work,
-            // the code that instantiates us also has to call SuppressFinalize on us.)
+            // while the AppDomain is finalizing for unload
             GC.SuppressFinalize(keys[i]);
         }
     }
