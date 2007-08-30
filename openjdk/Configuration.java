@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2004, 2005 Jeroen Frijters
+  Copyright (C) 2007 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -21,39 +21,12 @@
   jeroen@frijters.net
   
 */
-.assembly JVM
-{
-  .ver 0:36:0:0
-}
-.module JVM.DLL
+package gnu.classpath;
 
-.method public static int32 JNI_CreateJavaVM(void* ppvm, void* ppenv, void* args)
+/*
+ * This is a temporary class while we're using the GNU Classpath AWT/Swing implementation.
+ */
+public interface Configuration
 {
-  .vtentry 1:1
-  .export [1] as JNI_CreateJavaVM
-  ldarg.0
-  ldarg.1
-  ldarg.2
-  call int32 [IKVM.Runtime]IKVM.Runtime.JNI::CreateJavaVM(void*, void*, void*)
-  ret
-}
-
-.method public static int32 JNI_GetDefaultJavaVMInitArgs(void *vm_args)
-{
-  .vtentry 1:2
-  .export [2] as JNI_GetDefaultJavaVMInitArgs
-  ldarg.0
-  call int32 [IKVM.Runtime]IKVM.Runtime.JNI::GetDefaultJavaVMInitArgs(void*)
-  ret
-}
-
-.method public static int32 JNI_GetCreatedJavaVMs(void* ppvmBuf, int32 bufLen, int32* nVMs)
-{
-  .vtentry 1:3
-  .export [3] as JNI_GetCreatedJavaVMs
-  ldarg.0
-  ldarg.1
-  ldarg.2
-  call int32 [IKVM.Runtime]IKVM.Runtime.JNI::GetCreatedJavaVMs(void*, int32, int32*)
-  ret
+    String default_awt_peer_toolkit = "ikvm.awt.NetToolkit, IKVM.AWT.WinForms, Version=0.36.0.0, Culture=neutral, PublicKeyToken=13235d27fcbfff58";
 }
