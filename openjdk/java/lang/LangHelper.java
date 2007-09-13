@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2007-2011 Jeroen Frijters
+  Copyright (C) 2007 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -24,19 +24,16 @@
 
 package java.lang;
 
-import ikvm.runtime.AssemblyClassLoader;
+import gnu.classpath.VMSystemProperties;
 import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.security.AccessController;
 import java.util.Enumeration;
 import java.util.Map;
-import sun.nio.ch.Interruptible;
-import sun.reflect.annotation.AnnotationType;
 import sun.security.action.GetPropertyAction;
 
-@ikvm.lang.Internal
-public class LangHelper
+class LangHelper
 {
     private static boolean addedSystemPackages;
 
@@ -46,24 +43,23 @@ public class LangHelper
         if (!addedSystemPackages)
         {
             addedSystemPackages = true;
-            String[] pkgs = getBootClassPackages();
+            String[] pkgs = ikvm.internal.AssemblyClassLoader.GetPackages(null);
+	    String openJdkVersion = AccessController.doPrivileged(new GetPropertyAction("openjdk.version", "unknown"));
             for (int i = 0; i < pkgs.length; i++)
             {
                 pkgMap.put(pkgs[i],
                     new Package(pkgs[i],
-                    VMSystemProperties.SPEC_TITLE,                 // specTitle
-                    VMSystemProperties.SPEC_VERSION,               // specVersion
-                    VMSystemProperties.SPEC_VENDOR,                // specVendor
+		    VMSystemProperties.SPEC_TITLE,                 // specTitle
+		    VMSystemProperties.SPEC_VERSION,               // specVersion
+		    VMSystemProperties.SPEC_VENDOR,                // specVendor
                     "IKVM.NET OpenJDK",                            // implTitle
-                    PropertyConstants.openjdk_version,             // implVersion
-                    "Oracle Corporation & others",                 // implVendor
+                    openJdkVersion,                                // implVersion
+                    "Sun Microsystems, Inc. & others",             // implVendor
                     null,                                          // sealBase
                     null));                                        // class loader
             }
         }
     }
-    
-    private static native String[] getBootClassPackages();
 
     /* this method gets called by Package.getSystemPackage() via a redefined method in map.xml */
     static Package getSystemPackage(Map pkgs, String name)
@@ -81,42 +77,28 @@ public class LangHelper
         synchronized (pkgs)
         {
             addSystemPackage(pkgs);
-            return (Package[])pkgs.values().toArray(new Package[pkgs.size()]);
+	    return (Package[])pkgs.values().toArray(new Package[pkgs.size()]);
 
         }
     }
 
-    public static sun.misc.JavaLangAccess getJavaLangAccess()
+    static URL getBootstrapResource(String name)
     {
-        return new sun.misc.JavaLangAccess() {
-            public sun.reflect.ConstantPool getConstantPool(Class klass) {
-                return null;
-            }
-            public void setAnnotationType(Class klass, AnnotationType type) {
-                klass.setAnnotationType(type);
-            }
-            public AnnotationType getAnnotationType(Class klass) {
-                return klass.getAnnotationType();
-            }
-            public <E extends Enum<E>>
-                    E[] getEnumConstantsShared(Class<E> klass) {
-                return klass.getEnumConstantsShared();
-            }
-            public void blockedOn(Thread t, Interruptible b) {
-                t.blockedOn(b);
-            }
-            public void registerShutdownHook(int slot, boolean registerShutdownInProgress, Runnable hook) {
-                Shutdown.add(slot, registerShutdownInProgress, hook);
-            }
-            public int getStackTraceDepth(Throwable t) {
-                return t.getStackTraceDepth();
-            }
-            public StackTraceElement getStackTraceElement(Throwable t, int i) {
-                return t.getStackTraceElement(i);
-            }
-            public int getStringHash32(String string) {
-                return StringHelper.hash32(string);
-            }
-        };
+	return ikvm.internal.AssemblyClassLoader.getResource(null, name);
+    }
+
+    static Enumeration getBootstrapResources(String name) throws IOException
+    {
+	return ikvm.internal.AssemblyClassLoader.getResources(null, name);
+    }
+
+    // this method is called from the System.<clinit> method in map.xml
+    static void init()
+    {
+	cli.System.AppDomain.get_CurrentDomain().add_ProcessExit(new cli.System.EventHandler(new cli.System.EventHandler.Method() {
+	    public void Invoke(Object sender, cli.System.EventArgs e) {
+		Shutdown.shutdown();
+	    }
+	}));
     }
 }

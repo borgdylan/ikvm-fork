@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2002-2013 Jeroen Frijters
+  Copyright (C) 2002, 2003, 2004, 2005, 2006 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -22,14 +22,23 @@
   
 */
 using System;
-using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Reflection.Emit;
+using System.Collections;
+using System.Collections.Specialized;
+using System.Text;
 using IKVM.Internal;
+
 using ikvm.runtime;
 using java.lang.reflect;
+using java.net;
+using java.util.jar;
+using java.io;
 
-public static class Starter
+using Console = System.Console;
+
+public class Starter
 {
 	private class Timer
 	{
@@ -60,9 +69,11 @@ public static class Starter
 		public override void run()
 		{
 			System.Threading.Thread.CurrentThread.Priority = System.Threading.ThreadPriority.AboveNormal;
+			Console.Error.WriteLine("Saving dynamic assembly...");
 			try
 			{
 				IKVM.Internal.Starter.SaveDebugImage();
+				Console.Error.WriteLine("Saving done.");
 			}
 			catch(Exception x)
 			{
@@ -94,9 +105,8 @@ public static class Starter
 	[IKVM.Attributes.HideFromJava]
 	static int Main(string[] args)
 	{
-		Tracer.EnableTraceConsoleListener();
 		Tracer.EnableTraceForDebug();
-		System.Collections.Hashtable props = new System.Collections.Hashtable();
+		Hashtable props = new Hashtable();
 		string classpath = Environment.GetEnvironmentVariable("CLASSPATH");
 		if(classpath == null || classpath == "")
 		{
@@ -110,59 +120,41 @@ public static class Starter
 		bool showVersion = false;
 		string mainClass = null;
 		int vmargsIndex = -1;
-        bool debug = false;
-        String debugArg = null;
-		bool noglobbing = false;
 		for(int i = 0; i < args.Length; i++)
 		{
-            String arg = args[i];
-			if(arg[0] == '-')
+			if(args[i][0] == '-')
 			{
-				if(arg == "-help" || arg == "-?")
+				if(args[i] == "-help" || args[i] == "-?")
 				{
-					PrintHelp();
-					return 1;
+					break;
 				}
-				else if(arg == "-X")
-				{
-					PrintXHelp();
-					return 1;
-				}
-				else if(arg == "-Xsave")
+				else if(args[i] == "-Xsave")
 				{
 					saveAssembly = true;
 					IKVM.Internal.Starter.PrepareForSaveDebugImage();
 				}
-				else if(arg == "-XXsave")
+				else if(args[i] == "-XXsave")
 				{
 					saveAssemblyX = true;
 					IKVM.Internal.Starter.PrepareForSaveDebugImage();
 				}
-				else if(arg == "-Xtime")
+				else if(args[i] == "-Xtime")
 				{
 					new Timer();
 				}
-				else if(arg == "-Xwait")
+				else if(args[i] == "-Xwait")
 				{
 					waitOnExit = true;
 				}
-				else if(arg == "-Xbreak")
+				else if(args[i] == "-Xbreak")
 				{
 					System.Diagnostics.Debugger.Break();
 				}
-				else if(arg == "-Xnoclassgc")
-				{
-					IKVM.Internal.Starter.ClassUnloading = false;
-				}
-				else if(arg == "-Xverify")
-				{
-					IKVM.Internal.Starter.RelaxedVerification = false;
-				}
-				else if(arg == "-jar")
+				else if(args[i] == "-jar")
 				{
 					jar = true;
 				}
-				else if(arg == "-version")
+				else if(args[i] == "-version")
 				{
 					Console.WriteLine(Startup.getVersionAndCopyrightInfo());
 					Console.WriteLine();
@@ -176,124 +168,95 @@ public static class Starter
 					{
 						Console.WriteLine("{0}: {1}", asm.GetName().Name, asm.GetName().Version);
 					}
-					string ver = java.lang.System.getProperty("openjdk.version");
+					string ver = java.lang.System.getProperty("gnu.classpath.version");
+					if(ver != null)
+					{
+						Console.WriteLine("GNU Classpath version: {0}", ver);
+					}
+					ver = java.lang.System.getProperty("openjdk.version");
 					if(ver != null)
 					{
 						Console.WriteLine("OpenJDK version: {0}", ver);
 					}
 					return 0;
 				}
-				else if(arg == "-showversion")
+				else if(args[i] == "-showversion")
 				{
 					showVersion = true;
 				}
-				else if(arg.StartsWith("-D"))
+				else if(args[i].StartsWith("-D"))
 				{
-				    arg = arg.Substring(2);
-                    string[] keyvalue = arg.Split('=');
-				    string value;
-					if(keyvalue.Length == 2) // -Dabc=x
+					string[] keyvalue = args[i].Substring(2).Split('=');
+					if(keyvalue.Length != 2)
 					{
-                        value = keyvalue[1];
-					} 
-                    else if (keyvalue.Length == 1) // -Dabc
-                    {
-                        value = "";
-                    } 
-                    else // -Dabc=x=y
-					{
-                        value = arg.Substring(keyvalue[0].Length + 1);
+						keyvalue = new string[] { keyvalue[0], "" };
 					}
-                    props[keyvalue[0]] = value;
+					props[keyvalue[0]] = keyvalue[1];
 				}
-				else if(arg == "-ea" || arg == "-enableassertions")
+				else if(args[i] == "-ea" || args[i] == "-enableassertions")
 				{
 					IKVM.Runtime.Assertions.EnableAssertions();
 				}
-				else if(arg == "-da" || arg == "-disableassertions")
+				else if(args[i] == "-da" || args[i] == "-disableassertions")
 				{
 					IKVM.Runtime.Assertions.DisableAssertions();
 				}
-				else if(arg == "-esa" || arg == "-enablesystemassertions")
+				else if(args[i] == "-esa" || args[i] == "-enablesystemassertions")
 				{
 					IKVM.Runtime.Assertions.EnableSystemAssertions();
 				}
-				else if(arg == "-dsa" || arg == "-disablesystemassertions")
+				else if(args[i] == "-dsa" || args[i] == "-disablesystemassertions")
 				{
 					IKVM.Runtime.Assertions.DisableSystemAssertions();
 				}
-				else if(arg.StartsWith("-ea:") || arg.StartsWith("-enableassertions:"))
+				else if(args[i].StartsWith("-ea:") || args[i].StartsWith("-enableassertions:"))
 				{
-					IKVM.Runtime.Assertions.EnableAssertions(arg.Substring(arg.IndexOf(':') + 1));
+					IKVM.Runtime.Assertions.EnableAssertions(args[i].Substring(args[i].IndexOf(':') + 1));
 				}
-				else if(arg.StartsWith("-da:") || arg.StartsWith("-disableassertions:"))
+				else if(args[i].StartsWith("-da:") || args[i].StartsWith("-disableassertions:"))
 				{
-					IKVM.Runtime.Assertions.DisableAssertions(arg.Substring(arg.IndexOf(':') + 1));
+					IKVM.Runtime.Assertions.DisableAssertions(args[i].Substring(args[i].IndexOf(':') + 1));
 				}
-				else if(arg == "-cp" || arg == "-classpath")
+				else if(args[i] == "-cp" || args[i] == "-classpath")
 				{
 					props["java.class.path"] = args[++i];
 				}
-				else if(arg.StartsWith("-Xtrace:"))
+				else if(args[i].StartsWith("-Xtrace:"))
 				{
-					Tracer.SetTraceLevel(arg.Substring(8));
+					Tracer.SetTraceLevel(args[i].Substring(8));
 				}
-				else if(arg.StartsWith("-Xmethodtrace:"))
+				else if(args[i].StartsWith("-Xmethodtrace:"))
 				{
-					Tracer.HandleMethodTrace(arg.Substring(14));
+					Tracer.HandleMethodTrace(args[i].Substring(14));
 				}
-                else if(arg == "-Xdebug")
-                {
-                    debug = true;
-                }
-                else if (arg == "-Xnoagent")
-                {
-                    //ignore it, disable support for oldjdb
-                }
-                else if (arg.StartsWith("-Xrunjdwp") || arg.StartsWith("-agentlib:jdwp"))
-                {
-                    debugArg = arg;
-                    debug = true;
-                }
-                else if (arg.StartsWith("-Xreference:"))
-                {
-                    Startup.addBootClassPathAssembly(Assembly.LoadFrom(arg.Substring(12)));
-                }
-                else if (arg == "-Xnoglobbing")
-                {
-                    noglobbing = true;
-                }
-                else if (arg == "-XX:+AllowNonVirtualCalls")
-                {
-                    IKVM.Internal.Starter.AllowNonVirtualCalls = true;
-                }
-                else if (arg.StartsWith("-Xms")
-                    || arg.StartsWith("-Xmx")
-                    || arg.StartsWith("-Xss")
-                    || arg == "-Xmixed"
-                    || arg == "-Xint"
-                    || arg == "-Xincgc"
-                    || arg == "-Xbatch"
-                    || arg == "-Xfuture"
-                    || arg == "-Xrs"
-                    || arg == "-Xcheck:jni"
-                    || arg == "-Xshare:off"
-                    || arg == "-Xshare:auto"
-                    || arg == "-Xshare:on"
-                    )
-                {
-                    Console.Error.WriteLine("Unsupported option ignored: {0}", arg);
-                }
-                else
-                {
-                    Console.Error.WriteLine("{0}: illegal argument", arg);
-                    break;
-                }
+				else if(args[i].StartsWith("-Xms")
+					|| args[i].StartsWith("-Xmx")
+					|| args[i].StartsWith("-Xss")
+					|| args[i] == "-Xmixed"
+					|| args[i] == "-Xint"
+					|| args[i] == "-Xnoclassgc"
+					|| args[i] == "-Xincgc"
+					|| args[i] == "-Xbatch"
+					|| args[i] == "-Xfuture"
+					|| args[i] == "-Xrs"
+					|| args[i] == "-Xcheck:jni"
+					|| args[i] == "-Xshare:off"
+					|| args[i] == "-Xshare:auto"
+					|| args[i] == "-Xshare:on"
+					)
+				{
+					Console.Error.WriteLine("Unsupported option ignored: {0}", args[i]);
+				}
+				else
+				{
+					Console.Error.WriteLine("{0}: illegal argument", args[i]);
+					break;
+				}
 			}
 			else
 			{
-				mainClass = arg;
-				vmargsIndex = i + 1;
+				mainClass = args[i];
+				vmargsIndex = i + 2;
 				break;
 			}
 		}
@@ -304,74 +267,100 @@ public static class Starter
 		}
 		if(mainClass == null)
 		{
-			PrintHelp();
+			Console.Error.WriteLine("usage: ikvm [-options] <class> [args...]");
+			Console.Error.WriteLine("          (to execute a class)");
+			Console.Error.WriteLine("    or ikvm -jar [-options] <jarfile> [args...]");
+			Console.Error.WriteLine("          (to execute a jar file)");
+			Console.Error.WriteLine();
+			Console.Error.WriteLine("where options include:");
+			Console.Error.WriteLine("    -? -help          Display this message");
+			Console.Error.WriteLine("    -version          Display IKVM and runtime version");
+			Console.Error.WriteLine("    -showversion      Display version and continue running");
+			Console.Error.WriteLine("    -cp -classpath <directories and zip/jar files separated by {0}>", Path.PathSeparator);
+			Console.Error.WriteLine("                      Set search path for application classes and resources");
+			Console.Error.WriteLine("    -D<name>=<value>  Set a system property");
+			Console.Error.WriteLine("    -ea[:<packagename>...|:<classname>]");
+			Console.Error.WriteLine("    -enableassertions[:<packagename>...|:<classname>]");
+			Console.Error.WriteLine("                      Enable assertions.");
+			Console.Error.WriteLine("    -da[:<packagename>...|:<classname>]");
+			Console.Error.WriteLine("    -disableassertions[:<packagename>...|:<classname>]");
+			Console.Error.WriteLine("                      Disable assertions");
+			Console.Error.WriteLine("    -Xsave            Save the generated assembly (for debugging)");
+			Console.Error.WriteLine("    -Xtime            Time the execution");
+			Console.Error.WriteLine("    -Xtrace:<string>  Displays all tracepoints with the given name");
+			Console.Error.WriteLine("    -Xmethodtrace:<string>");
+			Console.Error.WriteLine("                      Builds method trace into the specified output methods");
+			Console.Error.WriteLine("    -Xwait            Keep process hanging around after exit");
+			Console.Error.WriteLine("    -Xbreak           Trigger a user defined breakpoint at startup");
 			return 1;
 		}
 		try
 		{
-            if (debug)
-            {
-                // Starting the debugger
-                Assembly asm = Assembly.GetExecutingAssembly();
-                String arguments = debugArg + " -pid:" + System.Diagnostics.Process.GetCurrentProcess().Id;
-                String program = new FileInfo(asm.Location).DirectoryName + "\\debugger.exe";
-                try
-                {
-                    ProcessStartInfo info = new ProcessStartInfo(program, arguments);
-                    info.UseShellExecute = false;
-                    Process debugger = new Process();
-                    debugger.StartInfo = info;
-                    debugger.Start();
-                }
-                catch (Exception ex)
-                {
-                    Console.Error.WriteLine(program + " " + arguments);
-                    throw ex;
-                }
-            }
 			if(jar)
 			{
 				props["java.class.path"] = mainClass;
 			}
-			// like the JDK we don't quote the args (even if they contain spaces)
-			props["sun.java.command"] = String.Join(" ", args, vmargsIndex - 1, args.Length - (vmargsIndex - 1));
-			props["sun.java.launcher"] = "SUN_STANDARD";
 			Startup.setProperties(props);
 			Startup.enterMainThread();
-			string[] vmargs;
-			if (noglobbing)
+			// HACK Starup.glob() uses Java code, so we need to do this after we've initialized
+			string[] vmargs = Startup.glob(vmargsIndex);
+			if (jar)
 			{
-				vmargs = new string[args.Length - vmargsIndex];
-				System.Array.Copy(args, vmargsIndex, vmargs, 0, vmargs.Length);
-			}
-			else
-			{
-				// Startup.glob() uses Java code, so we need to do this after we've initialized
-				vmargs = Startup.glob(args, vmargsIndex);
-			}
-			try
-			{
-				java.lang.Class clazz = sun.launcher.LauncherHelper.checkAndLoadMain(true, jar ? 2 : 1, mainClass);
-				// we don't need to do any checking on the main method, as that was already done by checkAndLoadMain
-				Method method = clazz.getMethod("main", typeof(string[]));
-				// if clazz isn't public, we can still call main
-				method.setAccessible(true);
-				if(saveAssembly)
-				{
-					java.lang.Runtime.getRuntime().addShutdownHook(new SaveAssemblyShutdownHook(clazz));
-				}
-				if(waitOnExit)
-				{
-					java.lang.Runtime.getRuntime().addShutdownHook(new WaitShutdownHook());
-				}
+				JarFile jf = new JarFile(mainClass);
 				try
 				{
-					method.invoke(null, new object[] { vmargs });
-					return 0;
+					Manifest manifest = jf.getManifest();
+					if(manifest == null)
+					{
+						Console.Error.WriteLine("Jar file doesn't contain manifest");
+						return 1;
+					}
+					mainClass = manifest.getMainAttributes().getValue(Attributes.Name.MAIN_CLASS);
 				}
-				catch(InvocationTargetException x)
+				finally
 				{
-					throw x.getCause();
+					jf.close();
+				}
+				if(mainClass == null)
+				{
+					Console.Error.WriteLine("Manifest doesn't contain a Main-Class.");
+					return 1;
+				}
+				mainClass = mainClass.Replace('/', '.');
+			}
+			java.lang.Class clazz = java.lang.Class.forName(mainClass, true, java.lang.ClassLoader.getSystemClassLoader());
+			try
+			{
+				Method method = FindMainMethod(clazz);
+				if(method == null)
+				{
+					throw new java.lang.NoSuchMethodError("main");
+				}
+				else if(!Modifier.isPublic(method.getModifiers()))
+				{
+					Console.Error.WriteLine("Main method not public.");
+				}
+				else
+				{
+					// if clazz isn't public, we can still call main
+					method.setAccessible(true);
+					if(saveAssembly)
+					{
+						java.lang.Runtime.getRuntime().addShutdownHook(new SaveAssemblyShutdownHook(clazz));
+					}
+					if(waitOnExit)
+					{
+						java.lang.Runtime.getRuntime().addShutdownHook(new WaitShutdownHook());
+					}
+					try
+					{
+						method.invoke(null, new object[] { vmargs });
+						return 0;
+					}
+					catch(InvocationTargetException x)
+					{
+						throw x.getCause();
+					}
 				}
 			}
 			finally
@@ -394,43 +383,33 @@ public static class Starter
 		return 1;
 	}
 
-	private static void PrintHelp()
+	private static Method FindMainMethod(java.lang.Class clazz)
 	{
-		Console.Error.WriteLine("usage: ikvm [-options] <class> [args...]");
-		Console.Error.WriteLine("          (to execute a class)");
-		Console.Error.WriteLine("    or ikvm -jar [-options] <jarfile> [args...]");
-		Console.Error.WriteLine("          (to execute a jar file)");
-		Console.Error.WriteLine();
-		Console.Error.WriteLine("where options include:");
-		Console.Error.WriteLine("    -? -help          Display this message");
-		Console.Error.WriteLine("    -X                Display non-standard options");
-		Console.Error.WriteLine("    -version          Display IKVM and runtime version");
-		Console.Error.WriteLine("    -showversion      Display version and continue running");
-		Console.Error.WriteLine("    -cp -classpath <directories and zip/jar files separated by {0}>", Path.PathSeparator);
-		Console.Error.WriteLine("                      Set search path for application classes and resources");
-		Console.Error.WriteLine("    -D<name>=<value>  Set a system property");
-		Console.Error.WriteLine("    -ea[:<packagename>...|:<classname>]");
-		Console.Error.WriteLine("    -enableassertions[:<packagename>...|:<classname>]");
-		Console.Error.WriteLine("                      Enable assertions.");
-		Console.Error.WriteLine("    -da[:<packagename>...|:<classname>]");
-		Console.Error.WriteLine("    -disableassertions[:<packagename>...|:<classname>]");
-		Console.Error.WriteLine("                      Disable assertions");
-	}
-
-	private static void PrintXHelp()
-	{
-		Console.Error.WriteLine("    -Xsave            Save the generated assembly (for troubleshooting)");
-		Console.Error.WriteLine("    -Xtime            Time the execution");
-		Console.Error.WriteLine("    -Xtrace:<string>  Displays all tracepoints with the given name");
-		Console.Error.WriteLine("    -Xmethodtrace:<string>");
-		Console.Error.WriteLine("                      Builds method trace into the specified output methods");
-		Console.Error.WriteLine("    -Xwait            Keep process hanging around after exit");
-		Console.Error.WriteLine("    -Xbreak           Trigger a user defined breakpoint at startup");
-		Console.Error.WriteLine("    -Xnoclassgc       Disable class garbage collection");
-		Console.Error.WriteLine("    -Xnoglobbing      Disable argument globbing");
-		Console.Error.WriteLine("    -Xverify          Enable strict class file verification");
-		Console.Error.WriteLine();
-		Console.Error.WriteLine("The -X options are non-standard and subject to change without notice.");
-		Console.Error.WriteLine();
+		// HACK without this hack, clazz.getDeclaredMethods would throw a NoClassDefFoundError if any
+		// of the methods in the class had an unloadable parameter type, but we don't want that.
+		IKVM.Internal.Starter.EnableReflectionOnMethodsWithUnloadableTypeParameters = true;
+		try
+		{
+			while(clazz != null)
+			{
+				foreach(Method m in clazz.getDeclaredMethods())
+				{
+					if(m.getName() == "main" && m.getReturnType() == java.lang.Void.TYPE)
+					{
+						java.lang.Class[] parameters = m.getParameterTypes();
+						if(parameters.Length == 1 && parameters[0] == java.lang.Class.forName("[Ljava.lang.String;"))
+						{
+							return m;
+						}
+					}
+				}
+				clazz = clazz.getSuperclass();
+			}
+			return null;
+		}
+		finally
+		{
+			IKVM.Internal.Starter.EnableReflectionOnMethodsWithUnloadableTypeParameters = false;
+		}
 	}
 }

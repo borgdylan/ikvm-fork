@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2006-2013 Jeroen Frijters
+  Copyright (C) 2006 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -21,8 +21,7 @@
   jeroen@frijters.net
   
 */
-// HACK because of historical reasons this class' source lives in ikvm/internal instead of ikvm/runtime
-package ikvm.runtime;
+package ikvm.internal;
 
 import cli.System.Reflection.Assembly;
 import gnu.java.util.EmptyEnumeration;
@@ -34,55 +33,151 @@ import java.util.Enumeration;
 import java.util.Vector;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
+import java.security.AllPermission;
+import java.security.CodeSource;
+import java.security.Permissions;
+import java.security.ProtectionDomain;
+import java.security.cert.Certificate;
 
+@Internal
 public final class AssemblyClassLoader extends ClassLoader
 {
+    // NOTE assembly is null for "generics" class loader instances
+    private final Assembly assembly;
+    private ProtectionDomain pd;
     private boolean packagesDefined;
 
-    // This constructor is used to manually construct an AssemblyClassLoader that is used
-    // as a delegation parent for custom assembly class loaders.
-    //
-    // In that case the class loader object graph looks like this:
-    //
-    //            +---------------------------------+
-    //            |IKVM.Internal.AssemblyClassLoader|
-    //            +---------------------------------+
-    //              ||     /\                  /\
-    //              \/     ||                  ||
-    //    +-------------------+                ||
-    //    |Custom Class Loader|      +--------------------------------+
-    //    +-------------------+      |ikvm.runtime.AssemblyClassLoader|
-    //                               +--------------------------------+
-    //
     public AssemblyClassLoader(Assembly assembly)
     {
         super(null);
-        setWrapper(assembly);
+        this.assembly = assembly;
     }
 
-    private native void setWrapper(Assembly assembly);
-
-    // this constructor is used by the runtime and calls a privileged
-    // ClassLoader constructor to avoid the security check
-    AssemblyClassLoader()
+    protected Class loadClass(String name, boolean resolve) throws ClassNotFoundException
     {
-        super(null, null);
+        return LoadClass(this, name);
     }
 
-    @Override
-    protected native Class loadClass(String name, boolean resolve) throws ClassNotFoundException;
+    private static native Class LoadClass(Object classLoader, String name) throws ClassNotFoundException;
 
-    @Override
-    public native URL getResource(String name);
+    public URL getResource(String name)
+    {
+        // for consistency with class loading, we change the delegation order for .class files
+        // (this also helps make ikvmstub work reliably)
+        if(name.endsWith(".class"))
+        {
+            URL url = getResource(this, name);
+            if(url != null)
+            {
+                return url;
+            }
+        }
+        return getResource(this, name);
+    }
 
-    @Override
-    public native Enumeration<URL> getResources(String name) throws IOException;
+    public Enumeration getResources(String name) throws IOException
+    {
+        return getResources(this, name);
+    }
 
-    @Override
-    protected native URL findResource(String name);
+    protected URL findResource(String name)
+    {
+        return getResource(this, name);
+    }
 
-    @Override
-    protected native Enumeration<URL> findResources(String name) throws IOException;
+    protected Enumeration findResources(String name) throws IOException
+    {
+        return getResources(this, name);
+    }
+
+    private static URL makeIkvmresURL(Assembly asm, String name)
+    {
+        String assemblyName = asm.get_FullName();
+        if(IsReflectionOnly(asm))
+        {
+            assemblyName += "[ReflectionOnly]";
+        }
+        try
+        {
+            return new URL("ikvmres", assemblyName, -1, "/" + name);
+        }
+        catch(MalformedURLException x)
+        {
+            throw (InternalError)new InternalError().initCause(x);
+        }
+    }
+
+    public static URL getResource(AssemblyClassLoader classLoader, String name)
+    {
+        Assembly[] asm = FindResourceAssemblies(classLoader, name, true);
+        if(asm != null && asm.length > 0)
+        {
+            return makeIkvmresURL(asm[0], name);
+        }
+        else if(name.endsWith(".class") && name.indexOf('.') == name.length() - 6)
+        {
+            Class c = null;
+            try
+            {
+                c = LoadClass(classLoader, name.substring(0, name.length() - 6).replace('/', '.'));
+            }
+            catch(ClassNotFoundException _)
+            {
+            }
+            catch(LinkageError _)
+            {
+            }
+            if(c != null)
+            {
+                classLoader = (AssemblyClassLoader)c.getClassLoader();
+                if(classLoader == null)
+                {
+                    return makeIkvmresURL(GetBootClassLoaderAssembly(), name);
+                }
+                else if(classLoader.assembly != null)
+                {
+                    return makeIkvmresURL(classLoader.assembly, name);
+                }
+                else
+                {
+                    // HACK we use an index to identity the generic class loader in the url
+                    // TODO this obviously isn't persistable, we should use a list of assemblies instead.
+                    try
+                    {
+                        return new URL("ikvmres", "gen", GetGenericClassLoaderId(classLoader), "/" + name);
+                    }
+                    catch(MalformedURLException x)
+                    {
+                        throw (InternalError)new InternalError().initCause(x);
+                    }                    
+                }
+            }
+        }
+        return null;
+    }
+
+    private static native boolean IsReflectionOnly(Assembly asm);
+    private static native Assembly[] FindResourceAssemblies(Object classLoader, String name, boolean firstOnly);
+    private static native int GetGenericClassLoaderId(AssemblyClassLoader classLoader);
+    private static native Assembly GetBootClassLoaderAssembly();
+    private static native String GetGenericClassLoaderName(Object classLoader);
+    // also used by VMClassLoader
+    public static native String[] GetPackages(Object classLoader);
+
+    public static Enumeration getResources(Object classLoader, String name) throws IOException
+    {
+        Assembly[] assemblies = FindResourceAssemblies(classLoader, name, false);
+        if(assemblies != null)
+        {
+            Vector v = new Vector();
+            for(int i = 0; i < assemblies.length; i++)
+            {
+                v.addElement(makeIkvmresURL(assemblies[i], name));
+            }
+            return v.elements();
+        }
+        return EmptyEnumeration.getInstance();
+    }
 
     private synchronized void lazyDefinePackagesCheck()
     {
@@ -93,65 +188,114 @@ public final class AssemblyClassLoader extends ClassLoader
         }
     }
 
-    private native void lazyDefinePackages();
+    private static String getAttributeValue(Attributes.Name name, Attributes first, Attributes second)
+    {
+        String result = null;
+        if(first != null)
+        {
+            result = first.getValue(name);
+        }
+        if(second != null && result == null)
+        {
+            result = second.getValue(name);
+        }
+        return result;
+    }
 
-    @Override
+    private Manifest getManifest()
+    {
+        try
+        {
+            if(assembly != null)
+            {
+                return new Manifest(gnu.java.net.protocol.ikvmres.Handler.readResourceFromAssembly(assembly, "/META-INF/MANIFEST.MF"));
+            }
+        }
+        catch (MalformedURLException _)
+        {
+        }
+        catch (IOException _)
+        {
+        }
+        return null;
+    }
+
+    private void lazyDefinePackages()
+    {
+        URL sealBase = getCodeBase();
+        Manifest manifest = getManifest();
+        Attributes attr = null;
+        if(manifest != null)
+        {
+            attr = manifest.getMainAttributes();
+        }
+        String[] packages = GetPackages(this);
+        for(int i = 0; i < packages.length; i++)
+        {
+            String name = packages[i];
+            if(super.getPackage(name) == null)
+            {
+                Attributes entryAttr = null;
+                if(manifest != null)
+                {
+                    entryAttr = manifest.getAttributes(name.replace('.', '/') + '/');
+                }
+                definePackage(name,
+                    getAttributeValue(Attributes.Name.SPECIFICATION_TITLE, entryAttr, attr),
+                    getAttributeValue(Attributes.Name.SPECIFICATION_VERSION, entryAttr, attr),
+                    getAttributeValue(Attributes.Name.SPECIFICATION_VENDOR, entryAttr, attr),
+                    getAttributeValue(Attributes.Name.IMPLEMENTATION_TITLE, entryAttr, attr),
+                    getAttributeValue(Attributes.Name.IMPLEMENTATION_VERSION, entryAttr, attr),
+                    getAttributeValue(Attributes.Name.IMPLEMENTATION_VENDOR, entryAttr, attr),
+                    "true".equalsIgnoreCase(getAttributeValue(Attributes.Name.SEALED, entryAttr, attr)) ? sealBase : null);
+            }
+        }
+    }
+
     protected Package getPackage(String name)
     {
         lazyDefinePackagesCheck();
         return super.getPackage(name);
     }
 
-    @Override
     protected Package[] getPackages()
     {
         lazyDefinePackagesCheck();
         return super.getPackages();
     }
 
-    @Override
-    public native String toString();
-
-    // return the ClassLoader for the assembly. Note that this doesn't have to be an AssemblyClassLoader.
-    public static native ClassLoader getAssemblyClassLoader(Assembly asm);
-}
-
-final class GenericClassLoader extends ClassLoader
-{
-    // this constructor avoids the security check in ClassLoader by passing in null as the security manager
-    // to the IKVM specific constructor in ClassLoader
-    GenericClassLoader()
+    public String toString()
     {
-        super(null, null);
-    }
-
-    @Override
-    public native String toString();
-
-    @Override
-    public URL getResource(String name)
-    {
-        Enumeration<URL> e = getResources(name);
-        return e.hasMoreElements()
-            ? e.nextElement()
-            : null;
-    }
-
-    @Override
-    public native Enumeration<URL> getResources(String name);
-
-    @Override
-    protected native URL findResource(String name);
-
-    @Override
-    protected Enumeration<URL> findResources(String name)
-    {
-        Vector<URL> v = new Vector<URL>();
-        URL url = findResource(name);
-        if (url != null)
+        if(assembly != null)
         {
-            v.add(url);
+            return assembly.get_FullName();
         }
-        return v.elements();
+        return GetGenericClassLoaderName(this);
+    }
+
+    private URL getCodeBase()
+    {
+        try
+        {
+            if(assembly != null)
+            {
+                return new URL(assembly.get_CodeBase());
+            }
+        }
+        catch(MalformedURLException _)
+        {
+        }
+        return null;
+    }
+
+    public synchronized ProtectionDomain getProtectionDomain()
+    {
+        if(pd == null)
+        {
+            Permissions permissions = new Permissions();
+            permissions.add(new AllPermission());
+            pd = new ProtectionDomain(new CodeSource(getCodeBase(), (Certificate[])null), permissions, this, null);
+        }
+        return pd;
     }
 }

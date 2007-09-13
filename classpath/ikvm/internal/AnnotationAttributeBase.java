@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2005, 2006, 2007 Jeroen Frijters
+  Copyright (C) 2005, 2006 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -23,19 +23,16 @@
 */
 package ikvm.internal;
 
-import cli.System.Reflection.BindingFlags;
 import ikvm.lang.CIL;
 import java.io.Serializable;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Array;
-import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
-import java.util.Arrays;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.HashMap;
+import sun.reflect.annotation.AnnotationInvocationHandler;
 
 public abstract class AnnotationAttributeBase
     extends cli.System.Attribute
@@ -329,7 +326,7 @@ public abstract class AnnotationAttributeBase
         }
         HashMap map = new HashMap();
         decodeValues(map, annotationClass, loader, array);
-        return Proxy.newProxyInstance(annotationClass.getClassLoader(), new Class<?>[] { annotationClass }, newAnnotationInvocationHandler(annotationClass, map));
+        return Proxy.newProxyInstance(annotationClass.getClassLoader(), new Class<?>[] { annotationClass }, new AnnotationInvocationHandler(annotationClass, map));
     }
 
     public static Object decodeElementValue(Object obj, Class type, ClassLoader loader)
@@ -421,23 +418,9 @@ public abstract class AnnotationAttributeBase
 
     protected final Object writeReplace()
     {
-	return Proxy.newProxyInstance(annotationType.getClassLoader(),
-	    new Class[] { annotationType },
-	    newAnnotationInvocationHandler(annotationType, values));
-    }
-
-    private static cli.System.Reflection.ConstructorInfo annotationInvocationHandlerConstructor;
-
-    private static InvocationHandler newAnnotationInvocationHandler(Class type, Map memberValues)
-    {
-	if (annotationInvocationHandlerConstructor == null)
-	{
-	    cli.System.Type typeofClass = cli.System.Type.GetType("java.lang.Class");
-	    cli.System.Type typeofMap = cli.System.Type.GetType("java.util.Map");
-	    annotationInvocationHandlerConstructor = cli.System.Type.GetType("sun.reflect.annotation.AnnotationInvocationHandler")
-		.GetConstructor(BindingFlags.wrap(BindingFlags.Instance | BindingFlags.NonPublic), null, new cli.System.Type[] { typeofClass, typeofMap }, null);
-	}
-	return (InvocationHandler)annotationInvocationHandlerConstructor.Invoke(new Object[] { type, memberValues });
+        return Proxy.newProxyInstance(annotationType.getClassLoader(),
+            new Class[] { annotationType },
+            new AnnotationInvocationHandler(annotationType, values));
     }
 
     public final Class<? extends Annotation> annotationType()
@@ -447,181 +430,16 @@ public abstract class AnnotationAttributeBase
 
     public final boolean Equals(Object o)
     {
-        return equals(annotationType, values, o);
+        return sun.reflect.annotation.AnnotationInvocationHandler.equals(annotationType, values, o);
     }
 
     public final int GetHashCode()
     {
-        return hashCode(annotationType, values);
+        return sun.reflect.annotation.AnnotationInvocationHandler.hashCode(annotationType, values);
     }
 
     public final String ToString()
     {
-        return toString(annotationType, values);
-    }
-
-    private static boolean equals(Class type, Map memberValues, Object other)
-    {
-        if (type.isInstance(other))
-        {
-            try
-            {
-                Method[] methods = type.getDeclaredMethods();
-                if (methods.length == memberValues.size())
-                {
-                    for (int i = 0; i < methods.length; i++)
-                    {
-                        String key = methods[i].getName();
-                        Object val = methods[i].invoke(other, new Object[0]);
-                        if (! deepEquals(memberValues.get(key), val))
-                        {
-                            return false;
-                        }
-                    }
-                    return true;
-                }
-            }
-            catch (IllegalAccessException _)
-            {
-                // Ignore exception, like the JDK
-            }
-            catch (InvocationTargetException _)
-            {
-                // Ignore exception, like the JDK
-            }
-        }
-        return false;
-    }
-
-    private static boolean deepEquals(Object o1, Object o2)
-    {
-        if (o1 == o2)
-            return true;
-
-        if (o1 == null || o2 == null)
-            return false;
-
-        if (o1 instanceof boolean[] && o2 instanceof boolean[])
-            return Arrays.equals((boolean[]) o1, (boolean[]) o2);
-
-        if (o1 instanceof byte[] && o2 instanceof byte[])
-            return Arrays.equals((byte[]) o1, (byte[]) o2);
-
-        if (o1 instanceof char[] && o2 instanceof char[])
-            return Arrays.equals((char[]) o1, (char[]) o2);
-
-        if (o1 instanceof short[] && o2 instanceof short[])
-            return Arrays.equals((short[]) o1, (short[]) o2);
-
-        if (o1 instanceof int[] && o2 instanceof int[])
-            return Arrays.equals((int[]) o1, (int[]) o2);
-
-        if (o1 instanceof float[] && o2 instanceof float[])
-            return Arrays.equals((float[]) o1, (float[]) o2);
-
-        if (o1 instanceof long[] && o2 instanceof long[])
-            return Arrays.equals((long[]) o1, (long[]) o2);
-
-        if (o1 instanceof double[] && o2 instanceof double[])
-            return Arrays.equals((double[]) o1, (double[]) o2);
-
-        if (o1 instanceof Object[] && o2 instanceof Object[])
-            return Arrays.equals((Object[]) o1, (Object[]) o2);
-
-        return o1.equals(o2);
-    }
-
-    private static int deepHashCode(Object obj)
-    {
-        if (obj instanceof boolean[])
-            return Arrays.hashCode((boolean[]) obj);
-
-        if (obj instanceof byte[])
-            return Arrays.hashCode((byte[]) obj);
-
-        if (obj instanceof char[])
-            return Arrays.hashCode((char[]) obj);
-
-        if (obj instanceof short[])
-            return Arrays.hashCode((short[]) obj);
-
-        if (obj instanceof int[])
-            return Arrays.hashCode((int[]) obj);
-
-        if (obj instanceof float[])
-            return Arrays.hashCode((float[]) obj);
-
-        if (obj instanceof long[])
-            return Arrays.hashCode((long[]) obj);
-
-        if (obj instanceof double[])
-            return Arrays.hashCode((double[]) obj);
-
-        if (obj instanceof Object[])
-            return Arrays.hashCode((Object[]) obj);
-
-        return obj.hashCode();
-    }
-
-    private static int hashCode(Class type, Map memberValues)
-    {
-        int h = 0;
-        Iterator iter = memberValues.keySet().iterator();
-        while (iter.hasNext())
-        {
-            Object key = iter.next();
-            Object val = memberValues.get(key);
-            h += deepHashCode(val) ^ 127 * key.hashCode();
-        }
-        return h;
-    }
-
-    private static String deepToString(Object obj)
-    {
-        if (obj instanceof boolean[])
-            return Arrays.toString((boolean[]) obj);
-
-        if (obj instanceof byte[])
-            return Arrays.toString((byte[]) obj);
-
-        if (obj instanceof char[])
-            return Arrays.toString((char[]) obj);
-
-        if (obj instanceof short[])
-            return Arrays.toString((short[]) obj);
-
-        if (obj instanceof int[])
-            return Arrays.toString((int[]) obj);
-
-        if (obj instanceof float[])
-            return Arrays.toString((float[]) obj);
-
-        if (obj instanceof long[])
-            return Arrays.toString((long[]) obj);
-
-        if (obj instanceof double[])
-            return Arrays.toString((double[]) obj);
-
-        if (obj instanceof Object[])
-            return Arrays.toString((Object[]) obj);
-
-        return obj.toString();
-    }
-
-    private static String toString(Class type, Map memberValues)
-    {
-        StringBuffer sb = new StringBuffer();
-        sb.append('@').append(type.getName()).append('(');
-        String sep = "";
-        Iterator iter = memberValues.keySet().iterator();
-        while (iter.hasNext())
-        {
-            Object key = iter.next();
-            Object val = memberValues.get(key);
-            sb.append(sep).append(key).append('=').append(deepToString(val));
-            sep = ", ";
-        }
-        sb.append(')');
-        return sb.toString();
+        return sun.reflect.annotation.AnnotationInvocationHandler.toString(annotationType, values);
     }
 }
