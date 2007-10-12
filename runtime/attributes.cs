@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2002-2011 Jeroen Frijters
+  Copyright (C) 2002, 2003, 2004, 2005, 2006 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -22,16 +22,10 @@
   
 */
 using System;
-#if STATIC_COMPILER || STUB_GENERATOR
-using IKVM.Reflection;
-using Type = IKVM.Reflection.Type;
-#else
 using System.Reflection;
-#endif
 
 namespace IKVM.Attributes
 {
-	[AttributeUsage(AttributeTargets.Module | AttributeTargets.Class | AttributeTargets.Interface | AttributeTargets.Struct | AttributeTargets.Delegate)]
 	public sealed class SourceFileAttribute : Attribute
 	{
 		private string file;
@@ -50,7 +44,6 @@ namespace IKVM.Attributes
 		}
 	}
 
-	[AttributeUsage(AttributeTargets.Method | AttributeTargets.Constructor)]
 	public sealed class LineNumberTableAttribute : Attribute
 	{
 		private byte[] table;
@@ -67,7 +60,7 @@ namespace IKVM.Attributes
 			this.table = table;
 		}
 
-		public sealed class LineNumberWriter
+		public class LineNumberWriter
 		{
 			private System.IO.MemoryStream stream;
 			private int prevILOffset;
@@ -277,18 +270,16 @@ namespace IKVM.Attributes
 	{
 	}
 
-	[AttributeUsage(AttributeTargets.Interface)]
+	[AttributeUsage(AttributeTargets.Method)]
 	public sealed class RemappedInterfaceMethodAttribute : Attribute
 	{
 		private string name;
 		private string mappedTo;
-		private string[] throws;
 
-		public RemappedInterfaceMethodAttribute(string name, string mappedTo, string[] throws)
+		public RemappedInterfaceMethodAttribute(string name, string mappedTo)
 		{
 			this.name = name;
 			this.mappedTo = mappedTo;
-			this.throws = throws;
 		}
 
 		public string Name
@@ -306,27 +297,13 @@ namespace IKVM.Attributes
 				return mappedTo;
 			}
 		}
-
-		public string[] Throws
-		{
-			get
-			{
-				return throws;
-			}
-		}
 	}
 
-	[AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true)]
+	[AttributeUsage(AttributeTargets.Assembly)]
 	public sealed class RemappedClassAttribute : Attribute
 	{
 		private string name;
 		private Type remappedType;
-
-#if STUB_GENERATOR
-		public RemappedClassAttribute(string name, System.Type remappedType)
-		{
-		}
-#endif
 
 		public RemappedClassAttribute(string name, Type remappedType)
 		{
@@ -356,12 +333,6 @@ namespace IKVM.Attributes
 	{
 		private Type type;
 
-#if STUB_GENERATOR
-		public RemappedTypeAttribute(System.Type type)
-		{
-		}
-#endif
-
 		public RemappedTypeAttribute(Type type)
 		{
 			this.type = type;
@@ -380,7 +351,6 @@ namespace IKVM.Attributes
 	public sealed class JavaModuleAttribute : Attribute
 	{
 		private string[] classMap;
-		private string[] jars;
 
 		public JavaModuleAttribute()
 		{
@@ -395,15 +365,9 @@ namespace IKVM.Attributes
 		{
 			return classMap;
 		}
-
-		public string[] Jars
-		{
-			get { return jars; }
-			set { jars = value; }
-		}
 	}
 
-	[AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct | AttributeTargets.Interface | AttributeTargets.Delegate | AttributeTargets.Enum | AttributeTargets.Assembly)]
+	[AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct | AttributeTargets.Interface | AttributeTargets.Assembly)]
 	public sealed class NoPackagePrefixAttribute : Attribute
 	{
 	}
@@ -420,7 +384,7 @@ namespace IKVM.Attributes
 	{
 	}
 
-	[AttributeUsage(AttributeTargets.Method | AttributeTargets.Field | AttributeTargets.Property)]
+	[AttributeUsage(AttributeTargets.Method | AttributeTargets.Property)]
 	public sealed class HideFromReflectionAttribute : Attribute
 	{
 	}
@@ -517,27 +481,15 @@ namespace IKVM.Attributes
 	[AttributeUsage(AttributeTargets.Constructor | AttributeTargets.Method)]
 	public sealed class ThrowsAttribute : Attribute
 	{
-		internal string[] classes;
-		internal Type[] types;
+		private string[] classes;
 
-		// this constructor is used by ikvmc, the other constructors are for use in other .NET languages
+		// NOTE this is not CLS compliant, so maybe we should have a couple of overloads
 		public ThrowsAttribute(string[] classes)
 		{
 			this.classes = classes;
 		}
 
-		public ThrowsAttribute(Type type)
-			: this(new Type[] { type })
-		{
-		}
-
-		public ThrowsAttribute(params Type[] types)
-		{
-			this.types = types;
-		}
-
 		// dotted Java class names (e.g. java.lang.Throwable)
-		[Obsolete]
 		public string[] Classes
 		{
 			get
@@ -636,22 +588,59 @@ namespace IKVM.Attributes
 		}
 	}
 
-	[AttributeUsage(AttributeTargets.Assembly)]
-	public sealed class CustomAssemblyClassLoaderAttribute : Attribute
+	[AttributeUsage(AttributeTargets.Field)]
+	public sealed class ConstantValueAttribute : Attribute
 	{
-		private Type type;
+		private object val;
 
-		public CustomAssemblyClassLoaderAttribute(Type type)
+		public ConstantValueAttribute(bool val)
 		{
-			this.type = type;
+			this.val = val;
 		}
 
-		public Type Type
+		public ConstantValueAttribute(byte val)
 		{
-			get
-			{
-				return type;
-			}
+			this.val = val;
+		}
+
+		public ConstantValueAttribute(short val)
+		{
+			this.val = val;
+		}
+
+		public ConstantValueAttribute(char val)
+		{
+			this.val = val;
+		}
+
+		public ConstantValueAttribute(int val)
+		{
+			this.val = val;
+		}
+
+		public ConstantValueAttribute(long val)
+		{
+			this.val = val;
+		}
+
+		public ConstantValueAttribute(float val)
+		{
+			this.val = val;
+		}
+
+		public ConstantValueAttribute(double val)
+		{
+			this.val = val;
+		}
+
+		public ConstantValueAttribute(string val)
+		{
+			this.val = val;
+		}
+
+		public object GetConstantValue()
+		{
+			return val;
 		}
 	}
 
@@ -688,15 +677,6 @@ namespace IKVM.Attributes
 			this.methodSig = methodSig;
 		}
 
-		internal EnclosingMethodAttribute SetClassName(Type type)
-		{
-			if (className == null)
-			{
-				className = IKVM.Internal.ClassLoaderWrapper.GetWrapperFromType(type.DeclaringType).Name;
-			}
-			return this;
-		}
-
 		public string ClassName
 		{
 			get
@@ -729,7 +709,6 @@ namespace IKVM.Attributes
 		public const byte TAG_CLASS = (byte)'c';
 		public const byte TAG_ANNOTATION = (byte)'@';
 		public const byte TAG_ARRAY = (byte)'[';
-		public const byte TAG_ERROR = (byte)'?';
 		private object defaultValue;
 
 		// element_value encoding:
@@ -745,8 +724,6 @@ namespace IKVM.Attributes
 		//   new object[] { (byte)'@', "<AnnotationType>", ("name", (element_value))* }
 		// array:
 		//   new object[] { (byte)'[', (element_value)* }
-		// error:
-		//   new object[] { (byte)'?', "<exceptionClass>", "<exceptionMessage>" }
 		public AnnotationDefaultAttribute(object defaultValue)
 		{
 			this.defaultValue = defaultValue;
@@ -795,46 +772,4 @@ namespace IKVM.Attributes
 			return packages;
 		}
 	}
-
-	[AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true)]
-	public sealed class JavaResourceAttribute : Attribute
-	{
-		private readonly string javaName;
-		private readonly string resourceName;
-
-		public JavaResourceAttribute(string javaName, string resourceName)
-		{
-			this.javaName = javaName;
-			this.resourceName = resourceName;
-		}
-
-		public string JavaName
-		{
-			get { return javaName; }
-		}
-
-		public string ResourceName
-		{
-			get { return resourceName; }
-		}
-	}
-
-	[AttributeUsage(AttributeTargets.Class | AttributeTargets.Delegate | AttributeTargets.Enum | AttributeTargets.Interface | AttributeTargets.Struct | AttributeTargets.Field | AttributeTargets.Property | AttributeTargets.Method | AttributeTargets.Constructor | AttributeTargets.Parameter, AllowMultiple = false)]
-	public sealed class DynamicAnnotationAttribute : Attribute
-	{
-		private readonly object[] definition;
-
-		public DynamicAnnotationAttribute(object[] definition)
-		{
-			this.definition = definition;
-		}
-
-		public object[] Definition
-		{
-			get { return definition; }
-		}
-	}
-
-	// used in custom modifier for access stubs
-	public static class AccessStub { }
 }
