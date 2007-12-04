@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2002-2013 Jeroen Frijters
+  Copyright (C) 2002, 2003, 2004, 2005, 2006, 2007 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -22,543 +22,160 @@
   
 */
 using System;
-using System.Collections.Generic;
+using System.Collections;
+using System.Collections.Specialized;
 using System.IO;
-using System.Text.RegularExpressions;
+using System.Reflection;
 using System.Threading;
 using ICSharpCode.SharpZipLib.Zip;
 using IKVM.Internal;
-using IKVM.Reflection;
-using IKVM.Reflection.Emit;
-using Type = IKVM.Reflection.Type;
 
-sealed class FatalCompilerErrorException : Exception
+class IkvmcCompiler
 {
-	internal FatalCompilerErrorException(Message id, params object[] args)
-		: base(string.Format("fatal error IKVMC{0}: {1}", (int)id, args.Length == 0 ? GetMessage(id) : string.Format(GetMessage(id), args)))
-	{
-	}
-
-	private static string GetMessage(Message id)
-	{
-		switch (id)
-		{
-			case IKVM.Internal.Message.ResponseFileDepthExceeded:
-				return "Response file nesting depth exceeded";
-			case IKVM.Internal.Message.ErrorReadingFile:
-				return "Unable to read file: {0}\n\t({1})";
-			case IKVM.Internal.Message.NoTargetsFound:
-				return "No targets found";
-			case IKVM.Internal.Message.FileFormatLimitationExceeded:
-				return "File format limitation exceeded: {0}";
-			case IKVM.Internal.Message.CannotSpecifyBothKeyFileAndContainer:
-				return "You cannot specify both a key file and container";
-			case IKVM.Internal.Message.DelaySignRequiresKey:
-				return "You cannot delay sign without a key file or container";
-			case IKVM.Internal.Message.InvalidStrongNameKeyPair:
-				return "Invalid key {0} specified.\n\t(\"{1}\")";
-			case IKVM.Internal.Message.ReferenceNotFound:
-				return "Reference not found: {0}";
-			case IKVM.Internal.Message.OptionsMustPreceedChildLevels:
-				return "You can only specify options before any child levels";
-			case IKVM.Internal.Message.UnrecognizedTargetType:
-				return "Invalid value '{0}' for -target option";
-			case IKVM.Internal.Message.UnrecognizedPlatform:
-				return "Invalid value '{0}' for -platform option";
-			case IKVM.Internal.Message.UnrecognizedApartment:
-				return "Invalid value '{0}' for -apartment option";
-			case IKVM.Internal.Message.MissingFileSpecification:
-				return "Missing file specification for '{0}' option";
-			case IKVM.Internal.Message.PathTooLong:
-				return "Path too long: {0}";
-			case IKVM.Internal.Message.PathNotFound:
-				return "Path not found: {0}";
-			case IKVM.Internal.Message.InvalidPath:
-				return "Invalid path: {0}";
-			case IKVM.Internal.Message.InvalidOptionSyntax:
-				return "Invalid option: {0}";
-			case IKVM.Internal.Message.ExternalResourceNotFound:
-				return "External resource file does not exist: {0}";
-			case IKVM.Internal.Message.ExternalResourceNameInvalid:
-				return "External resource file may not include path specification: {0}";
-			case IKVM.Internal.Message.InvalidVersionFormat:
-				return "Invalid version specified: {0}";
-			case IKVM.Internal.Message.InvalidFileAlignment:
-				return "Invalid value '{0}' for -filealign option";
-			case IKVM.Internal.Message.ErrorWritingFile:
-				return "Unable to write file: {0}\n\t({1})";
-			case IKVM.Internal.Message.UnrecognizedOption:
-				return "Unrecognized option: {0}";
-			case IKVM.Internal.Message.NoOutputFileSpecified:
-				return "No output file specified";
-			case IKVM.Internal.Message.SharedClassLoaderCannotBeUsedOnModuleTarget:
-				return "Incompatible options: -target:module and -sharedclassloader cannot be combined";
-			case IKVM.Internal.Message.RuntimeNotFound:
-				return "Unable to load runtime assembly";
-			case IKVM.Internal.Message.MainClassRequiresExe:
-				return "Main class cannot be specified for library or module";
-			case IKVM.Internal.Message.ExeRequiresMainClass:
-				return "No main method found";
-			case IKVM.Internal.Message.PropertiesRequireExe:
-				return "Properties cannot be specified for library or module";
-			case IKVM.Internal.Message.ModuleCannotHaveClassLoader:
-				return "Cannot specify assembly class loader for modules";
-			case IKVM.Internal.Message.ErrorParsingMapFile:
-				return "Unable to parse remap file: {0}\n\t({1})";
-			case IKVM.Internal.Message.BootstrapClassesMissing:
-				return "Bootstrap classes missing and core assembly not found";
-			case IKVM.Internal.Message.StrongNameRequiresStrongNamedRefs:
-				return "All referenced assemblies must be strong named, to be able to sign the output assembly";
-			case IKVM.Internal.Message.MainClassNotFound:
-				return "Main class not found";
-			case IKVM.Internal.Message.MainMethodNotFound:
-				return "Main method not found";
-			case IKVM.Internal.Message.UnsupportedMainMethod:
-				return "Redirected main method not supported";
-			case IKVM.Internal.Message.ExternalMainNotAccessible:
-				return "External main method must be public and in a public class";
-			case IKVM.Internal.Message.ClassLoaderNotFound:
-				return "Custom assembly class loader class not found";
-			case IKVM.Internal.Message.ClassLoaderNotAccessible:
-				return "Custom assembly class loader class is not accessible";
-			case IKVM.Internal.Message.ClassLoaderIsAbstract:
-				return "Custom assembly class loader class is abstract";
-			case IKVM.Internal.Message.ClassLoaderNotClassLoader:
-				return "Custom assembly class loader class does not extend java.lang.ClassLoader";
-			case IKVM.Internal.Message.ClassLoaderConstructorMissing:
-				return "Custom assembly class loader constructor is missing";
-			case IKVM.Internal.Message.MapFileTypeNotFound:
-				return "Type '{0}' referenced in remap file was not found";
-			case IKVM.Internal.Message.MapFileClassNotFound:
-				return "Class '{0}' referenced in remap file was not found";
-			case IKVM.Internal.Message.MaximumErrorCountReached:
-				return "Maximum error count reached";
-			case IKVM.Internal.Message.LinkageError:
-				return "Link error: {0}";
-			case IKVM.Internal.Message.RuntimeMismatch:
-				return "Referenced assembly {0} was compiled with an incompatible IKVM.Runtime version\n" +
-					"\tCurrent runtime: {1}\n" +
-					"\tReferenced assembly runtime: {2}";
-			case IKVM.Internal.Message.CoreClassesMissing:
-				return "Failed to find core classes in core library";
-			case IKVM.Internal.Message.CriticalClassNotFound:
-				return "Unable to load critical class '{0}'";
-			case IKVM.Internal.Message.AssemblyContainsDuplicateClassNames:
-				return "Type '{0}' and '{1}' both map to the same name '{2}'\n" +
-					"\t({3})";
-			case IKVM.Internal.Message.CallerIDRequiresHasCallerIDAnnotation:
-				return "CallerID.getCallerID() requires a HasCallerID annotation";
-			case IKVM.Internal.Message.UnableToResolveInterface:
-				return "Unable to resolve interface '{0}' on type '{1}'";
-			case IKVM.Internal.Message.MissingBaseType:
-				return "The base class or interface '{0}' in assembly '{1}' referenced by type '{2}' in '{3}' could not be resolved";
-			case IKVM.Internal.Message.MissingBaseTypeReference:
-				return "The type '{0}' is defined in an assembly that is not referenced. You must add a reference to assembly '{1}'";
-			case IKVM.Internal.Message.FileNotFound:
-				return "File not found: {0}";
-			default:
-				return "Missing Error Message. Please file a bug.";
-		}
-	}
-}
-
-sealed class IkvmcCompiler
-{
-	private bool nonleaf;
-	private string manifestMainClass;
-	private string defaultAssemblyName;
-	private List<string> classesToExclude = new List<string>();
+	private static string manifestMainClass;
+	private static Hashtable classes = new Hashtable();
+	private static Hashtable resources = new Hashtable();
 	private static bool time;
-	private static string runtimeAssembly;
-	private static bool nostdlib;
-	private static readonly List<string> libpaths = new List<string>();
-	internal static readonly AssemblyResolver resolver = new AssemblyResolver();
 
-	private static void AddArg(List<string> arglist, string s, int depth)
+	private static ArrayList GetArgs(string[] args)
 	{
-		if (s.StartsWith("@"))
+		ArrayList arglist = new ArrayList();
+		foreach(string s in args)
 		{
-			if (depth++ > 16)
+			if(s.StartsWith("@"))
 			{
-				throw new FatalCompilerErrorException(Message.ResponseFileDepthExceeded);
-			}
-			try
-			{
-				using (StreamReader sr = new StreamReader(s.Substring(1)))
+				using(StreamReader sr = new StreamReader(s.Substring(1)))
 				{
 					string line;
-					while ((line = sr.ReadLine()) != null)
+					while((line = sr.ReadLine()) != null)
 					{
-						string arg = line.Trim();
-						if (arg != "" && !arg.StartsWith("#"))
-						{
-							AddArg(arglist, arg, depth);
-						}
+						arglist.Add(line);
 					}
 				}
 			}
-			catch (FatalCompilerErrorException)
+			else
 			{
-				throw;
+				arglist.Add(s);
 			}
-			catch (Exception x)
-			{
-				throw new FatalCompilerErrorException(Message.ErrorReadingFile, s.Substring(1), x.Message);
-			}
-		}
-		else
-		{
-			arglist.Add(s);
-		}
-	}
-
-	private static List<string> GetArgs(string[] args)
-	{
-		List<string> arglist = new List<string>();
-		foreach(string s in args)
-		{
-			AddArg(arglist, s, 0);
 		}
 		return arglist;
 	}
 
-	static int Main(string[] args)
+	static void Main(string[] args)
 	{
 		DateTime start = DateTime.Now;
-		System.Threading.Thread.CurrentThread.Name = "compiler";
-		Tracer.EnableTraceConsoleListener();
-		Tracer.EnableTraceForDebug();
-		try
+		int rc = RealMain(args);
+		if (time)
 		{
-			try
-			{
-				return Compile(args);
-			}
-			catch (TypeInitializationException x)
-			{
-				if (x.InnerException is FatalCompilerErrorException)
-				{
-					throw x.InnerException;
-				}
-				throw;
-			}
+			Console.WriteLine("Total cpu time: {0}", System.Diagnostics.Process.GetCurrentProcess().TotalProcessorTime);
+			Console.WriteLine("Total wall clock time: {0}", DateTime.Now - start);
 		}
-		catch (FatalCompilerErrorException x)
-		{
-			Console.Error.WriteLine(x.Message);
-			return 1;
-		}
-		catch (Exception x)
-		{
-			Console.Error.WriteLine();
-			Console.Error.WriteLine("*** INTERNAL COMPILER ERROR ***");
-			Console.Error.WriteLine();
-			Console.Error.WriteLine("PLEASE FILE A BUG REPORT FOR IKVM.NET WHEN YOU SEE THIS MESSAGE");
-			Console.Error.WriteLine();
-			Console.Error.WriteLine(System.Reflection.Assembly.GetExecutingAssembly().FullName);
-			Console.Error.WriteLine(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory());
-			Console.Error.WriteLine("{0} {1}-bit", Environment.Version, IntPtr.Size * 8);
-			Console.Error.WriteLine();
-			Console.Error.WriteLine(x);
-			return 2;
-		}
-		finally
-		{
-			if (time)
-			{
-				Console.WriteLine("Total cpu time: {0}", System.Diagnostics.Process.GetCurrentProcess().TotalProcessorTime);
-				Console.WriteLine("User cpu time: {0}", System.Diagnostics.Process.GetCurrentProcess().UserProcessorTime);
-				Console.WriteLine("Total wall clock time: {0}", DateTime.Now - start);
-				Console.WriteLine("Peak virtual memory: {0}", System.Diagnostics.Process.GetCurrentProcess().PeakVirtualMemorySize64);
-				for (int i = 0; i <= GC.MaxGeneration; i++)
-				{
-					Console.WriteLine("GC({0}) count: {1}", i, GC.CollectionCount(i));
-				}
-			}
-		}
-	}
-
-	static int Compile(string[] args)
-	{
-		List<string> argList = GetArgs(args);
-		if (argList.Count == 0 || argList.Contains("-?") || argList.Contains("-help"))
-		{
-			PrintHelp();
-			return 0;
-		}
-		if (!argList.Contains("-nologo"))
-		{
-			PrintHeader();
-		}
-		IkvmcCompiler comp = new IkvmcCompiler();
-		List<CompilerOptions> targets = new List<CompilerOptions>();
-		CompilerOptions toplevel = new CompilerOptions();
-		StaticCompiler.toplevel = toplevel;
-		comp.ParseCommandLine(argList.GetEnumerator(), targets, toplevel);
-		resolver.Warning += loader_Warning;
-		resolver.Init(StaticCompiler.Universe, nostdlib, toplevel.unresolvedReferences, libpaths);
-		ResolveReferences(targets);
-		ResolveStrongNameKeys(targets);
-		if (targets.Count == 0)
-		{
-			throw new FatalCompilerErrorException(Message.NoTargetsFound);
-		}
-		if (StaticCompiler.errorCount != 0)
-		{
-			return 1;
-		}
-		try
-		{
-			return CompilerClassLoader.Compile(runtimeAssembly, targets);
-		}
-		catch (FileFormatLimitationExceededException x)
-		{
-			throw new FatalCompilerErrorException(Message.FileFormatLimitationExceeded, x.Message);
-		}
-	}
-
-	static void loader_Warning(AssemblyResolver.WarningId warning, string message, string[] parameters)
-	{
-		switch (warning)
-		{
-			case AssemblyResolver.WarningId.HigherVersion:
-				StaticCompiler.IssueMessage(Message.AssumeAssemblyVersionMatch, parameters);
-				break;
-			case AssemblyResolver.WarningId.InvalidLibDirectoryOption:
-				StaticCompiler.IssueMessage(Message.InvalidDirectoryInLibOptionPath, parameters);
-				break;
-			case AssemblyResolver.WarningId.InvalidLibDirectoryEnvironment:
-				StaticCompiler.IssueMessage(Message.InvalidDirectoryInLibEnvironmentPath, parameters);
-				break;
-			case AssemblyResolver.WarningId.LegacySearchRule:
-				StaticCompiler.IssueMessage(Message.LegacySearchRule, parameters);
-				break;
-			case AssemblyResolver.WarningId.LocationIgnored:
-				StaticCompiler.IssueMessage(Message.AssemblyLocationIgnored, parameters);
-				break;
-			default:
-				StaticCompiler.IssueMessage(Message.UnknownWarning, string.Format(message, parameters));
-				break;
-		}
-	}
-
-	static void ResolveStrongNameKeys(List<CompilerOptions> targets)
-	{
-		foreach (CompilerOptions options in targets)
-		{
-			if (options.keyfile != null && options.keycontainer != null)
-			{
-				throw new FatalCompilerErrorException(Message.CannotSpecifyBothKeyFileAndContainer);
-			}
-			if (options.keyfile == null && options.keycontainer == null && options.delaysign)
-			{
-				throw new FatalCompilerErrorException(Message.DelaySignRequiresKey);
-			}
-			if (options.keyfile != null)
-			{
-				if (options.delaysign)
-				{
-					byte[] buf = ReadAllBytes(options.keyfile);
-					try
-					{
-						// maybe it is a key pair, if so we need to extract just the public key
-						buf = new StrongNameKeyPair(buf).PublicKey;
-					}
-					catch { }
-					options.publicKey = buf;
-				}
-				else
-				{
-					SetStrongNameKeyPair(ref options.keyPair, options.keyfile, null);
-				}
-			}
-			else if (options.keycontainer != null)
-			{
-				StrongNameKeyPair keyPair = null;
-				SetStrongNameKeyPair(ref keyPair, null, options.keycontainer);
-				if (options.delaysign)
-				{
-					options.publicKey = keyPair.PublicKey;
-				}
-				else
-				{
-					options.keyPair = keyPair;
-				}
-			}
-		}
-	}
-
-	internal static byte[] ReadAllBytes(FileInfo path)
-	{
-		try
-		{
-			return File.ReadAllBytes(path.FullName);
-		}
-		catch (Exception x)
-		{
-			throw new FatalCompilerErrorException(Message.ErrorReadingFile, path.ToString(), x.Message);
-		}
+		// FXBUG if we run a static initializer that starts a thread, we would never end,
+		// so we force an exit here
+		Environment.Exit(rc);
 	}
 
 	static string GetVersionAndCopyrightInfo()
 	{
-		System.Reflection.Assembly asm = System.Reflection.Assembly.GetEntryAssembly();
-		object[] desc = asm.GetCustomAttributes(typeof(System.Reflection.AssemblyTitleAttribute), false);
+		Assembly asm = Assembly.GetEntryAssembly();
+		object[] desc = asm.GetCustomAttributes(typeof(AssemblyTitleAttribute), false);
 		if (desc.Length == 1)
 		{
-			object[] copyright = asm.GetCustomAttributes(typeof(System.Reflection.AssemblyCopyrightAttribute), false);
+			object[] copyright = asm.GetCustomAttributes(typeof(AssemblyCopyrightAttribute), false);
 			if (copyright.Length == 1)
 			{
 				return string.Format("{0} version {1}{2}{3}{2}http://www.ikvm.net/",
-					((System.Reflection.AssemblyTitleAttribute)desc[0]).Title,
+					((AssemblyTitleAttribute)desc[0]).Title,
 					asm.GetName().Version,
 					Environment.NewLine,
-					((System.Reflection.AssemblyCopyrightAttribute)copyright[0]).Copyright);
+					((AssemblyCopyrightAttribute)copyright[0]).Copyright);
 			}
 		}
 		return "";
 	}
 
-	private static void PrintHeader()
+	static int RealMain(string[] args)
 	{
-		Console.Error.WriteLine(GetVersionAndCopyrightInfo());
-		Console.Error.WriteLine();
-	}
-
-	private static void PrintHelp()
-	{
-		PrintHeader();
-		Console.Error.WriteLine("Usage: ikvmc [-options] <classOrJar1> ... <classOrJarN>");
-		Console.Error.WriteLine();
-		Console.Error.WriteLine("Compiler Options:");
-		Console.Error.WriteLine();
-		Console.Error.WriteLine("                      - OUTPUT FILES -");
-		Console.Error.WriteLine("-out:<outputfile>              Specify the output filename");
-		Console.Error.WriteLine("-assembly:<name>               Specify assembly name");
-		Console.Error.WriteLine("-version:<M.m.b.r>             Specify assembly version");
-		Console.Error.WriteLine("-target:exe                    Build a console executable");
-		Console.Error.WriteLine("-target:winexe                 Build a windows executable");
-		Console.Error.WriteLine("-target:library                Build a library");
-		Console.Error.WriteLine("-target:module                 Build a module for use by the linker");
-		Console.Error.WriteLine("-platform:<string>             Limit which platforms this code can run on:");
-		Console.Error.WriteLine("                               x86, x64, arm, anycpu32bitpreferred, or");
-		Console.Error.WriteLine("                               anycpu. The default is anycpu.");
-		Console.Error.WriteLine("-keyfile:<keyfilename>         Use keyfile to sign the assembly");
-		Console.Error.WriteLine("-key:<keycontainer>            Use keycontainer to sign the assembly");
-		Console.Error.WriteLine("-delaysign                     Delay-sign the assembly");
-		Console.Error.WriteLine();
-		Console.Error.WriteLine("                      - INPUT FILES -");
-		Console.Error.WriteLine("-reference:<filespec>          Reference an assembly (short form -r:<filespec>)");
-		Console.Error.WriteLine("-recurse:<filespec>            Recurse directory and include matching files");
-		Console.Error.WriteLine("-exclude:<filename>            A file containing a list of classes to exclude");
-		Console.Error.WriteLine();
-		Console.Error.WriteLine("                      - RESOURCES -");
-		Console.Error.WriteLine("-fileversion:<version>         File version");
-		Console.Error.WriteLine("-win32icon:<file>              Embed specified icon in output");
-		Console.Error.WriteLine("-win32manifest:<file>          Specify a Win32 manifest file (.xml)");
-		Console.Error.WriteLine("-resource:<name>=<path>        Include file as Java resource");
-		Console.Error.WriteLine("-externalresource:<name>=<path>");
-		Console.Error.WriteLine("                               Reference file as Java resource");
-		Console.Error.WriteLine("-compressresources             Compress resources");
-		Console.Error.WriteLine();
-		Console.Error.WriteLine("                      - CODE GENERATION -");
-		Console.Error.WriteLine("-debug                         Generate debug info for the output file");
-		Console.Error.WriteLine("                               (Note that this also causes the compiler to");
-		Console.Error.WriteLine("                               generated somewhat less efficient CIL code.)");
-		Console.Error.WriteLine("-noautoserialization           Disable automatic .NET serialization support");
-		Console.Error.WriteLine("-noglobbing                    Don't glob the arguments passed to main");
-		Console.Error.WriteLine("-nojni                         Do not generate JNI stub for native methods");
-		Console.Error.WriteLine("-opt:fields                    Remove unused private fields");
-		Console.Error.WriteLine("-removeassertions              Remove all assert statements");
-		Console.Error.WriteLine("-strictfinalfieldsemantics     Don't allow final fields to be modified outside");
-		Console.Error.WriteLine("                               of initializer methods");
-		Console.Error.WriteLine();
-		Console.Error.WriteLine("                      - ERRORS AND WARNINGS -");
-		Console.Error.WriteLine("-nowarn:<warning[:key]>        Suppress specified warnings");
-		Console.Error.WriteLine("-warnaserror                   Treat all warnings as errors");
-		Console.Error.WriteLine("-warnaserror:<warning[:key]>   Treat specified warnings as errors");
-		Console.Error.WriteLine("-writeSuppressWarningsFile:<file>");
-		Console.Error.WriteLine("                               Write response file with -nowarn:<warning[:key]>");
-		Console.Error.WriteLine("                               options to suppress all encountered warnings");
-		Console.Error.WriteLine();
-		Console.Error.WriteLine("                      - MISCELLANEOUS -");
-		Console.Error.WriteLine("@<filename>                    Read more options from file");
-		Console.Error.WriteLine("-help                          Display this usage message (Short form: -?)");
-		Console.Error.WriteLine("-nologo                        Suppress compiler copyright message");
-		Console.Error.WriteLine();
-		Console.Error.WriteLine("                      - ADVANCED -");
-		Console.Error.WriteLine("-main:<class>                  Specify the class containing the main method");
-		Console.Error.WriteLine("-srcpath:<path>                Prepend path and package name to source file");
-		Console.Error.WriteLine("-apartment:sta                 (default) Apply STAThreadAttribute to main");
-		Console.Error.WriteLine("-apartment:mta                 Apply MTAThreadAttribute to main");
-		Console.Error.WriteLine("-apartment:none                Don't apply STAThreadAttribute to main");
-		Console.Error.WriteLine("-D<name>=<value>               Set system property (at runtime)");
-		Console.Error.WriteLine("-ea[:<packagename>...|:<classname>]");
-		Console.Error.WriteLine("-enableassertions[:<packagename>...|:<classname>]");
-		Console.Error.WriteLine("                               Set system property to enable assertions");
-		Console.Error.WriteLine("-da[:<packagename>...|:<classname>]");
-		Console.Error.WriteLine("-disableassertions[:<packagename>...|:<classname>]");
-		Console.Error.WriteLine("                               Set system property to disable assertions");
-		Console.Error.WriteLine("-nostacktraceinfo              Don't create metadata to emit rich stack traces");
-		Console.Error.WriteLine("-Xtrace:<string>               Displays all tracepoints with the given name");
-		Console.Error.WriteLine("-Xmethodtrace:<string>         Build tracing into the specified output methods");
-		Console.Error.WriteLine("-privatepackage:<prefix>       Mark all classes with a package name starting");
-		Console.Error.WriteLine("                               with <prefix> as internal to the assembly");
-		Console.Error.WriteLine("-time                          Display timing statistics");
-		Console.Error.WriteLine("-classloader:<class>           Set custom class loader class for assembly");
-		Console.Error.WriteLine("-sharedclassloader             All targets below this level share a common");
-		Console.Error.WriteLine("                               class loader");
-		Console.Error.WriteLine("-baseaddress:<address>         Base address for the library to be built");
-		Console.Error.WriteLine("-filealign:<n>                 Specify the alignment used for output file");
-		Console.Error.WriteLine("-nopeercrossreference          Do not automatically cross reference all peers");
-		Console.Error.WriteLine("-nostdlib                      Do not reference standard libraries");
-		Console.Error.WriteLine("-lib:<dir>                     Additional directories to search for references");
-		Console.Error.WriteLine("-highentropyva                 Enable high entropy ASLR");
-		Console.Error.WriteLine("-static                        Disable dynamic binding");
-	}
-
-	void ParseCommandLine(IEnumerator<string> arglist, List<CompilerOptions> targets, CompilerOptions options)
-	{
-		options.target = PEFileKinds.ConsoleApplication;
+#if WHIDBEY
+		AppDomain.CurrentDomain.ReflectionOnlyAssemblyResolve += new ResolveEventHandler(CurrentDomain_AssemblyResolve);
+#else
+		AppDomain.CurrentDomain.AssemblyResolve += new ResolveEventHandler(CurrentDomain_AssemblyResolve);
+#endif
+		System.Threading.Thread.CurrentThread.Name = "compiler";
+		Tracer.EnableTraceForDebug();
+		CompilerOptions options = new CompilerOptions();
+		options.target = System.Reflection.Emit.PEFileKinds.ConsoleApplication;
 		options.guessFileKind = true;
-		options.version = new Version(0, 0, 0, 0);
+		options.version = "0.0.0.0";
 		options.apartment = ApartmentState.STA;
-		options.props = new Dictionary<string, string>();
-		ContinueParseCommandLine(arglist, targets, options);
-	}
-
-	void ContinueParseCommandLine(IEnumerator<string> arglist, List<CompilerOptions> targets, CompilerOptions options)
-	{
-		List<string> fileNames = new List<string>();
-		while(arglist.MoveNext())
+		string defaultAssemblyName = null;
+		ArrayList classesToExclude = new ArrayList();
+		ArrayList references = new ArrayList();
+		ArrayList arglist = GetArgs(args);
+		options.props = new Hashtable();
+		if(arglist.Count == 0)
 		{
-			string s = arglist.Current;
-			if(s == "{")
-			{
-				if (!nonleaf)
-				{
-					ReadFiles(options, fileNames);
-					nonleaf = true;
-				}
-				IkvmcCompiler nestedLevel = new IkvmcCompiler();
-				nestedLevel.manifestMainClass = manifestMainClass;
-				nestedLevel.defaultAssemblyName = defaultAssemblyName;
-				nestedLevel.classesToExclude = new List<string>(classesToExclude);
-				nestedLevel.ContinueParseCommandLine(arglist, targets, options.Copy());
-			}
-			else if(s == "}")
-			{
-				break;
-			}
-			else if(nonleaf)
-			{
-				throw new FatalCompilerErrorException(Message.OptionsMustPreceedChildLevels);
-			}
-			else if(s[0] == '-')
+			Console.Error.WriteLine(GetVersionAndCopyrightInfo());
+			Console.Error.WriteLine();
+			Console.Error.WriteLine("usage: ikvmc [-options] <classOrJar1> ... <classOrJarN>");
+			Console.Error.WriteLine();
+			Console.Error.WriteLine("options:");
+			Console.Error.WriteLine("    @<filename>                Read more options from file");
+			Console.Error.WriteLine("    -out:<outputfile>          Specify the output filename");
+			Console.Error.WriteLine("    -assembly:<name>           Specify assembly name");
+			Console.Error.WriteLine("    -target:exe                Build a console executable");
+			Console.Error.WriteLine("    -target:winexe             Build a windows executable");
+			Console.Error.WriteLine("    -target:library            Build a library");
+			Console.Error.WriteLine("    -target:module             Build a module for use by the linker");
+			Console.Error.WriteLine("    -keyfile:<keyfilename>     Use keyfile to sign the assembly");
+			Console.Error.WriteLine("    -key:<keycontainer>        Use keycontainer to sign the assembly");
+			Console.Error.WriteLine("    -version:<M.m.b.r>         Assembly version");
+			Console.Error.WriteLine("    -fileversion:<version>     File version");
+			Console.Error.WriteLine("    -main:<class>              Specify the class containing the main method");
+			Console.Error.WriteLine("    -reference:<filespec>      Reference an assembly (short form -r:<filespec>)");
+			Console.Error.WriteLine("    -recurse:<filespec>        Recurse directory and include matching files");
+			Console.Error.WriteLine("    -nojni                     Do not generate JNI stub for native methods");
+			Console.Error.WriteLine("    -resource:<name>=<path>    Include file as Java resource");
+			Console.Error.WriteLine("    -externalresource:<name>=<path>");
+			Console.Error.WriteLine("                               Reference file as Java resource");
+			Console.Error.WriteLine("    -exclude:<filename>        A file containing a list of classes to exclude");
+			Console.Error.WriteLine("    -debug                     Generate debug info for the output file");
+			Console.Error.WriteLine("                               (Note that this also causes the compiler to");
+			Console.Error.WriteLine("                               generated somewhat less efficient CIL code.)");
+			Console.Error.WriteLine("    -srcpath:<path>            Prepend path and package name to source file");
+			Console.Error.WriteLine("    -apartment:sta             (default) Apply STAThreadAttribute to main");
+			Console.Error.WriteLine("    -apartment:mta             Apply MTAThreadAttribute to main");
+			Console.Error.WriteLine("    -apartment:none            Don't apply STAThreadAttribute to main");
+			Console.Error.WriteLine("    -noglobbing                Don't glob the arguments");
+			Console.Error.WriteLine("    -D<name>=<value>           Set system property (at runtime)");
+			Console.Error.WriteLine("    -ea[:<packagename>...|:<classname>]");
+			Console.Error.WriteLine("    -enableassertions[:<packagename>...|:<classname>]");
+			Console.Error.WriteLine("                               Set system property to enable assertions");
+			Console.Error.WriteLine("    -da[:<packagename>...|:<classname>]");
+			Console.Error.WriteLine("    -disableassertions[:<packagename>...|:<classname>]");
+			Console.Error.WriteLine("                               Set system property to disable assertions");
+			Console.Error.WriteLine("    -nostacktraceinfo          Don't create metadata to emit rich stack traces");
+			Console.Error.WriteLine("    -opt:fields                Remove unused private fields");
+			Console.Error.WriteLine("    -Xtrace:<string>           Displays all tracepoints with the given name");
+			Console.Error.WriteLine("    -Xmethodtrace:<string>     Build tracing into the specified output methods");
+			Console.Error.WriteLine("    -compressresources         Compress resources");
+			Console.Error.WriteLine("    -strictfinalfieldsemantics Don't allow final fields to be modified outside");
+			Console.Error.WriteLine("                               of initializer methods");
+			Console.Error.WriteLine("    -privatepackage:<prefix>   Mark all classes with a package name starting");
+			Console.Error.WriteLine("                               with <prefix> as internal to the assembly");
+			Console.Error.WriteLine("    -nowarn:<warning[:key]>    Suppress specified warnings");
+			Console.Error.WriteLine("    -warnaserror:<warning[:key]>  Treat specified warnings as errors");
+			Console.Error.WriteLine("    -time                      Display timing statistics");
+			Console.Error.WriteLine("    -classloader:<class>       Set custom class loader class for assembly");
+			return 1;
+		}
+		foreach(string s in arglist)
+		{
+			if(s[0] == '-')
 			{
 				if(s.StartsWith("-out:"))
 				{
-					options.path = GetFileInfo(s.Substring(5));
+					options.path = s.Substring(5);
 				}
 				else if(s.StartsWith("-Xtrace:"))
 				{
@@ -577,52 +194,25 @@ sealed class IkvmcCompiler
 					switch(s)
 					{
 						case "-target:exe":
-							options.target = PEFileKinds.ConsoleApplication;
+							options.target = System.Reflection.Emit.PEFileKinds.ConsoleApplication;
 							options.guessFileKind = false;
 							break;
 						case "-target:winexe":
-							options.target = PEFileKinds.WindowApplication;
+							options.target = System.Reflection.Emit.PEFileKinds.WindowApplication;
 							options.guessFileKind = false;
 							break;
 						case "-target:module":
 							options.targetIsModule = true;
-							options.target = PEFileKinds.Dll;
+							options.target = System.Reflection.Emit.PEFileKinds.Dll;
 							options.guessFileKind = false;
 							break;
 						case "-target:library":
-							options.target = PEFileKinds.Dll;
+							options.target = System.Reflection.Emit.PEFileKinds.Dll;
 							options.guessFileKind = false;
 							break;
 						default:
-							throw new FatalCompilerErrorException(Message.UnrecognizedTargetType, s.Substring(8));
-					}
-				}
-				else if(s.StartsWith("-platform:"))
-				{
-					switch(s)
-					{
-						case "-platform:x86":
-							options.pekind = PortableExecutableKinds.ILOnly | PortableExecutableKinds.Required32Bit;
-							options.imageFileMachine = ImageFileMachine.I386;
+							Console.Error.WriteLine("Warning: unrecognized option: {0}", s);
 							break;
-						case "-platform:x64":
-							options.pekind = PortableExecutableKinds.ILOnly | PortableExecutableKinds.PE32Plus;
-							options.imageFileMachine = ImageFileMachine.AMD64;
-							break;
-						case "-platform:arm":
-							options.pekind = PortableExecutableKinds.ILOnly;
-							options.imageFileMachine = ImageFileMachine.ARM;
-							break;
-						case "-platform:anycpu32bitpreferred":
-							options.pekind = PortableExecutableKinds.ILOnly | PortableExecutableKinds.Preferred32Bit;
-							options.imageFileMachine = ImageFileMachine.I386;
-							break;
-						case "-platform:anycpu":
-							options.pekind = PortableExecutableKinds.ILOnly;
-							options.imageFileMachine = ImageFileMachine.I386;
-							break;
-						default:
-							throw new FatalCompilerErrorException(Message.UnrecognizedPlatform, s.Substring(10));
 					}
 				}
 				else if(s.StartsWith("-apartment:"))
@@ -639,7 +229,8 @@ sealed class IkvmcCompiler
 							options.apartment = ApartmentState.Unknown;
 							break;
 						default:
-							throw new FatalCompilerErrorException(Message.UnrecognizedApartment, s.Substring(11));
+							Console.Error.WriteLine("Warning: unrecognized option: {0}", s);
+							break;
 					}
 				}
 				else if(s == "-noglobbing")
@@ -671,10 +262,6 @@ sealed class IkvmcCompiler
 				{
 					options.props["ikvm.assert.disable"] = s.Substring(s.IndexOf(':') + 1);
 				}
-				else if(s == "-removeassertions")
-				{
-					options.codegenoptions |= CodeGenOptions.RemoveAsserts;
-				}
 				else if(s.StartsWith("-main:"))
 				{
 					options.mainClass = s.Substring(6);
@@ -682,11 +269,22 @@ sealed class IkvmcCompiler
 				else if(s.StartsWith("-reference:") || s.StartsWith("-r:"))
 				{
 					string r = s.Substring(s.IndexOf(':') + 1);
-					if(r == "")
+					string path = Path.GetDirectoryName(r);
+					string[] files = Directory.GetFiles(path == "" ? "." : path, Path.GetFileName(r));
+					if(files.Length == 0)
 					{
-						throw new FatalCompilerErrorException(Message.MissingFileSpecification, s);
+						Assembly asm = Assembly.LoadWithPartialName(r);
+						if(asm == null)
+						{
+							Console.Error.WriteLine("Error: reference not found: {0}", r);
+							return 1;
+						}
+						files = new string[] { asm.Location };
 					}
-					ArrayAppend(ref options.unresolvedReferences, r);
+					foreach(string f in files)
+					{
+						references.Add(f);
+					}
 				}
 				else if(s.StartsWith("-recurse:"))
 				{
@@ -700,71 +298,75 @@ sealed class IkvmcCompiler
 					catch(IOException)
 					{
 					}
-					bool found;
 					if(exists)
 					{
 						DirectoryInfo dir = new DirectoryInfo(spec);
-						found = Recurse(options, dir, dir, "*");
+						Recurse(dir, dir, "*");
 					}
 					else
 					{
 						try
 						{
 							DirectoryInfo dir = new DirectoryInfo(Path.GetDirectoryName(spec));
-							if(dir.Exists)
-							{
-								found = Recurse(options, dir, dir, Path.GetFileName(spec));
-							}
-							else
-							{
-								found = RecurseJar(options, spec);
-							}
+							Recurse(dir, dir, Path.GetFileName(spec));
 						}
 						catch(PathTooLongException)
 						{
-							throw new FatalCompilerErrorException(Message.PathTooLong, spec);
+							Console.Error.WriteLine("Error: path too long: {0}", spec);
+							return 1;
 						}
 						catch(DirectoryNotFoundException)
 						{
-							throw new FatalCompilerErrorException(Message.PathNotFound, spec);
+							Console.Error.WriteLine("Error: path not found: {0}", spec);
+							return 1;
 						}
 						catch(ArgumentException)
 						{
-							throw new FatalCompilerErrorException(Message.InvalidPath, spec);
+							Console.Error.WriteLine("Error: invalid path: {0}", spec);
+							return 1;
 						}
-					}
-					if(!found)
-					{
-						throw new FatalCompilerErrorException(Message.FileNotFound, spec);
 					}
 				}
 				else if(s.StartsWith("-resource:"))
 				{
 					string[] spec = s.Substring(10).Split('=');
-					if(spec.Length != 2)
+					try
 					{
-						throw new FatalCompilerErrorException(Message.InvalidOptionSyntax, s);
+						using(FileStream fs = new FileStream(spec[1], FileMode.Open, FileAccess.Read))
+						{
+							byte[] b = new byte[fs.Length];
+							fs.Read(b, 0, b.Length);
+							string name = spec[0];
+							if(name.StartsWith("/"))
+							{
+								// a leading slash is not required, so strip it
+								name = name.Substring(1);
+							}
+							AddResource(name, b);
+						}
 					}
-					options.GetResourcesJar().Add(spec[0].TrimStart('/'), ReadAllBytes(GetFileInfo(spec[1])), null);
+					catch(Exception x)
+					{
+						Console.Error.WriteLine("Error: {0}: {1}", x.Message, spec[1]);
+						return 1;
+					}
 				}
 				else if(s.StartsWith("-externalresource:"))
 				{
 					string[] spec = s.Substring(18).Split('=');
-					if(spec.Length != 2)
-					{
-						throw new FatalCompilerErrorException(Message.InvalidOptionSyntax, s);
-					}
 					if(!File.Exists(spec[1]))
 					{
-						throw new FatalCompilerErrorException(Message.ExternalResourceNotFound, spec[1]);
+						Console.Error.WriteLine("Error: external resource file does not exist: {0}", spec[1]);
+						return 1;
 					}
 					if(Path.GetFileName(spec[1]) != spec[1])
 					{
-						throw new FatalCompilerErrorException(Message.ExternalResourceNameInvalid, spec[1]);
+						Console.Error.WriteLine("Error: external resource file may not include path specification: {0}", spec[1]);
+						return 1;
 					}
 					if(options.externalResources == null)
 					{
-						options.externalResources = new Dictionary<string, string>();
+						options.externalResources = new Hashtable();
 					}
 					// TODO resource name clashes should be tested
 					options.externalResources.Add(spec[0], spec[1]);
@@ -779,35 +381,43 @@ sealed class IkvmcCompiler
 				}
 				else if(s.StartsWith("-version:"))
 				{
-					string str = s.Substring(9);
-					if(!TryParseVersion(s.Substring(9), out options.version))
+					options.version = s.Substring(9);
+					if(options.version.EndsWith(".*"))
 					{
-						throw new FatalCompilerErrorException(Message.InvalidVersionFormat, str);
+						options.version = options.version.Substring(0, options.version.Length - 1);
+						int count = options.version.Split('.').Length;
+						// NOTE this is the published algorithm for generating automatic build and revision numbers
+						// (see AssemblyVersionAttribute constructor docs), but it turns out that the revision
+						// number is off an hour (on my system)...
+						DateTime now = DateTime.Now;
+						int seconds = (int)(now.TimeOfDay.TotalSeconds / 2);
+						int days = (int)(now - new DateTime(2000, 1, 1)).TotalDays;
+						if(count == 3)
+						{
+							options.version += days + "." + seconds;
+						}
+						else if(count == 4)
+						{
+							options.version += seconds;
+						}
+						else
+						{
+							Console.Error.WriteLine("Error: Invalid version specified: {0}*", options.version);
+							return 1;
+						}
 					}
 				}
 				else if(s.StartsWith("-fileversion:"))
 				{
 					options.fileversion = s.Substring(13);
 				}
-				else if(s.StartsWith("-win32icon:"))
-				{
-					options.iconfile = GetFileInfo(s.Substring(11));
-				}
-				else if(s.StartsWith("-win32manifest:"))
-				{
-					options.manifestFile = GetFileInfo(s.Substring(15));
-				}
 				else if(s.StartsWith("-keyfile:"))
 				{
-					options.keyfile = GetFileInfo(s.Substring(9));
+					options.keyfilename = s.Substring(9);
 				}
 				else if(s.StartsWith("-key:"))
 				{
 					options.keycontainer = s.Substring(5);
-				}
-				else if(s == "-delaysign")
-				{
-					options.delaysign = true;
 				}
 				else if(s == "-debug")
 				{
@@ -819,7 +429,7 @@ sealed class IkvmcCompiler
 				}
 				else if(s.StartsWith("-remap:"))
 				{
-					options.remapfile = GetFileInfo(s.Substring(7));
+					options.remapfile = s.Substring(7);
 				}
 				else if(s == "-nostacktraceinfo")
 				{
@@ -840,12 +450,17 @@ sealed class IkvmcCompiler
 				else if(s.StartsWith("-privatepackage:"))
 				{
 					string prefix = s.Substring(16);
-					ArrayAppend(ref options.privatePackages, prefix);
-				}
-				else if(s.StartsWith("-publicpackage:"))
-				{
-					string prefix = s.Substring(15);
-					ArrayAppend(ref options.publicPackages, prefix);
+					if(options.privatePackages == null)
+					{
+						options.privatePackages = new string[] { prefix };
+					}
+					else
+					{
+						string[] temp = new string[options.privatePackages.Length + 1];
+						Array.Copy(options.privatePackages, 0, temp, 0, options.privatePackages.Length);
+						temp[temp.Length - 1] = prefix;
+						options.privatePackages = temp;
+					}
 				}
 				else if(s.StartsWith("-nowarn:"))
 				{
@@ -857,12 +472,8 @@ sealed class IkvmcCompiler
 						{
 							ws = ws.Substring(1);
 						}
-						options.suppressWarnings[ws] = ws;
+						StaticCompiler.SuppressWarning(ws);
 					}
-				}
-				else if(s == "-warnaserror")
-				{
-					options.warnaserror = true;
 				}
 				else if(s.StartsWith("-warnaserror:"))
 				{
@@ -874,13 +485,13 @@ sealed class IkvmcCompiler
 						{
 							ws = ws.Substring(1);
 						}
-						options.errorWarnings[ws] = ws;
+						StaticCompiler.WarnAsError(ws);
 					}
 				}
 				else if(s.StartsWith("-runtime:"))
 				{
 					// NOTE this is an undocumented option
-					runtimeAssembly = s.Substring(9);
+					options.runtimeAssembly = s.Substring(9);
 				}
 				else if(s == "-time")
 				{
@@ -890,124 +501,54 @@ sealed class IkvmcCompiler
 				{
 					options.classLoader = s.Substring(13);
 				}
-				else if(s == "-sharedclassloader")
-				{
-					if(options.sharedclassloader == null)
-					{
-						options.sharedclassloader = new List<CompilerClassLoader>();
-					}
-				}
-				else if(s.StartsWith("-baseaddress:"))
-				{
-					string baseAddress = s.Substring(13);
-					ulong baseAddressParsed;
-					if (baseAddress.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
-					{
-						baseAddressParsed = UInt64.Parse(baseAddress.Substring(2), System.Globalization.NumberStyles.AllowHexSpecifier);
-					}
-					else
-					{
-						// note that unlike CSC we don't support octal
-						baseAddressParsed = UInt64.Parse(baseAddress);
-					}
-					options.baseAddress = (long)(baseAddressParsed & 0xFFFFFFFFFFFF0000UL);
-				}
-				else if(s.StartsWith("-filealign:"))
-				{
-					int filealign;
-					if (!Int32.TryParse(s.Substring(11), out filealign)
-						|| filealign < 512
-						|| filealign > 8192
-						|| (filealign & (filealign - 1)) != 0)
-					{
-						throw new FatalCompilerErrorException(Message.InvalidFileAlignment, s.Substring(11));
-					}
-					options.fileAlignment = filealign;
-				}
-				else if(s == "-nopeercrossreference")
-				{
-					options.crossReferenceAllPeers = false;
-				}
-				else if(s=="-nostdlib")
-				{
-					// this is a global option
-					nostdlib = true;
-				}
-				else if(s.StartsWith("-lib:"))
-				{
-					// this is a global option
-					libpaths.Add(s.Substring(5));
-				}
-				else if(s == "-noautoserialization")
-				{
-					options.codegenoptions |= CodeGenOptions.NoAutomagicSerialization;
-				}
-				else if(s == "-highentropyva")
-				{
-					options.highentropyva = true;
-				}
-				else if(s.StartsWith("-writeSuppressWarningsFile:"))
-				{
-					options.writeSuppressWarningsFile = GetFileInfo(s.Substring(27));
-					try
-					{
-						options.writeSuppressWarningsFile.Delete();
-					}
-					catch(Exception x)
-					{
-						throw new FatalCompilerErrorException(Message.ErrorWritingFile, options.writeSuppressWarningsFile, x.Message);
-					}
-				}
-				else if(s.StartsWith("-proxy:")) // currently undocumented!
-				{
-					string proxy = s.Substring(7);
-					if(options.proxies.Contains(proxy))
-					{
-						StaticCompiler.IssueMessage(Message.DuplicateProxy, proxy);
-					}
-					options.proxies.Add(proxy);
-				}
-				else if(s == "-nologo")
-				{
-					// Ignore. This is handled earlier.
-				}
-				else if(s == "-XX:+AllowNonVirtualCalls")
-				{
-					JVM.AllowNonVirtualCalls = true;
-				}
-				else if(s == "-static")
-				{
-					options.codegenoptions |= CodeGenOptions.DisableDynamicBinding;
-				}
-				else if(s == "-nojarstubs")	// undocumented temporary option to mitigate risk
-				{
-					options.nojarstubs = true;
-				}
 				else
 				{
-					throw new FatalCompilerErrorException(Message.UnrecognizedOption, s);
+					Console.Error.WriteLine("Warning: unrecognized option: {0}", s);
 				}
 			}
 			else
 			{
-				fileNames.Add(s);
-			}
-			if(options.targetIsModule && options.sharedclassloader != null)
-			{
-				throw new FatalCompilerErrorException(Message.SharedClassLoaderCannotBeUsedOnModuleTarget);
+				if(defaultAssemblyName == null)
+				{
+					try
+					{
+						defaultAssemblyName = new FileInfo(Path.GetFileName(s)).Name;
+					}
+					catch(ArgumentException)
+					{
+						// if the filename contains a wildcard (or any other invalid character), we ignore
+						// it as a potential default assembly name
+					}
+				}
+				string[] files;
+				try
+				{
+					string path = Path.GetDirectoryName(s);
+					files = Directory.GetFiles(path == "" ? "." : path, Path.GetFileName(s));
+				}
+				catch(Exception)
+				{
+					Console.Error.WriteLine("Error: invalid filename: {0}", s);
+					return 1;
+				}
+				if(files.Length == 0)
+				{
+					Console.Error.WriteLine("Error: file not found: {0}", s);
+					return 1;
+				}
+				foreach(string f in files)
+				{
+					ProcessFile(null, f);
+				}
 			}
 		}
-		if(nonleaf)
-		{
-			return;
-		}
-		ReadFiles(options, fileNames);
 		if(options.assembly == null)
 		{
-			string basename = options.path == null ? defaultAssemblyName : options.path.Name;
+			string basename = options.path == null ? defaultAssemblyName : new FileInfo(options.path).Name;
 			if(basename == null)
 			{
-				throw new FatalCompilerErrorException(Message.NoOutputFileSpecified);
+				Console.Error.WriteLine("Error: no output file specified");
+				return 1;
 			}
 			int idx = basename.LastIndexOf('.');
 			if(idx > 0)
@@ -1021,227 +562,29 @@ sealed class IkvmcCompiler
 		}
 		if(options.path != null && options.guessFileKind)
 		{
-			if(options.path.Extension.Equals(".dll", StringComparison.OrdinalIgnoreCase))
+			if(options.path.ToLower().EndsWith(".dll"))
 			{
-				options.target = PEFileKinds.Dll;
+				options.target = System.Reflection.Emit.PEFileKinds.Dll;
 			}
 			options.guessFileKind = false;
 		}
-		if(options.mainClass == null && manifestMainClass != null && (options.guessFileKind || options.target != PEFileKinds.Dll))
+		if(options.mainClass == null && manifestMainClass != null && (options.guessFileKind || options.target != System.Reflection.Emit.PEFileKinds.Dll))
 		{
-			StaticCompiler.IssueMessage(options, Message.MainMethodFromManifest, manifestMainClass);
+			StaticCompiler.IssueMessage(Message.MainMethodFromManifest, manifestMainClass);
 			options.mainClass = manifestMainClass;
 		}
-		options.classesToExclude = classesToExclude.ToArray();
-		targets.Add(options);
-	}
-
-	internal static FileInfo GetFileInfo(string path)
-	{
 		try
 		{
-			FileInfo fileInfo = new FileInfo(path);
-			if (fileInfo.Directory == null)
-			{
-				// this happens with an incorrect unc path (e.g. "\\foo\bar")
-				throw new FatalCompilerErrorException(Message.InvalidPath, path);
-			}
-			return fileInfo;
+			options.classes = classes;
+			options.references = (string[])references.ToArray(typeof(string));
+			options.resources = resources;
+			options.classesToExclude = (string[])classesToExclude.ToArray(typeof(string));
+			return CompilerClassLoader.Compile(options);
 		}
-		catch (ArgumentException)
+		catch(Exception x)
 		{
-			throw new FatalCompilerErrorException(Message.InvalidPath, path);
-		}
-		catch (NotSupportedException)
-		{
-			throw new FatalCompilerErrorException(Message.InvalidPath, path);
-		}
-		catch (PathTooLongException)
-		{
-			throw new FatalCompilerErrorException(Message.PathTooLong, path);
-		}
-		catch (UnauthorizedAccessException)
-		{
-			// this exception does not appear to be possible
-			throw new FatalCompilerErrorException(Message.InvalidPath, path);
-		}
-	}
-
-	private void ReadFiles(CompilerOptions options, List<string> fileNames)
-	{
-		foreach (string fileName in fileNames)
-		{
-			if (defaultAssemblyName == null)
-			{
-				try
-				{
-					defaultAssemblyName = new FileInfo(Path.GetFileName(fileName)).Name;
-				}
-				catch (ArgumentException)
-				{
-					// if the filename contains a wildcard (or any other invalid character), we ignore
-					// it as a potential default assembly name
-				}
-				catch (NotSupportedException)
-				{
-				}
-				catch (PathTooLongException)
-				{
-				}
-			}
-			string[] files = null;
-			try
-			{
-				string path = Path.GetDirectoryName(fileName);
-				files = Directory.GetFiles(path == "" ? "." : path, Path.GetFileName(fileName));
-			}
-			catch { }
-			if (files == null || files.Length == 0)
-			{
-				StaticCompiler.IssueMessage(Message.InputFileNotFound, fileName);
-			}
-			else
-			{
-				foreach (string f in files)
-				{
-					ProcessFile(options, null, f);
-				}
-			}
-		}
-	}
-
-	internal static bool TryParseVersion(string str, out Version version)
-	{
-		if (str.EndsWith(".*"))
-		{
-			str = str.Substring(0, str.Length - 1);
-			int count = str.Split('.').Length;
-			// NOTE this is the published algorithm for generating automatic build and revision numbers
-			// (see AssemblyVersionAttribute constructor docs), but it turns out that the revision
-			// number is off an hour (on my system)...
-			DateTime now = DateTime.Now;
-			int seconds = (int)(now.TimeOfDay.TotalSeconds / 2);
-			int days = (int)(now - new DateTime(2000, 1, 1)).TotalDays;
-			if (count == 3)
-			{
-				str += days + "." + seconds;
-			}
-			else if (count == 4)
-			{
-				str += seconds;
-			}
-			else
-			{
-				version = null;
-				return false;
-			}
-		}
-		try
-		{
-			version = new Version(str);
-			return version.Major <= 65535 && version.Minor <= 65535 && version.Build <= 65535 && version.Revision <= 65535;
-		}
-		catch (ArgumentException) { }
-		catch (FormatException) { }
-		catch (OverflowException) { }
-		version = null;
-		return false;
-	}
-
-	static void SetStrongNameKeyPair(ref StrongNameKeyPair strongNameKeyPair, FileInfo keyFile, string keyContainer)
-	{
-		try
-		{
-			if (keyFile != null)
-			{
-				strongNameKeyPair = new StrongNameKeyPair(ReadAllBytes(keyFile));
-			}
-			else
-			{
-				strongNameKeyPair = new StrongNameKeyPair(keyContainer);
-			}
-			// FXBUG we explicitly try to access the public key force a check (the StrongNameKeyPair constructor doesn't validate the key)
-			if (strongNameKeyPair.PublicKey != null) { }
-		}
-		catch (Exception x)
-		{
-			throw new FatalCompilerErrorException(Message.InvalidStrongNameKeyPair, keyFile != null ? "file" : "container", x.Message);
-		}
-	}
-
-	static void ResolveReferences(List<CompilerOptions> targets)
-	{
-		Dictionary<string, Assembly> cache = new Dictionary<string, Assembly>();
-		foreach (CompilerOptions target in targets)
-		{
-			if (target.unresolvedReferences != null)
-			{
-				foreach (string reference in target.unresolvedReferences)
-				{
-					foreach (CompilerOptions peer in targets)
-					{
-						if (peer.assembly.Equals(reference, StringComparison.InvariantCultureIgnoreCase))
-						{
-							ArrayAppend(ref target.peerReferences, peer.assembly);
-							goto next_reference;
-						}
-					}
-					if (!resolver.ResolveReference(cache, ref target.references, reference))
-					{
-						throw new FatalCompilerErrorException(Message.ReferenceNotFound, reference);
-					}
-				next_reference: ;
-				}
-			}
-		}
-		// verify that we didn't reference any secondary assemblies of a shared class loader group
-		foreach (CompilerOptions target in targets)
-		{
-			if (target.references != null)
-			{
-				foreach (Assembly asm in target.references)
-				{
-					Type forwarder = asm.GetType("__<MainAssembly>");
-					if (forwarder != null && forwarder.Assembly != asm)
-					{
-						StaticCompiler.IssueMessage(Message.NonPrimaryAssemblyReference, asm.Location, forwarder.Assembly.GetName().Name);
-					}
-				}
-			}
-		}
-		// add legacy references (from stub files)
-		foreach (CompilerOptions target in targets)
-		{
-			foreach (string assemblyName in target.legacyStubReferences.Keys)
-			{
-				ArrayAppend(ref target.references, resolver.LegacyLoad(new AssemblyName(assemblyName), null));
-			}
-		}
-		// now pre-load the secondary assemblies of any shared class loader groups
-		foreach (CompilerOptions target in targets)
-		{
-			if (target.references != null)
-			{
-				foreach (Assembly asm in target.references)
-				{
-					AssemblyClassLoader.PreloadExportedAssemblies(asm);
-				}
-			}
-		}
-	}
-
-	private static void ArrayAppend<T>(ref T[] array, T element)
-	{
-		if (array == null)
-		{
-			array = new T[] { element };
-		}
-		else
-		{
-			T[] temp = new T[array.Length + 1];
-			Array.Copy(array, 0, temp, 0, array.Length);
-			temp[temp.Length - 1] = element;
-			array = temp;
+			Console.Error.WriteLine(x);
+			return 1;
 		}
 	}
 
@@ -1257,224 +600,164 @@ sealed class IkvmcCompiler
 		return buf;
 	}
 
-	private static bool EmitStubWarning(CompilerOptions options, byte[] buf)
-	{
-		ClassFile cf;
-		try
-		{
-			cf = new ClassFile(buf, 0, buf.Length, "<unknown>", ClassFileParseOptions.None);
-		}
-		catch (ClassFormatError)
-		{
-			return false;
-		}
-		if (cf.IKVMAssemblyAttribute == null)
-		{
-			return false;
-		}
-		if (cf.IKVMAssemblyAttribute.StartsWith("[["))
-		{
-			Regex r = new Regex(@"\[([^\[\]]+)\]");
-			MatchCollection mc = r.Matches(cf.IKVMAssemblyAttribute);
-			foreach (Match m in mc)
-			{
-				options.legacyStubReferences[m.Groups[1].Value] = null;
-				StaticCompiler.IssueMessage(options, Message.StubsAreDeprecated, m.Groups[1].Value);
-			}
-		}
-		else
-		{
-			options.legacyStubReferences[cf.IKVMAssemblyAttribute] = null;
-			StaticCompiler.IssueMessage(options, Message.StubsAreDeprecated, cf.IKVMAssemblyAttribute);
-		}
-		return true;
-	}
-
-	private static bool IsStubLegacy(CompilerOptions options, ZipEntry ze, byte[] data)
-	{
-		if (ze.Name.EndsWith(".class", StringComparison.OrdinalIgnoreCase))
-		{
-			try
-			{
-				bool stub;
-				string name = ClassFile.GetClassName(data, 0, data.Length, out stub);
-				if (stub && EmitStubWarning(options, data))
-				{
-					// we use stubs to add references, but otherwise ignore them
-					return true;
-				}
-			}
-			catch (ClassFormatError)
-			{
-			}
-		}
-		return false;
-	}
-
-	private void ProcessManifest(CompilerOptions options, ZipFile zf, ZipEntry ze)
-	{
-		if (manifestMainClass == null)
-		{
-			// read main class from manifest
-			// TODO find out if we can use other information from manifest
-			StreamReader rdr = new StreamReader(zf.GetInputStream(ze));
-			string line;
-			while ((line = rdr.ReadLine()) != null)
-			{
-				if (line.StartsWith("Main-Class: "))
-				{
-					line = line.Substring(12);
-					string continuation;
-					while ((continuation = rdr.ReadLine()) != null
-						&& continuation.StartsWith(" ", StringComparison.Ordinal))
-					{
-						line += continuation.Substring(1);
-					}
-					manifestMainClass = line.Replace('/', '.');
-					break;
-				}
-			}
-		}
-	}
-
-	private bool ProcessZipFile(CompilerOptions options, string file, Predicate<ZipEntry> filter)
+	private static void AddClassFile(string filename, byte[] buf, bool addResourceFallback)
 	{
 		try
 		{
-			ZipFile zf = new ZipFile(file);
-			try
+			string name = ClassFile.GetClassName(buf, 0, buf.Length);
+			if(classes.ContainsKey(name))
 			{
-				bool found = false;
-				Jar jar = null;
-				foreach (ZipEntry ze in zf)
-				{
-					if (filter != null && !filter(ze))
-					{
-						// skip
-					}
-					else
-					{
-						found = true;
-						byte[] data = ReadFromZip(zf, ze);
-						if (IsStubLegacy(options, ze, data))
-						{
-							continue;
-						}
-						if (jar == null)
-						{
-							jar = options.GetJar(zf);
-						}
-						jar.Add(ze, data);
-						if (ze.Name == "META-INF/MANIFEST.MF")
-						{
-							ProcessManifest(options, zf, ze);
-						}
-					}
-				}
-				// include empty zip file if it has a comment
-				if (!found && !string.IsNullOrEmpty(zf.ZipFileComment))
-				{
-					options.GetJar(zf);
-				}
-				return found;
-			}
-			finally
-			{
-				zf.Close();
-			}
-		}
-		catch (ICSharpCode.SharpZipLib.SharpZipBaseException x)
-		{
-			throw new FatalCompilerErrorException(Message.ErrorReadingFile, file, x.Message);
-		}
-	}
-
-	private void ProcessFile(CompilerOptions options, DirectoryInfo baseDir, string file)
-	{
-		FileInfo fileInfo = GetFileInfo(file);
-		if (fileInfo.Extension.Equals(".jar", StringComparison.OrdinalIgnoreCase) || fileInfo.Extension.Equals(".zip", StringComparison.OrdinalIgnoreCase))
-		{
-			ProcessZipFile(options, file, null);
-		}
-		else
-		{
-			if (fileInfo.Extension.Equals(".class", StringComparison.OrdinalIgnoreCase))
-			{
-				byte[] data = ReadAllBytes(fileInfo);
-				try
-				{
-					bool stub;
-					string name = ClassFile.GetClassName(data, 0, data.Length, out stub);
-					if (stub && EmitStubWarning(options, data))
-					{
-						// we use stubs to add references, but otherwise ignore them
-						return;
-					}
-					options.GetClassesJar().Add(name.Replace('.', '/') + ".class", data, fileInfo);
-					return;
-				}
-				catch (ClassFormatError x)
-				{
-					StaticCompiler.IssueMessage(Message.ClassFormatError, file, x.Message);
-				}
-			}
-			if (baseDir == null)
-			{
-				StaticCompiler.IssueMessage(Message.UnknownFileType, file);
+				StaticCompiler.IssueMessage(Message.DuplicateClassName, name);
 			}
 			else
 			{
-				// include as resource
-				// extract the resource name by chopping off the base directory
-				string name = file.Substring(baseDir.FullName.Length);
-				name = name.TrimStart(Path.DirectorySeparatorChar).Replace('\\', '/');
-				options.GetResourcesJar().Add(name, ReadAllBytes(fileInfo), null);
+				classes.Add(name, buf);
+			}
+		}
+		catch(ClassFormatError x)
+		{
+			if(addResourceFallback)
+			{
+				// not a class file, so we include it as a resource
+				// (IBM's db2os390/sqlj jars apparantly contain such files)
+				StaticCompiler.IssueMessage(Message.NotAClassFile, filename, x.Message);
+				AddResource(filename, buf);
+			}
+			else
+			{
+				StaticCompiler.IssueMessage(Message.ClassFormatError, filename, x.Message);
 			}
 		}
 	}
 
-	private bool Recurse(CompilerOptions options, DirectoryInfo baseDir, DirectoryInfo dir, string spec)
+	private static void ProcessZipFile(string file)
 	{
-		bool found = false;
+		ZipFile zf = new ZipFile(file);
+		try
+		{
+			foreach(ZipEntry ze in zf)
+			{
+				if(ze.IsDirectory)
+				{
+					// skip
+				}
+				else if(ze.Name.ToLower().EndsWith(".class"))
+				{
+					AddClassFile(ze.Name, ReadFromZip(zf, ze), true);
+				}
+				else
+				{
+					// if it's not a class, we treat it as a resource and the manifest
+					// is examined to find the Main-Class
+					if(ze.Name == "META-INF/MANIFEST.MF" && manifestMainClass == null)
+					{
+						// read main class from manifest
+						// TODO find out if we can use other information from manifest
+						StreamReader rdr = new StreamReader(zf.GetInputStream(ze));
+						string line;
+						while((line = rdr.ReadLine()) != null)
+						{
+							if(line.StartsWith("Main-Class: "))
+							{
+								manifestMainClass = line.Substring(12).Replace('/', '.');
+								break;
+							}
+						}
+					}
+					AddResource(ze.Name, ReadFromZip(zf, ze));
+				}
+			}
+		}
+		finally
+		{
+			zf.Close();
+		}
+	}
+
+	private static void AddResource(string name, byte[] buf)
+	{
+		if(resources.ContainsKey(name))
+		{
+			StaticCompiler.IssueMessage(Message.DuplicateResourceName, name);
+		}
+		else
+		{
+			resources.Add(name, buf);
+		}
+	}
+
+	private static void ProcessFile(DirectoryInfo baseDir, string file)
+	{
+		switch(new FileInfo(file).Extension.ToLower())
+		{
+			case ".class":
+				using(FileStream fs = new FileStream(file, FileMode.Open, FileAccess.Read))
+				{
+					byte[] buf = new byte[fs.Length];
+					fs.Read(buf, 0, buf.Length);
+					AddClassFile(file, buf, false);
+				}
+				break;
+			case ".jar":
+			case ".zip":
+				try
+				{
+					ProcessZipFile(file);
+				}
+				catch(ICSharpCode.SharpZipLib.SharpZipBaseException x)
+				{
+					Console.Error.WriteLine("Warning: error reading {0}: {1}", file, x.Message);
+				}
+				break;
+			default:
+			{
+				if(baseDir == null)
+				{
+					Console.Error.WriteLine("Warning: unknown file type: {0}", file);
+				}
+				else
+				{
+					// include as resource
+					try 
+					{
+						using(FileStream fs = new FileStream(file, FileMode.Open, FileAccess.Read))
+						{
+							byte[] b = new byte[fs.Length];
+							fs.Read(b, 0, b.Length);
+							// extract the resource name by chopping off the base directory
+							string name = file.Substring(baseDir.FullName.Length);
+							if(name.Length > 0 && name[0] == Path.DirectorySeparatorChar)
+							{
+								name = name.Substring(1);
+							}
+							name = name.Replace('\\', '/');
+							AddResource(name, b);
+						}
+					}
+					catch(UnauthorizedAccessException)
+					{
+						Console.Error.WriteLine("Warning: error reading file {0}: Access Denied", file);
+					}
+				}
+				break;
+			}
+		}
+	}
+
+	private static void Recurse(DirectoryInfo baseDir, DirectoryInfo dir, string spec)
+	{
 		foreach(FileInfo file in dir.GetFiles(spec))
 		{
-			found = true;
-			ProcessFile(options, baseDir, file.FullName);
+			ProcessFile(baseDir, file.FullName);
 		}
 		foreach(DirectoryInfo sub in dir.GetDirectories())
 		{
-			found |= Recurse(options, baseDir, sub, spec);
-		}
-		return found;
-	}
-
-	private bool RecurseJar(CompilerOptions options, string path)
-	{
-		string file = "";
-		for (; ; )
-		{
-			file = Path.Combine(Path.GetFileName(path), file);
-			path = Path.GetDirectoryName(path);
-			if (Directory.Exists(path))
-			{
-				throw new DirectoryNotFoundException();
-			}
-			else if (File.Exists(path))
-			{
-				string pathFilter = Path.GetDirectoryName(file) + Path.DirectorySeparatorChar;
-				string fileFilter = "^" + Regex.Escape(Path.GetFileName(file)).Replace("\\*", ".*").Replace("\\?", ".") + "$";
-				return ProcessZipFile(options, path, delegate(ZipEntry ze) {
-					// MONOBUG Path.GetDirectoryName() doesn't normalize / to \ on Windows
-					string name = ze.Name.Replace('/', Path.DirectorySeparatorChar);
-					return (Path.GetDirectoryName(name) + Path.DirectorySeparatorChar).StartsWith(pathFilter)
-						&& Regex.IsMatch(Path.GetFileName(ze.Name), fileFilter);
-				});
-			}
+			Recurse(baseDir, sub, spec);
 		}
 	}
 
 	//This processes an exclusion file with a single regular expression per line
-	private static void ProcessExclusionFile(List<string> classesToExclude, String filename)
+	private static void ProcessExclusionFile(ArrayList classesToExclude, String filename)
 	{
 		try 
 		{
@@ -1491,9 +774,215 @@ sealed class IkvmcCompiler
 				}
 			}
 		} 
-		catch(Exception x) 
+		catch(FileNotFoundException) 
 		{
-			throw new FatalCompilerErrorException(Message.ErrorReadingFile, filename, x.Message);
+			Console.Error.WriteLine("Warning: could not find exclusion file '{0}'", filename);
 		}
+	}
+
+	private static Assembly CurrentDomain_AssemblyResolve(object sender, ResolveEventArgs args)
+	{
+		// make sure all the referenced assemblies are visible (they are loaded with LoadFrom, so
+		// they end up in the LoadFrom context [unless they happen to be available in one of the probe paths])
+#if WHIDBEY
+		foreach(Assembly a in AppDomain.CurrentDomain.ReflectionOnlyGetAssemblies())
+#else
+		foreach(Assembly a in AppDomain.CurrentDomain.GetAssemblies())
+#endif
+		{
+			if(args.Name.StartsWith(a.GetName().Name + ", "))
+			{
+				return a;
+			}
+		}
+#if WHIDBEY
+		return Assembly.ReflectionOnlyLoad(args.Name);
+#else
+		return null;
+#endif
+	}
+}
+
+sealed class LZOutputStream : Stream 
+{
+	private static readonly int[] hashSize = { 499, 997, 2179, 4297 };
+	private int[] codes;
+	private int[] values;
+	private int table_size;
+	private int count;
+	private int bitOffset;
+	private int bitBuffer;
+	private int prev = -1;
+	private int bits;
+	private Stream s;
+
+	public LZOutputStream(Stream s)
+	{
+		this.s = s;
+		bitOffset = 0;
+		count = 0;
+		table_size = 256;
+		bits = 9;
+		codes = new int[hashSize[0]];
+		values = new int[hashSize[0]];
+	}
+
+	public override void WriteByte(byte b)
+	{
+		if (prev != -1) 
+		{
+			int c;
+			int p = (prev << 8) + b;
+			c = p % codes.Length;
+			while (true) 
+			{
+				int e = codes[c];
+				if (e == 0) 
+				{
+					break;
+				}
+				if (e == p) 
+				{
+					prev = values[c];
+					return;
+				}
+				c++;
+				if(c == codes.Length)
+				{
+					c = 0;
+				}
+			}
+			outcode(prev);
+			if (count < table_size) 
+			{
+				codes[c] = p;
+				values[c] = count + 256;
+				count++;
+			} 
+			else 
+			{
+				// table is full. Flush and rebuild
+				if (bits == 12)
+				{
+					table_size = 256;
+					bits = 9;
+				}
+				else 
+				{
+					bits++;
+					table_size = (1 << bits) - 256;
+				}
+				count = 0;
+				int newsize = hashSize[bits - 9];
+				if(codes.Length >= newsize)
+				{
+					Array.Clear(codes, 0, codes.Length);
+				}
+				else
+				{
+					codes = new int[newsize];
+					values = new int[newsize];
+				}
+			}
+		}
+		prev = b;
+	}
+
+	public override void Flush() 
+	{
+		bitBuffer |= prev << bitOffset;
+		bitOffset += bits + 7;
+		while (bitOffset >= 8) 
+		{
+			s.WriteByte((byte)bitBuffer);
+			bitBuffer >>= 8;
+			bitOffset -= 8;
+		}
+		prev = -1;
+		s.Flush();
+	}
+
+	private void outcode(int c) 
+	{
+		bitBuffer |= c << bitOffset;
+		bitOffset += bits;
+		while (bitOffset >= 8) 
+		{
+			s.WriteByte((byte)bitBuffer);
+			bitBuffer >>= 8;
+			bitOffset -= 8;
+		}
+	}
+
+	public override void Write(byte[] buffer, int off, int len)
+	{
+		while(--len >= 0)
+		{
+			WriteByte(buffer[off++]);
+		}
+	}
+
+	public override bool CanRead
+	{
+		get
+		{
+			return false;
+		}
+	}
+
+	public override bool CanSeek
+	{
+		get
+		{
+			return false;
+		}
+	}
+
+	public override bool CanWrite
+	{
+		get
+		{
+			return true;
+		}
+	}
+
+	public override long Length
+	{
+		get
+		{
+			throw new NotSupportedException();
+		}
+	}
+
+	public override long Position
+	{
+		get
+		{
+			throw new NotSupportedException();
+		}
+		set
+		{
+			throw new NotSupportedException();
+		}
+	}
+
+	public override long Seek(long offset, SeekOrigin origin)
+	{
+		throw new NotSupportedException();
+	}
+
+	public override void SetLength(long value)
+	{
+		throw new NotSupportedException();
+	}
+
+	public override int Read(byte[] buffer, int offset, int count)
+	{
+		throw new NotSupportedException();
+	}
+
+	public override void Close()
+	{
+		s.Close();
 	}
 }

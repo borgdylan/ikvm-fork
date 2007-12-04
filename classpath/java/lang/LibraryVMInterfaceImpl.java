@@ -24,8 +24,8 @@
 
 package java.lang;
 
-import cli.System.Reflection.BindingFlags;
 import java.lang.reflect.Field;
+import java.lang.reflect.VMFieldImpl;
 import java.lang.reflect.Method;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
@@ -39,41 +39,62 @@ import ikvm.runtime.AssemblyClassLoader;
 @Internal
 public class LibraryVMInterfaceImpl implements ikvm.internal.LibraryVMInterface
 {
-    private static final cli.System.Reflection.ConstructorInfo classConstructor;
-    private static final cli.System.Reflection.FieldInfo classTypeWrapperField;
-    private static final cli.System.Reflection.FieldInfo classProtectionDomainField;
-    private static final cli.System.Reflection.FieldInfo classLoaderWrapperField;
-    // this flag is set by Shutdown.runAllFinalizers() in map.xml
-    static volatile boolean runFinalizersOnExitFlag;
-
-    static
-    {
-	cli.System.Type classType = cli.System.Type.GetType("java.lang.Class");
-	classConstructor = classType.GetConstructor(BindingFlags.wrap(BindingFlags.NonPublic | BindingFlags.Instance), null, new cli.System.Type[0], null);
-	classTypeWrapperField = classType.GetField("typeWrapper", BindingFlags.wrap(BindingFlags.NonPublic | BindingFlags.Instance));
-	classProtectionDomainField = classType.GetField("pd", BindingFlags.wrap(BindingFlags.NonPublic | BindingFlags.Instance));
-
-	cli.System.Type classLoaderType = cli.System.Type.GetType("java.lang.ClassLoader");
-	classLoaderWrapperField = classLoaderType.GetField("wrapper", BindingFlags.wrap(BindingFlags.NonPublic | BindingFlags.Instance));
-    }
-
     public Object newClass(Object wrapper, Object protectionDomain, Object classLoader)
     {
-	Object clazz = classConstructor.Invoke(null);
-	classTypeWrapperField.SetValue(clazz, wrapper);
-	classProtectionDomainField.SetValue(clazz, protectionDomain);
-	return clazz;
+        if(protectionDomain == null)
+        {
+            protectionDomain = getProtectionDomain((java.lang.ClassLoader)classLoader);
+        }
+        return new Class(wrapper, (java.security.ProtectionDomain)protectionDomain);
     }
 
-    // implemented in map.xml
-    public native Object getWrapperFromClass(Object clazz);
+    private static native java.security.ProtectionDomain getProtectionDomain(java.lang.ClassLoader classLoader);
 
-    // implemented in map.xml
-    public native Object getWrapperFromClassLoader(Object classLoader);
+    public Object newField(Object clazz, Object wrapper)
+    {
+        return VMFieldImpl.newField((Class)clazz, wrapper);
+    }
+
+    public Object newConstructor(Object clazz, Object wrapper)
+    {
+        return new Constructor((Class)clazz, wrapper);
+    }
+
+    public Object newMethod(Object clazz, Object wrapper)
+    {
+        return new Method((Class)clazz, wrapper);
+    }
+
+    public Object getWrapperFromClass(Object clazz)
+    {
+        return ((Class)clazz).vmdata;
+    }
+
+    public Object getWrapperFromField(Object field)
+    {
+        return ((Field)field).impl.fieldCookie;
+    }
+
+    public Object getWrapperFromMethodOrConstructor(Object methodOrConstructor)
+    {
+        if(methodOrConstructor instanceof Method)
+        {
+            return ((Method)methodOrConstructor).methodCookie;
+        }
+        else
+        {
+            return ((Constructor)methodOrConstructor).methodCookie;
+        }
+    }
+
+    public Object getWrapperFromClassLoader(Object classLoader)
+    {
+        return ((ClassLoader)classLoader).vmdata;
+    }
 
     public void setWrapperForClassLoader(Object classLoader, Object wrapper)
     {
-	classLoaderWrapperField.SetValue(classLoader, wrapper);
+        ((ClassLoader)classLoader).vmdata = wrapper;
     }
 
     public Object box(Object val)
@@ -161,9 +182,29 @@ public class LibraryVMInterfaceImpl implements ikvm.internal.LibraryVMInterface
         return ExceptionHelper.MapExceptionFast(t, true);
     }
 
+    public void jniWaitUntilLastThread()
+    {
+        VMThread.jniWaitUntilLastThread();
+    }
+
+    public void jniDetach()
+    {
+        VMThread.jniDetach();
+    }
+
+    public void setThreadGroup(Object group)
+    {
+        VMThread.setThreadGroup((ThreadGroup)group);
+    }
+
+    public Object newDirectByteBuffer(cli.System.IntPtr address, int capacity)
+    {
+        return java.nio.VMDirectByteBuffer.NewDirectByteBuffer(address, capacity);
+    }
+
     public cli.System.IntPtr getDirectBufferAddress(Object buffer)
     {
-        return cli.System.IntPtr.op_Explicit(((sun.nio.ch.DirectBuffer)buffer).address());
+        return java.nio.VMDirectByteBuffer.GetDirectBufferAddress((java.nio.Buffer)buffer);
     }
     
     public int getDirectBufferCapacity(Object buffer)
@@ -178,7 +219,7 @@ public class LibraryVMInterfaceImpl implements ikvm.internal.LibraryVMInterface
 
     public boolean runFinalizersOnExit()
     {
-        return runFinalizersOnExitFlag;
+        return VMRuntime.runFinalizersOnExitFlag;
     }
 
     public Object newAnnotation(Object classLoader, Object definition)
@@ -206,15 +247,5 @@ public class LibraryVMInterfaceImpl implements ikvm.internal.LibraryVMInterface
                 return new AssemblyClassLoader(assembly);
             }
         });
-    }
-
-    public void initProperties(java.util.Properties props)
-    {
-	gnu.classpath.VMSystemProperties.initOpenJDK(props);
-    }
-
-    public StackTraceElement[] getStackTrace(cli.System.Diagnostics.StackTrace stack)
-    {
-	return ExceptionHelper.getStackTrace(stack, Integer.MAX_VALUE);
     }
 }

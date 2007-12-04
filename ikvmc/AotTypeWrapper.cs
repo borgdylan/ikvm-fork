@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2002-2009 Jeroen Frijters
+  Copyright (C) 2002, 2003, 2004, 2005, 2006, 2007 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -23,18 +23,29 @@
 */
 
 using System;
+using System.Collections;
+#if WHIDBEY
 using System.Collections.Generic;
-using IKVM.Reflection;
-using IKVM.Reflection.Emit;
-using Type = IKVM.Reflection.Type;
+#endif
+using System.Reflection;
+using System.Reflection.Emit;
 using System.Diagnostics;
 using System.Security;
 using System.Security.Permissions;
+using IKVM.Runtime;
 using IKVM.Attributes;
+
+using ILGenerator = IKVM.Internal.CountingILGenerator;
+using Label = IKVM.Internal.CountingLabel;
 
 namespace IKVM.Internal
 {
-	sealed class AotTypeWrapper : DynamicTypeWrapper
+	public abstract class CodeEmitter
+	{
+		internal abstract void Emit(CountingILGenerator ilgen);
+	}
+
+	class AotTypeWrapper : DynamicTypeWrapper
 	{
 		private FieldInfo ghostRefField;
 		private MethodBuilder ghostIsInstanceMethod;
@@ -43,158 +54,17 @@ namespace IKVM.Internal
 		private MethodBuilder ghostCastArrayMethod;
 		private TypeBuilder typeBuilderGhostInterface;
 		private Annotation annotation;
-		private Type enumType;
-		private MethodWrapper[] replacedMethods;
-		private WorkaroundBaseClass workaroundBaseClass;
 
 		internal AotTypeWrapper(ClassFile f, CompilerClassLoader loader)
-			: base(f, loader, null)
+			: base(f, loader)
 		{
-		}
-
-		protected override Type GetBaseTypeForDefineType()
-		{
-			TypeWrapper baseTypeWrapper = BaseTypeWrapper;
-			if (this.IsPublic && this.IsAbstract && baseTypeWrapper.IsPublic && baseTypeWrapper.IsAbstract)
-			{
-				// FXBUG
-				// if the current class widens access on an abstract base class method,
-				// we need to inject an artificial base class to workaround a C# compiler bug
-				List<MethodWrapper> methods = null;
-				foreach (MethodWrapper mw in GetMethods())
-				{
-					if (!mw.IsStatic && mw.IsPublic)
-					{
-						MethodWrapper baseMethod = baseTypeWrapper.GetMethodWrapper(mw.Name, mw.Signature, true);
-						if (baseMethod != null && baseMethod.IsAbstract && baseMethod.IsProtected)
-						{
-							if (methods == null)
-							{
-								methods = new List<MethodWrapper>();
-							}
-							methods.Add(baseMethod);
-						}
-					}
-				}
-				if (methods != null)
-				{
-					string name = "__WorkaroundBaseClass__." + Name;
-					while (!classLoader.ReserveName(name))
-					{
-						name = "_" + name;
-					}
-					TypeWrapperFactory context = classLoader.GetTypeWrapperFactory();
-					TypeBuilder typeBuilder = context.ModuleBuilder.DefineType(name, TypeAttributes.Public | TypeAttributes.Abstract, base.GetBaseTypeForDefineType());
-					AttributeHelper.HideFromJava(typeBuilder);
-					AttributeHelper.SetEditorBrowsableNever(typeBuilder);
-					workaroundBaseClass = new WorkaroundBaseClass(this, typeBuilder, methods.ToArray());
-					List<MethodWrapper> constructors = new List<MethodWrapper>();
-					foreach (MethodWrapper mw in baseTypeWrapper.GetMethods())
-					{
-						if (ReferenceEquals(mw.Name, StringConstants.INIT) && mw.IsAccessibleFrom(baseTypeWrapper, this, this))
-						{
-							constructors.Add(new ConstructorForwarder(context, typeBuilder, mw));
-						}
-					}
-					replacedMethods = constructors.ToArray();
-					return typeBuilder;
-				}
-			}
-			return base.GetBaseTypeForDefineType();
-		}
-
-		internal override void Finish()
-		{
-			base.Finish();
-			if (workaroundBaseClass != null)
-			{
-				workaroundBaseClass.Finish();
-			}
-		}
-
-		private sealed class WorkaroundBaseClass
-		{
-			private readonly AotTypeWrapper wrapper;
-			private readonly TypeBuilder typeBuilder;
-			private readonly MethodWrapper[] methods;
-			private MethodBuilder baseSerializationCtor;
-
-			internal WorkaroundBaseClass(AotTypeWrapper wrapper, TypeBuilder typeBuilder, MethodWrapper[] methods)
-			{
-				this.wrapper = wrapper;
-				this.typeBuilder = typeBuilder;
-				this.methods = methods;
-			}
-
-			internal MethodBuilder GetSerializationConstructor()
-			{
-				if (baseSerializationCtor == null)
-				{
-					baseSerializationCtor = Serialization.AddAutomagicSerializationToWorkaroundBaseClass(typeBuilder, wrapper.BaseTypeWrapper.GetSerializationConstructor());
-				}
-				return baseSerializationCtor;
-			}
-
-			internal void Finish()
-			{
-				if (!typeBuilder.IsCreated())
-				{
-					foreach (MethodWrapper mw in methods)
-					{
-						MethodBuilder mb = mw.GetDefineMethodHelper().DefineMethod(wrapper, typeBuilder, mw.Name, MethodAttributes.FamORAssem | MethodAttributes.Virtual | MethodAttributes.HideBySig | MethodAttributes.CheckAccessOnOverride);
-						AttributeHelper.HideFromJava(mb);
-						CodeEmitter ilgen = CodeEmitter.Create(mb);
-						ilgen.EmitThrow("java.lang.AbstractMethodError");
-						ilgen.DoEmit();
-					}
-					typeBuilder.CreateType();
-				}
-			}
-		}
-
-		private sealed class ConstructorForwarder : MethodWrapper
-		{
-			private readonly TypeWrapperFactory context;
-			private readonly TypeBuilder typeBuilder;
-			private readonly MethodWrapper ctor;
-			private MethodBuilder constructorBuilder;
-
-			internal ConstructorForwarder(TypeWrapperFactory context, TypeBuilder typeBuilder, MethodWrapper ctor)
-				: base(ctor.DeclaringType, ctor.Name, ctor.Signature, null, null, null, ctor.Modifiers, MemberFlags.None)
-			{
-				this.context = context;
-				this.typeBuilder = typeBuilder;
-				this.ctor = ctor;
-			}
-
-			protected override void DoLinkMethod()
-			{
-				ctor.Link();
-				DefineMethodHelper dmh = ctor.GetDefineMethodHelper();
-				constructorBuilder = dmh.DefineConstructor(context, typeBuilder, MethodAttributes.PrivateScope);
-				AttributeHelper.HideFromJava(constructorBuilder);
-				CodeEmitter ilgen = CodeEmitter.Create(constructorBuilder);
-				ilgen.Emit(OpCodes.Ldarg_0);
-				for (int i = 1; i <= dmh.ParameterCount; i++)
-				{
-					ilgen.EmitLdarg(i);
-				}
-				ctor.EmitCall(ilgen);
-				ilgen.Emit(OpCodes.Ret);
-				ilgen.DoEmit();
-			}
-
-			internal override void EmitCall(CodeEmitter ilgen)
-			{
-				ilgen.Emit(OpCodes.Call, constructorBuilder);
-			}
 		}
 
 		internal override bool IsGhost
 		{
 			get
 			{
-				return classLoader.IsGhost(this);
+				return ((CompilerClassLoader)classLoader).IsGhost(this);
 			}
 		}
 
@@ -202,7 +72,7 @@ namespace IKVM.Internal
 		{
 			get
 			{
-				return classLoader.IsMapUnsafeException(this);
+				return ((CompilerClassLoader)classLoader).IsMapUnsafeException(this);
 			}
 		}
 
@@ -216,12 +86,12 @@ namespace IKVM.Internal
 
 		internal void GetParameterNamesFromXml(string methodName, string methodSig, string[] parameterNames)
 		{
-			IKVM.Internal.MapXml.Param[] parameters = classLoader.GetXmlMapParameters(Name, methodName, methodSig);
+			IKVM.Internal.MapXml.Param[] parameters = ((CompilerClassLoader)classLoader).GetXmlMapParameters(Name, methodName, methodSig);
 			if(parameters != null)
 			{
 				for(int i = 0; i < parameters.Length; i++)
 				{
-					if(parameters[i].Name != null)
+					if(parameterNames[i] == null)
 					{
 						parameterNames[i] = parameters[i].Name;
 					}
@@ -229,9 +99,9 @@ namespace IKVM.Internal
 			}
 		}
 
-		internal void AddXmlMapParameterAttributes(MethodBuilder method, string className, string methodName, string methodSig, ref ParameterBuilder[] pbs)
+		internal void AddXmlMapParameterAttributes(MethodBase method, string className, string methodName, string methodSig, ref ParameterBuilder[] pbs)
 		{
-			IKVM.Internal.MapXml.Param[] parameters = classLoader.GetXmlMapParameters(className, methodName, methodSig);
+			IKVM.Internal.MapXml.Param[] parameters = ((CompilerClassLoader)classLoader).GetXmlMapParameters(className, methodName, methodSig);
 			if(parameters != null)
 			{
 				if(pbs == null)
@@ -245,7 +115,7 @@ namespace IKVM.Internal
 					{
 						foreach(IKVM.Internal.MapXml.Attribute attr in parameters[i].Attributes)
 						{
-							AttributeHelper.SetCustomAttribute(classLoader, pbs[i], attr);
+							AttributeHelper.SetCustomAttribute(pbs[i], attr);
 						}
 					}
 				}
@@ -275,11 +145,11 @@ namespace IKVM.Internal
 
 		protected override void AddMapXmlFields(ref FieldWrapper[] fields)
 		{
-			Dictionary<string, IKVM.Internal.MapXml.Class> mapxml = classLoader.GetMapXmlClasses();
+			Hashtable mapxml = ((CompilerClassLoader)classLoader).GetMapXml();
 			if(mapxml != null)
 			{
-				IKVM.Internal.MapXml.Class clazz;
-				if(mapxml.TryGetValue(this.Name, out clazz))
+				IKVM.Internal.MapXml.Class clazz = (IKVM.Internal.MapXml.Class)mapxml[this.Name];
+				if(clazz != null)
 				{
 					if(clazz.Fields != null)
 					{
@@ -308,20 +178,15 @@ namespace IKVM.Internal
 			}
 		}
 
-		protected override bool EmitMapXmlMethodPrologueAndOrBody(CodeEmitter ilgen, ClassFile f, ClassFile.Method m)
+		protected override bool EmitMapXmlMethodBody(CountingILGenerator ilgen, ClassFile f, ClassFile.Method m)
 		{
-			IKVM.Internal.MapXml.InstructionList prologue = classLoader.GetMethodPrologue(new MethodKey(f.Name, m.Name, m.Signature));
-			if(prologue != null)
-			{
-				prologue.Emit(classLoader, ilgen);
-			}
-			Dictionary<MethodKey, IKVM.Internal.MapXml.InstructionList> mapxml = classLoader.GetMapXmlMethodBodies();
+			Hashtable mapxml = ((CompilerClassLoader)classLoader).GetMapXml();
 			if(mapxml != null)
 			{
-				IKVM.Internal.MapXml.InstructionList opcodes;
-				if(mapxml.TryGetValue(new MethodKey(f.Name, m.Name, m.Signature), out opcodes))
+				CodeEmitter opcodes = (CodeEmitter)mapxml[f.Name + "." + m.Name + m.Signature];
+				if(opcodes != null)
 				{
-					opcodes.Emit(classLoader, ilgen);
+					opcodes.Emit(ilgen);
 					return true;
 				}
 			}
@@ -332,7 +197,7 @@ namespace IKVM.Internal
 		{
 			foreach(IKVM.Internal.MapXml.Attribute attr in clazz.Attributes)
 			{
-				AttributeHelper.SetCustomAttribute(classLoader, typeBuilder, attr);
+				AttributeHelper.SetCustomAttribute(typeBuilder, attr);
 			}
 		}
 
@@ -393,10 +258,11 @@ namespace IKVM.Internal
 
 		private void PublishProperties(TypeBuilder typeBuilder, IKVM.Internal.MapXml.Class clazz)
 		{
+			Hashtable classCache = new Hashtable();
 			foreach(IKVM.Internal.MapXml.Property prop in clazz.Properties)
 			{
-				TypeWrapper typeWrapper = GetClassLoader().RetTypeWrapperFromSigNoThrow(prop.Sig);
-				TypeWrapper[] propargs = GetClassLoader().ArgTypeWrapperListFromSigNoThrow(prop.Sig);
+				TypeWrapper typeWrapper = ClassFile.RetTypeWrapperFromSig(GetClassLoader(), classCache, prop.Sig);
+				TypeWrapper[] propargs = ClassFile.ArgTypeWrapperListFromSig(GetClassLoader(), classCache, prop.Sig);
 				Type[] indexer = new Type[propargs.Length];
 				for(int i = 0; i < propargs.Length; i++)
 				{
@@ -408,7 +274,7 @@ namespace IKVM.Internal
 				{
 					foreach(IKVM.Internal.MapXml.Attribute attr in prop.Attributes)
 					{
-						AttributeHelper.SetCustomAttribute(classLoader, propbuilder, attr);
+						AttributeHelper.SetCustomAttribute(propbuilder, attr);
 					}
 				}
 				MethodWrapper getter = null;
@@ -442,14 +308,14 @@ namespace IKVM.Internal
 						MethodBuilder mb = mw.GetMethod() as MethodBuilder;
 						if(mb == null || mb.DeclaringType != typeBuilder || (!mb.IsFinal && final))
 						{
-							mb = typeBuilder.DefineMethod("get_" + prop.Name, GetPropertyMethodAttributes(mw, final), typeWrapper.TypeAsSignatureType, indexer);
+							mb = typeBuilder.DefineMethod(GenerateUniqueMethodName("get_" + prop.Name, mw), GetPropertyMethodAttributes(mw, final), typeWrapper.TypeAsSignatureType, indexer);
 							AttributeHelper.HideFromJava(mb);
-							CodeEmitter ilgen = CodeEmitter.Create(mb);
+							ILGenerator ilgen = new CountingILGenerator(mb.GetILGenerator());
 							if(mw.IsStatic)
 							{
 								for(int i = 0; i < indexer.Length; i++)
 								{
-									ilgen.EmitLdarg(i);
+									ilgen.Emit(OpCodes.Ldarg, (short)i);
 								}
 								mw.EmitCall(ilgen);
 							}
@@ -458,12 +324,11 @@ namespace IKVM.Internal
 								ilgen.Emit(OpCodes.Ldarg_0);
 								for(int i = 0; i < indexer.Length; i++)
 								{
-									ilgen.EmitLdarg(i + 1);
+									ilgen.Emit(OpCodes.Ldarg, (short)(i + 1));
 								}
 								mw.EmitCallvirt(ilgen);
 							}
 							ilgen.Emit(OpCodes.Ret);
-							ilgen.DoEmit();
 						}
 						propbuilder.SetGetMethod(mb);
 					}
@@ -483,14 +348,14 @@ namespace IKVM.Internal
 						MethodBuilder mb = mw.GetMethod() as MethodBuilder;
 						if(mb == null || mb.DeclaringType != typeBuilder || (!mb.IsFinal && final))
 						{
-							mb = typeBuilder.DefineMethod("set_" + prop.Name, GetPropertyMethodAttributes(mw, final), mw.ReturnTypeForDefineMethod, args);
+							mb = typeBuilder.DefineMethod(GenerateUniqueMethodName("set_" + prop.Name, mw), GetPropertyMethodAttributes(mw, final), mw.ReturnTypeForDefineMethod, args);
 							AttributeHelper.HideFromJava(mb);
-							CodeEmitter ilgen = CodeEmitter.Create(mb);
+							ILGenerator ilgen = new CountingILGenerator(mb.GetILGenerator());
 							if(mw.IsStatic)
 							{
 								for(int i = 0; i <= indexer.Length; i++)
 								{
-									ilgen.EmitLdarg(i);
+									ilgen.Emit(OpCodes.Ldarg, (short)i);
 								}
 								mw.EmitCall(ilgen);
 							}
@@ -499,12 +364,11 @@ namespace IKVM.Internal
 								ilgen.Emit(OpCodes.Ldarg_0);
 								for(int i = 0; i <= indexer.Length; i++)
 								{
-									ilgen.EmitLdarg(i + 1);
+									ilgen.Emit(OpCodes.Ldarg, (short)(i + 1));
 								}
 								mw.EmitCallvirt(ilgen);
 							}
 							ilgen.Emit(OpCodes.Ret);
-							ilgen.DoEmit();
 						}
 						propbuilder.SetSetMethod(mb);
 					}
@@ -514,11 +378,11 @@ namespace IKVM.Internal
 
 		protected override bool IsPInvokeMethod(ClassFile.Method m)
 		{
-			Dictionary<string, IKVM.Internal.MapXml.Class> mapxml = classLoader.GetMapXmlClasses();
+			Hashtable mapxml = ((CompilerClassLoader)classLoader).GetMapXml();
 			if(mapxml != null)
 			{
-				IKVM.Internal.MapXml.Class clazz;
-				if(mapxml.TryGetValue(this.Name, out clazz) && clazz.Methods != null)
+				IKVM.Internal.MapXml.Class clazz = (IKVM.Internal.MapXml.Class)mapxml[Name];
+				if(clazz != null && clazz.Methods != null)
 				{
 					foreach(IKVM.Internal.MapXml.Method method in clazz.Methods)
 					{
@@ -528,7 +392,7 @@ namespace IKVM.Internal
 							{
 								foreach(IKVM.Internal.MapXml.Attribute attr in method.Attributes)
 								{
-									if(StaticCompiler.GetType(classLoader, attr.Type) == JVM.Import(typeof(System.Runtime.InteropServices.DllImportAttribute)))
+									if(Type.GetType(attr.Type) == typeof(System.Runtime.InteropServices.DllImportAttribute))
 									{
 										return true;
 									}
@@ -542,82 +406,13 @@ namespace IKVM.Internal
 			return base.IsPInvokeMethod(m);
 		}
 
-		private static void MapModifiers(MapXml.MapModifiers mapmods, bool isConstructor, out bool setmodifiers, ref MethodAttributes attribs)
-		{
-			setmodifiers = false;
-			Modifiers modifiers = (Modifiers)mapmods;
-			if((modifiers & Modifiers.Public) != 0)
-			{
-				attribs |= MethodAttributes.Public;
-			}
-			else if((modifiers & Modifiers.Protected) != 0)
-			{
-				attribs |= MethodAttributes.FamORAssem;
-			}
-			else if((modifiers & Modifiers.Private) != 0)
-			{
-				attribs |= MethodAttributes.Private;
-			}
-			else
-			{
-				attribs |= MethodAttributes.Assembly;
-			}
-			if((modifiers & Modifiers.Static) != 0)
-			{
-				attribs |= MethodAttributes.Static;
-				if((modifiers & Modifiers.Final) != 0)
-				{
-					setmodifiers = true;
-				}
-			}
-			else if(!isConstructor)
-			{
-				// NOTE we're abusing the MethodAttributes.NewSlot and Modifiers.Final combination to mean non-virtual
-				if((modifiers & Modifiers.Final) != 0 && (attribs & MethodAttributes.NewSlot) != 0 && (attribs & MethodAttributes.Virtual) == 0)
-				{
-					// remove NewSlot, because it doesn't make sense on a non-virtual method
-					attribs &= ~MethodAttributes.NewSlot;
-				}
-				else
-				{
-					if((modifiers & Modifiers.Private) == 0)
-					{
-						attribs |= MethodAttributes.Virtual;
-					}
-					if((modifiers & Modifiers.Final) != 0)
-					{
-						attribs |= MethodAttributes.Final;
-					}
-					else if((modifiers & Modifiers.Abstract) != 0)
-					{
-						attribs |= MethodAttributes.Abstract;
-					}
-				}
-			}
-			if((modifiers & Modifiers.Synchronized) != 0)
-			{
-				throw new NotImplementedException();
-			}
-		}
-
-		private void MapSignature(string sig, out Type returnType, out Type[] parameterTypes)
-		{
-			returnType = GetClassLoader().RetTypeWrapperFromSigNoThrow(sig).TypeAsSignatureType;
-			TypeWrapper[] parameterTypeWrappers = GetClassLoader().ArgTypeWrapperListFromSigNoThrow(sig);
-			parameterTypes = new Type[parameterTypeWrappers.Length];
-			for(int i = 0; i < parameterTypeWrappers.Length; i++)
-			{
-				parameterTypes[i] = parameterTypeWrappers[i].TypeAsSignatureType;
-			}
-		}
-
 		protected override void EmitMapXmlMetadata(TypeBuilder typeBuilder, ClassFile classFile, FieldWrapper[] fields, MethodWrapper[] methods)
 		{
-			Dictionary<string, IKVM.Internal.MapXml.Class> mapxml = classLoader.GetMapXmlClasses();
+			Hashtable mapxml = ((CompilerClassLoader)classLoader).GetMapXml();
 			if(mapxml != null)
 			{
-				IKVM.Internal.MapXml.Class clazz;
-				if(mapxml.TryGetValue(classFile.Name, out clazz))
+				IKVM.Internal.MapXml.Class clazz = (IKVM.Internal.MapXml.Class)mapxml[classFile.Name];
+				if(clazz != null)
 				{
 					if(clazz.Attributes != null)
 					{
@@ -642,7 +437,7 @@ namespace IKVM.Internal
 										{
 											foreach(IKVM.Internal.MapXml.Attribute attr in field.Attributes)
 											{
-												AttributeHelper.SetCustomAttribute(classLoader, fb, attr);
+												AttributeHelper.SetCustomAttribute(fb, attr);
 											}
 										}
 									}
@@ -652,41 +447,6 @@ namespace IKVM.Internal
 					}
 					if(clazz.Constructors != null)
 					{
-						// HACK this isn't the right place to do this, but for now it suffices
-						foreach(IKVM.Internal.MapXml.Constructor constructor in clazz.Constructors)
-						{
-							// are we adding a new constructor?
-							if(GetMethodWrapper(StringConstants.INIT, constructor.Sig, false) == null)
-							{
-								if(constructor.body == null)
-								{
-									Console.Error.WriteLine("Error: Constructor {0}.<init>{1} in xml remap file doesn't have a body.", clazz.Name, constructor.Sig);
-									continue;
-								}
-								bool setmodifiers = false;
-								MethodAttributes attribs = 0;
-								MapModifiers(constructor.Modifiers, true, out setmodifiers, ref attribs);
-								Type returnType;
-								Type[] parameterTypes;
-								MapSignature(constructor.Sig, out returnType, out parameterTypes);
-								MethodBuilder cb = ReflectUtil.DefineConstructor(typeBuilder, attribs, parameterTypes);
-								if(setmodifiers)
-								{
-									AttributeHelper.SetModifiers(cb, (Modifiers)constructor.Modifiers, false);
-								}
-								CompilerClassLoader.AddDeclaredExceptions(cb, constructor.throws);
-								CodeEmitter ilgen = CodeEmitter.Create(cb);
-								constructor.Emit(classLoader, ilgen);
-								ilgen.DoEmit();
-								if(constructor.Attributes != null)
-								{
-									foreach(IKVM.Internal.MapXml.Attribute attr in constructor.Attributes)
-									{
-										AttributeHelper.SetCustomAttribute(classLoader, cb, attr);
-									}
-								}
-							}
-						}
 						foreach(IKVM.Internal.MapXml.Constructor constructor in clazz.Constructors)
 						{
 							if(constructor.Attributes != null)
@@ -695,12 +455,12 @@ namespace IKVM.Internal
 								{
 									if(mw.Name == "<init>" && mw.Signature == constructor.Sig)
 									{
-										MethodBuilder mb = mw.GetMethod() as MethodBuilder;
+										ConstructorBuilder mb = mw.GetMethod() as ConstructorBuilder;
 										if(mb != null)
 										{
 											foreach(IKVM.Internal.MapXml.Attribute attr in constructor.Attributes)
 											{
-												AttributeHelper.SetCustomAttribute(classLoader, mb, attr);
+												AttributeHelper.SetCustomAttribute(mb, attr);
 											}
 										}
 									}
@@ -716,37 +476,73 @@ namespace IKVM.Internal
 							// are we adding a new method?
 							if(GetMethodWrapper(method.Name, method.Sig, false) == null)
 							{
-								if(method.body == null)
-								{
-									Console.Error.WriteLine("Error: Method {0}.{1}{2} in xml remap file doesn't have a body.", clazz.Name, method.Name, method.Sig);
-									continue;
-								}
 								bool setmodifiers = false;
 								MethodAttributes attribs = method.MethodAttributes;
-								MapModifiers(method.Modifiers, false, out setmodifiers, ref attribs);
-								Type returnType;
-								Type[] parameterTypes;
-								MapSignature(method.Sig, out returnType, out parameterTypes);
+								Modifiers modifiers = (Modifiers)method.Modifiers;
+								if((modifiers & Modifiers.Public) != 0)
+								{
+									attribs |= MethodAttributes.Public;
+								}
+								else if((modifiers & Modifiers.Protected) != 0)
+								{
+									attribs |= MethodAttributes.FamORAssem;
+								}
+								else if((modifiers & Modifiers.Private) != 0)
+								{
+									attribs |= MethodAttributes.Private;
+								}
+								else
+								{
+									attribs |= MethodAttributes.Assembly;
+								}
+								if((modifiers & Modifiers.Static) != 0)
+								{
+									attribs |= MethodAttributes.Static;
+									if((modifiers & Modifiers.Final) != 0)
+									{
+										setmodifiers = true;
+									}
+								}
+								else if(method.Name != "<init>")
+								{
+									attribs |= MethodAttributes.Virtual;
+									if((modifiers & Modifiers.Final) != 0)
+									{
+										attribs |= MethodAttributes.Final;
+									}
+									else if((modifiers & Modifiers.Abstract) != 0)
+									{
+										attribs |= MethodAttributes.Abstract;
+									}
+								}
+								if((modifiers & Modifiers.Synchronized) != 0)
+								{
+									throw new NotImplementedException();
+								}
+								if(method.Name == "<init>")
+								{
+									throw new NotImplementedException();
+								}
+								Hashtable classCache = new Hashtable();
+								Type returnType = ClassFile.RetTypeWrapperFromSig(GetClassLoader(), classCache, method.Sig).TypeAsSignatureType;
+								TypeWrapper[] parameterTypeWrappers = ClassFile.ArgTypeWrapperListFromSig(GetClassLoader(), classCache, method.Sig);
+								Type[] parameterTypes = new Type[parameterTypeWrappers.Length];
+								for(int i = 0; i < parameterTypeWrappers.Length; i++)
+								{
+									parameterTypes[i] = parameterTypeWrappers[i].TypeAsSignatureType;
+								}
 								MethodBuilder mb = typeBuilder.DefineMethod(method.Name, attribs, returnType, parameterTypes);
 								if(setmodifiers)
 								{
-									AttributeHelper.SetModifiers(mb, (Modifiers)method.Modifiers, false);
+									AttributeHelper.SetModifiers(mb, modifiers, false);
 								}
-								if(method.@override != null)
-								{
-									MethodWrapper mw = GetClassLoader().LoadClassByDottedName(method.@override.Class).GetMethodWrapper(method.@override.Name, method.Sig, true);
-									mw.Link();
-									typeBuilder.DefineMethodOverride(mb, (MethodInfo)mw.GetMethod());
-								}
-								CompilerClassLoader.AddDeclaredExceptions(mb, method.throws);
-								CodeEmitter ilgen = CodeEmitter.Create(mb);
-								method.Emit(classLoader, ilgen);
-								ilgen.DoEmit();
+								ILGenerator ilgen = mb.GetILGenerator();
+								method.body.Emit(ilgen);
 								if(method.Attributes != null)
 								{
 									foreach(IKVM.Internal.MapXml.Attribute attr in method.Attributes)
 									{
-										AttributeHelper.SetCustomAttribute(classLoader, mb, attr);
+										AttributeHelper.SetCustomAttribute(mb, attr);
 									}
 								}
 							}
@@ -764,7 +560,7 @@ namespace IKVM.Internal
 										{
 											foreach(IKVM.Internal.MapXml.Attribute attr in method.Attributes)
 											{
-												AttributeHelper.SetCustomAttribute(classLoader, mb, attr);
+												AttributeHelper.SetCustomAttribute(mb, attr);
 											}
 										}
 									}
@@ -790,12 +586,10 @@ namespace IKVM.Internal
 										throw new InvalidOperationException("Method " + m.Name + m.Sig + " not found in interface " + tw.Name);
 									}
 									mw.Link();
-									MethodBuilder mb = mw.GetDefineMethodHelper().DefineMethod(this, typeBuilder, tw.Name + "/" + m.Name, MethodAttributes.Private | MethodAttributes.NewSlot | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.CheckAccessOnOverride);
+									MethodBuilder mb = typeBuilder.DefineMethod(tw.Name + "/" + m.Name, MethodAttributes.Private | MethodAttributes.NewSlot | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.CheckAccessOnOverride, mw.ReturnTypeForDefineMethod, mw.GetParametersForDefineMethod());
 									AttributeHelper.HideFromJava(mb);
 									typeBuilder.DefineMethodOverride(mb, (MethodInfo)mw.GetMethod());
-									CodeEmitter ilgen = CodeEmitter.Create(mb);
-									m.Emit(classLoader, ilgen);
-									ilgen.DoEmit();
+									m.Emit(mb.GetILGenerator());
 								}
 							}
 						}
@@ -808,7 +602,7 @@ namespace IKVM.Internal
 		{
 			if(typeBuilderGhostInterface != null)
 			{
-				return mw.GetDefineMethodHelper().DefineMethod(this, typeBuilderGhostInterface, name, attribs);
+				return typeBuilderGhostInterface.DefineMethod(name, attribs, mw.ReturnTypeForDefineMethod, mw.GetParametersForDefineMethod());
 			}
 			return null;
 		}
@@ -824,63 +618,61 @@ namespace IKVM.Internal
 					if(!methods[i].IsStatic)
 					{
 						TypeWrapper[] args = methods[i].GetParameters();
-						MethodBuilder stub = methods[i].GetDefineMethodHelper().DefineMethod(this, typeBuilder, methods[i].Name, MethodAttributes.Public);
+						MethodBuilder stub = typeBuilder.DefineMethod(methods[i].Name, MethodAttributes.Public, methods[i].ReturnTypeForDefineMethod, methods[i].GetParametersForDefineMethod());
 						AddParameterMetadata(stub, methods[i]);
 						AttributeHelper.SetModifiers(stub, methods[i].Modifiers, methods[i].IsInternal);
-						CodeEmitter ilgen = CodeEmitter.Create(stub);
-						CodeEmitterLabel end = ilgen.DefineLabel();
-						TypeWrapper[] implementers = classLoader.GetGhostImplementers(this);
+						ILGenerator ilgen = stub.GetILGenerator();
+						Label end = ilgen.DefineLabel();
+						TypeWrapper[] implementers = ((CompilerClassLoader)classLoader).GetGhostImplementers(this);
 						ilgen.Emit(OpCodes.Ldarg_0);
 						ilgen.Emit(OpCodes.Ldfld, ghostRefField);
 						ilgen.Emit(OpCodes.Dup);
 						ilgen.Emit(OpCodes.Isinst, typeBuilderGhostInterface);
-						CodeEmitterLabel label = ilgen.DefineLabel();
-						ilgen.EmitBrfalse(label);
+						Label label = ilgen.DefineLabel();
+						ilgen.Emit(OpCodes.Brfalse_S, label);
 						ilgen.Emit(OpCodes.Castclass, typeBuilderGhostInterface);
 						for(int k = 0; k < args.Length; k++)
 						{
-							ilgen.EmitLdarg(k + 1);
+							ilgen.Emit(OpCodes.Ldarg_S, (byte)(k + 1));
 						}
 						ilgen.Emit(OpCodes.Callvirt, (MethodInfo)methods[i].GetMethod());
-						ilgen.EmitBr(end);
+						ilgen.Emit(OpCodes.Br, end);
 						ilgen.MarkLabel(label);
 						for(int j = 0; j < implementers.Length; j++)
 						{
 							ilgen.Emit(OpCodes.Dup);
 							ilgen.Emit(OpCodes.Isinst, implementers[j].TypeAsTBD);
 							label = ilgen.DefineLabel();
-							ilgen.EmitBrfalse(label);
+							ilgen.Emit(OpCodes.Brfalse_S, label);
 							ilgen.Emit(OpCodes.Castclass, implementers[j].TypeAsTBD);
 							for(int k = 0; k < args.Length; k++)
 							{
-								ilgen.EmitLdarg(k + 1);
+								ilgen.Emit(OpCodes.Ldarg_S, (byte)(k + 1));
 							}
 							MethodWrapper mw = implementers[j].GetMethodWrapper(methods[i].Name, methods[i].Signature, true);
 							mw.EmitCallvirt(ilgen);
-							ilgen.EmitBr(end);
+							ilgen.Emit(OpCodes.Br, end);
 							ilgen.MarkLabel(label);
 						}
 						// we need to do a null check (null fails all the isinst checks)
-						ilgen.EmitNullCheck();
-						ilgen.EmitThrow("java.lang.IncompatibleClassChangeError", Name);
+						EmitHelper.NullCheck(ilgen);
+						EmitHelper.Throw(ilgen, "java.lang.IncompatibleClassChangeError", Name);
 						ilgen.MarkLabel(end);
 						ilgen.Emit(OpCodes.Ret);
-						ilgen.DoEmit();
 					}
 				}
 				// HACK create a scope to enable reuse of "implementers" name
 				if(true)
 				{
 					MethodBuilder mb;
-					CodeEmitter ilgen;
-					CodeEmitterLocal local;
+					ILGenerator ilgen;
+					LocalBuilder local;
 					// add implicit conversions for all the ghost implementers
-					TypeWrapper[] implementers = classLoader.GetGhostImplementers(this);
+					TypeWrapper[] implementers = ((CompilerClassLoader)classLoader).GetGhostImplementers(this);
 					for(int i = 0; i < implementers.Length; i++)
 					{
 						mb = typeBuilder.DefineMethod("op_Implicit", MethodAttributes.HideBySig | MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.SpecialName, TypeAsSignatureType, new Type[] { implementers[i].TypeAsSignatureType });
-						AttributeHelper.HideFromJava(mb);
-						ilgen = CodeEmitter.Create(mb);
+						ilgen = mb.GetILGenerator();
 						local = ilgen.DeclareLocal(TypeAsSignatureType);
 						ilgen.Emit(OpCodes.Ldloca, local);
 						ilgen.Emit(OpCodes.Ldarg_0);
@@ -888,21 +680,20 @@ namespace IKVM.Internal
 						ilgen.Emit(OpCodes.Ldloca, local);
 						ilgen.Emit(OpCodes.Ldobj, TypeAsSignatureType);			
 						ilgen.Emit(OpCodes.Ret);
-						ilgen.DoEmit();
 					}
 					// Implement the "IsInstance" method
 					mb = ghostIsInstanceMethod;
 					AttributeHelper.HideFromJava(mb);
-					ilgen = CodeEmitter.Create(mb);
-					CodeEmitterLabel end = ilgen.DefineLabel();
+					ilgen = mb.GetILGenerator();
+					Label end = ilgen.DefineLabel();
 					for(int i = 0; i < implementers.Length; i++)
 					{
 						ilgen.Emit(OpCodes.Ldarg_0);
 						ilgen.Emit(OpCodes.Isinst, implementers[i].TypeAsTBD);
-						CodeEmitterLabel label = ilgen.DefineLabel();
-						ilgen.EmitBrfalse(label);
+						Label label = ilgen.DefineLabel();
+						ilgen.Emit(OpCodes.Brfalse_S, label);
 						ilgen.Emit(OpCodes.Ldc_I4_1);
-						ilgen.EmitBr(end);
+						ilgen.Emit(OpCodes.Br, end);
 						ilgen.MarkLabel(label);
 					}
 					ilgen.Emit(OpCodes.Ldarg_0);
@@ -911,83 +702,78 @@ namespace IKVM.Internal
 					ilgen.Emit(OpCodes.Cgt_Un);
 					ilgen.MarkLabel(end);
 					ilgen.Emit(OpCodes.Ret);
-					ilgen.DoEmit();
 					// Implement the "IsInstanceArray" method
 					mb = ghostIsInstanceArrayMethod;
 					AttributeHelper.HideFromJava(mb);
-					ilgen = CodeEmitter.Create(mb);
-					CodeEmitterLocal localType = ilgen.DeclareLocal(Types.Type);
-					CodeEmitterLocal localRank = ilgen.DeclareLocal(Types.Int32);
+					ilgen = mb.GetILGenerator();
+					LocalBuilder localType = ilgen.DeclareLocal(typeof(Type));
 					ilgen.Emit(OpCodes.Ldarg_0);
-					CodeEmitterLabel skip = ilgen.DefineLabel();
-					ilgen.EmitBrtrue(skip);
+					Label skip = ilgen.DefineLabel();
+					ilgen.Emit(OpCodes.Brtrue_S, skip);
 					ilgen.Emit(OpCodes.Ldc_I4_0);
 					ilgen.Emit(OpCodes.Ret);
 					ilgen.MarkLabel(skip);
 					ilgen.Emit(OpCodes.Ldarg_0);
-					ilgen.Emit(OpCodes.Call, Compiler.getTypeMethod);
+					ilgen.Emit(OpCodes.Call, typeof(object).GetMethod("GetType"));
 					ilgen.Emit(OpCodes.Stloc, localType);
-					ilgen.Emit(OpCodes.Ldarg_1);
-					ilgen.Emit(OpCodes.Stloc, localRank);
 					skip = ilgen.DefineLabel();
-					ilgen.EmitBr(skip);
-					CodeEmitterLabel iter = ilgen.DefineLabel();
+					ilgen.Emit(OpCodes.Br_S, skip);
+					Label iter = ilgen.DefineLabel();
 					ilgen.MarkLabel(iter);
-					ilgen.Emit(OpCodes.Ldloc, localType);
-					ilgen.Emit(OpCodes.Callvirt, Types.Type.GetMethod("GetElementType"));
-					ilgen.Emit(OpCodes.Stloc, localType);
-					ilgen.Emit(OpCodes.Ldloc, localRank);
+					ilgen.Emit(OpCodes.Ldarg_1);
 					ilgen.Emit(OpCodes.Ldc_I4_1);
 					ilgen.Emit(OpCodes.Sub);
-					ilgen.Emit(OpCodes.Stloc, localRank);
-					ilgen.Emit(OpCodes.Ldloc, localRank);
-					CodeEmitterLabel typecheck = ilgen.DefineLabel();
-					ilgen.EmitBrfalse(typecheck);
+					ilgen.Emit(OpCodes.Starg_S, (byte)1);
+					ilgen.Emit(OpCodes.Ldloc, localType);
+					ilgen.Emit(OpCodes.Callvirt, typeof(Type).GetMethod("GetElementType"));
+					ilgen.Emit(OpCodes.Stloc, localType);
 					ilgen.MarkLabel(skip);
 					ilgen.Emit(OpCodes.Ldloc, localType);
-					ilgen.Emit(OpCodes.Callvirt, Types.Type.GetMethod("get_IsArray"));
-					ilgen.EmitBrtrue(iter);
+					ilgen.Emit(OpCodes.Callvirt, typeof(Type).GetMethod("get_IsArray"));
+					ilgen.Emit(OpCodes.Brtrue_S, iter);
+					ilgen.Emit(OpCodes.Ldarg_1);
+					skip = ilgen.DefineLabel();
+					ilgen.Emit(OpCodes.Brfalse_S, skip);
 					ilgen.Emit(OpCodes.Ldc_I4_0);
 					ilgen.Emit(OpCodes.Ret);
-					ilgen.MarkLabel(typecheck);
+					ilgen.MarkLabel(skip);
 					for(int i = 0; i < implementers.Length; i++)
 					{
 						ilgen.Emit(OpCodes.Ldtoken, implementers[i].TypeAsTBD);
-						ilgen.Emit(OpCodes.Call, Types.Type.GetMethod("GetTypeFromHandle"));
+						ilgen.Emit(OpCodes.Call, typeof(Type).GetMethod("GetTypeFromHandle"));
 						ilgen.Emit(OpCodes.Ldloc, localType);
-						ilgen.Emit(OpCodes.Callvirt, Types.Type.GetMethod("IsAssignableFrom"));
-						CodeEmitterLabel label = ilgen.DefineLabel();
-						ilgen.EmitBrfalse(label);
+						ilgen.Emit(OpCodes.Callvirt, typeof(Type).GetMethod("IsAssignableFrom"));
+						Label label = ilgen.DefineLabel();
+						ilgen.Emit(OpCodes.Brfalse_S, label);
 						ilgen.Emit(OpCodes.Ldc_I4_1);
 						ilgen.Emit(OpCodes.Ret);
 						ilgen.MarkLabel(label);
 					}
 					ilgen.Emit(OpCodes.Ldtoken, typeBuilderGhostInterface);
-					ilgen.Emit(OpCodes.Call, Types.Type.GetMethod("GetTypeFromHandle"));
+					ilgen.Emit(OpCodes.Call, typeof(Type).GetMethod("GetTypeFromHandle"));
 					ilgen.Emit(OpCodes.Ldloc, localType);
-					ilgen.Emit(OpCodes.Callvirt, Types.Type.GetMethod("IsAssignableFrom"));
+					ilgen.Emit(OpCodes.Callvirt, typeof(Type).GetMethod("IsAssignableFrom"));
 					skip = ilgen.DefineLabel();
-					ilgen.EmitBrfalse(skip);
+					ilgen.Emit(OpCodes.Brfalse_S, skip);
 					ilgen.Emit(OpCodes.Ldc_I4_1);
 					ilgen.Emit(OpCodes.Ret);
 					ilgen.MarkLabel(skip);
-					ilgen.Emit(OpCodes.Ldarg_0);
-					ilgen.Emit(OpCodes.Ldtoken, typeBuilder);
-					ilgen.Emit(OpCodes.Ldarg_1);
-					ilgen.Emit(OpCodes.Call, StaticCompiler.GetRuntimeType("IKVM.Runtime.GhostTag").GetMethod("IsGhostArrayInstance", BindingFlags.NonPublic | BindingFlags.Static));
+					ilgen.Emit(OpCodes.Ldtoken, typeof(object));
+					ilgen.Emit(OpCodes.Call, typeof(Type).GetMethod("GetTypeFromHandle"));
+					ilgen.Emit(OpCodes.Ldloc, localType);
+					ilgen.Emit(OpCodes.Ceq);
 					ilgen.Emit(OpCodes.Ret);
-					ilgen.DoEmit();
 						
 					// Implement the "Cast" method
 					mb = ghostCastMethod;
 					AttributeHelper.HideFromJava(mb);
-					ilgen = CodeEmitter.Create(mb);
+					ilgen = mb.GetILGenerator();
 					end = ilgen.DefineLabel();
 					for(int i = 0; i < implementers.Length; i++)
 					{
 						ilgen.Emit(OpCodes.Ldarg_0);
 						ilgen.Emit(OpCodes.Isinst, implementers[i].TypeAsTBD);
-						ilgen.EmitBrtrue(end);
+						ilgen.Emit(OpCodes.Brtrue, end);
 					}
 					ilgen.Emit(OpCodes.Ldarg_0);
 					ilgen.Emit(OpCodes.Castclass, typeBuilderGhostInterface);
@@ -1000,15 +786,13 @@ namespace IKVM.Internal
 					ilgen.Emit(OpCodes.Ldloca, local);
 					ilgen.Emit(OpCodes.Ldobj, TypeAsSignatureType);	
 					ilgen.Emit(OpCodes.Ret);
-					ilgen.DoEmit();
 					// Add "ToObject" methods
-					mb = typeBuilder.DefineMethod("ToObject", MethodAttributes.HideBySig | MethodAttributes.Public, Types.Object, Type.EmptyTypes);
+					mb = typeBuilder.DefineMethod("ToObject", MethodAttributes.HideBySig | MethodAttributes.Public, typeof(object), Type.EmptyTypes);
 					AttributeHelper.HideFromJava(mb);
-					ilgen = CodeEmitter.Create(mb);
+					ilgen = mb.GetILGenerator();
 					ilgen.Emit(OpCodes.Ldarg_0);
 					ilgen.Emit(OpCodes.Ldfld, ghostRefField);
 					ilgen.Emit(OpCodes.Ret);
-					ilgen.DoEmit();
 
 					// Implement the "CastArray" method
 					// NOTE unlike "Cast" this doesn't return anything, it just throws a ClassCastException if the
@@ -1016,68 +800,60 @@ namespace IKVM.Internal
 					// instead of reimplementing the check here.
 					mb = ghostCastArrayMethod;
 					AttributeHelper.HideFromJava(mb);
-					ilgen = CodeEmitter.Create(mb);
+					ilgen = mb.GetILGenerator();
 					end = ilgen.DefineLabel();
 					ilgen.Emit(OpCodes.Ldarg_0);
-					ilgen.EmitBrfalse(end);
+					ilgen.Emit(OpCodes.Brfalse_S, end);
 					ilgen.Emit(OpCodes.Ldarg_0);
 					ilgen.Emit(OpCodes.Ldarg_1);
 					ilgen.Emit(OpCodes.Call, ghostIsInstanceArrayMethod);
-					ilgen.EmitBrtrue(end);
-					ilgen.Emit(OpCodes.Ldarg_0);
-					ilgen.Emit(OpCodes.Ldtoken, typeBuilder);
-					ilgen.Emit(OpCodes.Ldarg_1);
-					ilgen.Emit(OpCodes.Call, StaticCompiler.GetRuntimeType("IKVM.Runtime.GhostTag").GetMethod("ThrowClassCastException", BindingFlags.NonPublic | BindingFlags.Static));
+					ilgen.Emit(OpCodes.Brtrue_S, end);
+					EmitHelper.Throw(ilgen, "java.lang.ClassCastException");
 					ilgen.MarkLabel(end);
 					ilgen.Emit(OpCodes.Ret);
-					ilgen.DoEmit();
 
 					// Implement the "Equals" method
-					mb = typeBuilder.DefineMethod("Equals", MethodAttributes.HideBySig | MethodAttributes.Public | MethodAttributes.Virtual, Types.Boolean, new Type[] { Types.Object });
+					mb = typeBuilder.DefineMethod("Equals", MethodAttributes.HideBySig | MethodAttributes.Public | MethodAttributes.Virtual, typeof(bool), new Type[] { typeof(object) });
 					AttributeHelper.HideFromJava(mb);
-					ilgen = CodeEmitter.Create(mb);
+					ilgen = mb.GetILGenerator();
 					ilgen.Emit(OpCodes.Ldarg_0);
 					ilgen.Emit(OpCodes.Ldfld, ghostRefField);
 					ilgen.Emit(OpCodes.Ldarg_1);
 					ilgen.Emit(OpCodes.Ceq);
 					ilgen.Emit(OpCodes.Ret);
-					ilgen.DoEmit();
 
 					// Implement the "GetHashCode" method
-					mb = typeBuilder.DefineMethod("GetHashCode", MethodAttributes.HideBySig | MethodAttributes.Public | MethodAttributes.Virtual, Types.Int32, Type.EmptyTypes);
+					mb = typeBuilder.DefineMethod("GetHashCode", MethodAttributes.HideBySig | MethodAttributes.Public | MethodAttributes.Virtual, typeof(int), Type.EmptyTypes);
 					AttributeHelper.HideFromJava(mb);
-					ilgen = CodeEmitter.Create(mb);
+					ilgen = mb.GetILGenerator();
 					ilgen.Emit(OpCodes.Ldarg_0);
 					ilgen.Emit(OpCodes.Ldfld, ghostRefField);
-					ilgen.Emit(OpCodes.Callvirt, Types.Object.GetMethod("GetHashCode"));
+					ilgen.Emit(OpCodes.Callvirt, typeof(object).GetMethod("GetHashCode"));
 					ilgen.Emit(OpCodes.Ret);
-					ilgen.DoEmit();
 
 					// Implement the "op_Equality" method
-					mb = typeBuilder.DefineMethod("op_Equality", MethodAttributes.HideBySig | MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.SpecialName, Types.Boolean, new Type[] { typeBuilder, typeBuilder });
+					mb = typeBuilder.DefineMethod("op_Equality", MethodAttributes.HideBySig | MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.SpecialName, typeof(bool), new Type[] { typeBuilder, typeBuilder });
 					AttributeHelper.HideFromJava(mb);
-					ilgen = CodeEmitter.Create(mb);
-					ilgen.EmitLdarga(0);
+					ilgen = mb.GetILGenerator();
+					ilgen.Emit(OpCodes.Ldarga_S, (byte)0);
 					ilgen.Emit(OpCodes.Ldfld, ghostRefField);
-					ilgen.EmitLdarga(1);
+					ilgen.Emit(OpCodes.Ldarga_S, (byte)1);
 					ilgen.Emit(OpCodes.Ldfld, ghostRefField);
 					ilgen.Emit(OpCodes.Ceq);
 					ilgen.Emit(OpCodes.Ret);
-					ilgen.DoEmit();
 
 					// Implement the "op_Inequality" method
-					mb = typeBuilder.DefineMethod("op_Inequality", MethodAttributes.HideBySig | MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.SpecialName, Types.Boolean, new Type[] { typeBuilder, typeBuilder });
+					mb = typeBuilder.DefineMethod("op_Inequality", MethodAttributes.HideBySig | MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.SpecialName, typeof(bool), new Type[] { typeBuilder, typeBuilder });
 					AttributeHelper.HideFromJava(mb);
-					ilgen = CodeEmitter.Create(mb);
-					ilgen.EmitLdarga(0);
+					ilgen = mb.GetILGenerator();
+					ilgen.Emit(OpCodes.Ldarga_S, (byte)0);
 					ilgen.Emit(OpCodes.Ldfld, ghostRefField);
-					ilgen.EmitLdarga(1);
+					ilgen.Emit(OpCodes.Ldarga_S, (byte)1);
 					ilgen.Emit(OpCodes.Ldfld, ghostRefField);
 					ilgen.Emit(OpCodes.Ceq);
 					ilgen.Emit(OpCodes.Ldc_I4_0);
 					ilgen.Emit(OpCodes.Ceq);
 					ilgen.Emit(OpCodes.Ret);
-					ilgen.DoEmit();
 				}
 			}
 		}
@@ -1094,20 +870,20 @@ namespace IKVM.Internal
 		{
 			typeAttribs &= ~(TypeAttributes.Interface | TypeAttributes.Abstract);
 			typeAttribs |= TypeAttributes.Class | TypeAttributes.Sealed;
-			TypeBuilder typeBuilder = classLoader.GetTypeWrapperFactory().ModuleBuilder.DefineType(mangledTypeName, typeAttribs, Types.ValueType);
+			TypeBuilder typeBuilder = classLoader.GetTypeWrapperFactory().ModuleBuilder.DefineType(mangledTypeName, typeAttribs, typeof(ValueType));
 			AttributeHelper.SetGhostInterface(typeBuilder);
 			AttributeHelper.SetModifiers(typeBuilder, Modifiers, IsInternal);
-			ghostRefField = typeBuilder.DefineField("__<ref>", Types.Object, FieldAttributes.Public | FieldAttributes.SpecialName);
+			ghostRefField = typeBuilder.DefineField("__<ref>", typeof(object), FieldAttributes.Public | FieldAttributes.SpecialName);
 			typeBuilderGhostInterface = typeBuilder.DefineNestedType("__Interface", TypeAttributes.Interface | TypeAttributes.Abstract | TypeAttributes.NestedPublic);
 			AttributeHelper.HideFromJava(typeBuilderGhostInterface);
-			ghostIsInstanceMethod = typeBuilder.DefineMethod("IsInstance", MethodAttributes.HideBySig | MethodAttributes.Public | MethodAttributes.Static, Types.Boolean, new Type[] { Types.Object });
+			ghostIsInstanceMethod = typeBuilder.DefineMethod("IsInstance", MethodAttributes.HideBySig | MethodAttributes.Public | MethodAttributes.Static, typeof(bool), new Type[] { typeof(object) });
 			ghostIsInstanceMethod.DefineParameter(1, ParameterAttributes.None, "obj");
-			ghostIsInstanceArrayMethod = typeBuilder.DefineMethod("IsInstanceArray", MethodAttributes.HideBySig | MethodAttributes.Public | MethodAttributes.Static, Types.Boolean, new Type[] { Types.Object, Types.Int32 });
+			ghostIsInstanceArrayMethod = typeBuilder.DefineMethod("IsInstanceArray", MethodAttributes.HideBySig | MethodAttributes.Public | MethodAttributes.Static, typeof(bool), new Type[] { typeof(object), typeof(int) });
 			ghostIsInstanceArrayMethod.DefineParameter(1, ParameterAttributes.None, "obj");
 			ghostIsInstanceArrayMethod.DefineParameter(2, ParameterAttributes.None, "rank");
-			ghostCastMethod = typeBuilder.DefineMethod("Cast", MethodAttributes.HideBySig | MethodAttributes.Public | MethodAttributes.Static, typeBuilder, new Type[] { Types.Object });
+			ghostCastMethod = typeBuilder.DefineMethod("Cast", MethodAttributes.HideBySig | MethodAttributes.Public | MethodAttributes.Static, typeBuilder, new Type[] { typeof(object) });
 			ghostCastMethod.DefineParameter(1, ParameterAttributes.None, "obj");
-			ghostCastArrayMethod = typeBuilder.DefineMethod("CastArray", MethodAttributes.HideBySig | MethodAttributes.Public | MethodAttributes.Static, Types.Void, new Type[] { Types.Object, Types.Int32 });
+			ghostCastArrayMethod = typeBuilder.DefineMethod("CastArray", MethodAttributes.HideBySig | MethodAttributes.Public | MethodAttributes.Static, typeof(void), new Type[] { typeof(object), typeof(int) });
 			ghostCastArrayMethod.DefineParameter(1, ParameterAttributes.None, "obj");
 			ghostCastArrayMethod.DefineParameter(2, ParameterAttributes.None, "rank");
 			return typeBuilder;
@@ -1121,7 +897,7 @@ namespace IKVM.Internal
 			}
 		}
 
-		internal override void EmitCheckcast(CodeEmitter ilgen)
+		internal override void EmitCheckcast(TypeWrapper context, ILGenerator ilgen)
 		{
 			if(IsGhost)
 			{
@@ -1139,17 +915,17 @@ namespace IKVM.Internal
 					rank++;
 					tw = tw.ElementTypeWrapper;
 				}
-				ilgen.EmitLdc_I4(rank);
+				ilgen.Emit(OpCodes.Ldc_I4, rank);
 				ilgen.Emit(OpCodes.Call, ghostCastArrayMethod);
-				ilgen.Emit(OpCodes.Castclass, ArrayTypeWrapper.MakeArrayType(Types.Object, rank));
+				ilgen.Emit(OpCodes.Castclass, ArrayTypeWrapper.MakeArrayType(typeof(object), rank));
 			}
 			else
 			{
-				base.EmitCheckcast(ilgen);
+				base.EmitCheckcast(context, ilgen);
 			}
 		}
 
-		internal override void EmitInstanceOf(CodeEmitter ilgen)
+		internal override void EmitInstanceOf(TypeWrapper context, ILGenerator ilgen)
 		{
 			if(IsGhost)
 			{
@@ -1161,7 +937,7 @@ namespace IKVM.Internal
 			}
 			else
 			{
-				base.EmitInstanceOf(ilgen);
+				base.EmitInstanceOf(context, ilgen);
 			}
 		}
 
@@ -1175,126 +951,6 @@ namespace IKVM.Internal
 			get
 			{
 				return annotation;
-			}
-		}
-
-		internal void SetEnumType(Type enumType)
-		{
-			this.enumType = enumType;
-		}
-
-		internal override Type EnumType
-		{
-			get
-			{
-				return enumType;
-			}
-		}
-
-		private sealed class ReplacedMethodWrapper : MethodWrapper
-		{
-			private IKVM.Internal.MapXml.InstructionList code;
-
-			internal ReplacedMethodWrapper(TypeWrapper tw, string name, string sig, IKVM.Internal.MapXml.InstructionList code)
-				: base(tw, name, sig, null, null, null, Modifiers.Public, MemberFlags.None)
-			{
-				this.code = code;
-			}
-
-			internal ReplacedMethodWrapper(ClassFile.ConstantPoolItemMI cpi, IKVM.Internal.MapXml.InstructionList code)
-				: base(cpi.GetClassType(), cpi.Name, cpi.Signature, null, cpi.GetRetType(), cpi.GetArgTypes(), Modifiers.Public, MemberFlags.None)
-			{
-				this.code = code;
-			}
-
-			protected override void DoLinkMethod()
-			{
-			}
-
-			private void DoEmit(CodeEmitter ilgen)
-			{
-				IKVM.Internal.MapXml.CodeGenContext context = new IKVM.Internal.MapXml.CodeGenContext(this.DeclaringType.GetClassLoader());
-				// we don't want the line numbers from map.xml, so we have our own emit loop
-				for (int i = 0; i < code.invoke.Length; i++)
-				{
-					code.invoke[i].Generate(context, ilgen);
-				}
-			}
-
-			internal override void EmitCall(CodeEmitter ilgen)
-			{
-				DoEmit(ilgen);
-			}
-
-			internal override void EmitCallvirt(CodeEmitter ilgen)
-			{
-				DoEmit(ilgen);
-			}
-
-			internal override void EmitNewobj(CodeEmitter ilgen)
-			{
-				DoEmit(ilgen);
-			}
-		}
-
-		internal override MethodWrapper[] GetReplacedMethodsFor(MethodWrapper mw)
-		{
-			IKVM.Internal.MapXml.ReplaceMethodCall[] replacedMethods = ((CompilerClassLoader)GetClassLoader()).GetReplacedMethodsFor(mw);
-			MethodWrapper[] baseReplacedMethodWrappers = base.GetReplacedMethodsFor(mw);
-			if (replacedMethods != null || baseReplacedMethodWrappers != null || this.replacedMethods != null)
-			{
-				List<MethodWrapper> list = new List<MethodWrapper>();
-				if (replacedMethods != null)
-				{
-					for (int i = 0; i < replacedMethods.Length; i++)
-					{
-						list.Add(new ReplacedMethodWrapper(GetClassLoader().LoadClassByDottedName(replacedMethods[i].Class), replacedMethods[i].Name, replacedMethods[i].Sig, replacedMethods[i].code));
-					}
-				}
-				if (baseReplacedMethodWrappers != null)
-				{
-					list.AddRange(baseReplacedMethodWrappers);
-				}
-				if (this.replacedMethods != null)
-				{
-					list.AddRange(this.replacedMethods);
-				}
-				return list.ToArray();
-			}
-			return null;
-		}
-
-		internal override bool IsFastClassLiteralSafe
-		{
-			get { return true; }
-		}
-
-		internal MethodWrapper ReplaceMethodWrapper(MethodWrapper mw)
-		{
-			if (replacedMethods != null)
-			{
-				foreach (MethodWrapper r in replacedMethods)
-				{
-					if (mw.DeclaringType == r.DeclaringType
-						&& mw.Name == r.Name
-						&& mw.Signature == r.Signature)
-					{
-						return r;
-					}
-				}
-			}
-			return mw;
-		}
-
-		internal override MethodBase GetBaseSerializationConstructor()
-		{
-			if (workaroundBaseClass != null)
-			{
-				return workaroundBaseClass.GetSerializationConstructor();
-			}
-			else
-			{
-				return base.GetBaseSerializationConstructor();
 			}
 		}
 	}
