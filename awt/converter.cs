@@ -1,7 +1,7 @@
 /*
   Copyright (C) 2002, 2004, 2005, 2006, 2007 Jeroen Frijters
   Copyright (C) 2006 Active Endpoints, Inc.
-  Copyright (C) 2006 - 2010 Volker Berlin (i-net software)
+  Copyright (C) 2006, 2007 Volker Berlin
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -52,30 +52,26 @@ namespace ikvm.awt
 
         internal static Color ConvertColor(java.awt.Color color)
         {
-            return color == null ? Color.Empty : Color.FromArgb(color.getRGB());
+            return Color.FromArgb(color.getRGB());
         }
 
-        internal static Bitmap ConvertImage(java.awt.Image img)
+        internal static Image ConvertImage(java.awt.Image img)
         {
-            if (img is BufferedImage)
+            if (img is NetBufferedImage)
             {
-                return ((BufferedImage)img).getBitmap();
+                return ((NetBufferedImage)img).bitmap;
             }
             if (img is NetVolatileImage)
             {
                 return ((NetVolatileImage)img).bitmap;
             }
-            if (img is sun.awt.image.ToolkitImage)
+            if (img is NetProducerImage)
             {
-                sun.awt.image.ImageRepresentation ir = ((sun.awt.image.ToolkitImage)img).getImageRep();
-                // start the production and wait if not produce the image
-                lock( ir ) {
-                	ir.prepare(null);
-                	while ( ir.getBufferedImage() == null )  {
-                       ir.wait();
-                    }
-                }
-                return ir.getBufferedImage().getBitmap();
+                return ((NetProducerImage)img).getBitmap();
+            }
+            if (img is BufferedImage)
+            {
+                return ConvertImage((BufferedImage)img);
             }
             if (img is NoImage)
             {
@@ -83,6 +79,38 @@ namespace ikvm.awt
             }
             Console.WriteLine(new System.Diagnostics.StackTrace());
             throw new NotImplementedException("Image class:" + img.GetType().FullName);
+        }
+
+        private static Image ConvertImage(BufferedImage img)
+        {
+            //First map the pixel from Java type to .NET type
+            PixelFormat format;
+            switch (img.getType())
+            {
+                case BufferedImage.TYPE_INT_ARGB:
+                    format = PixelFormat.Format32bppArgb;
+                    break;
+                default:
+                    throw new NotImplementedException("BufferedImage Type:" + img.getType());
+            }
+
+            //Create a .NET BufferedImage (alias Bitmap)
+            int width = img.getWidth();
+            int height = img.getHeight();
+            Bitmap bitmap = new Bitmap(width, height, format);
+
+            //Request the .NET pixel pointer
+            Rectangle rec = new Rectangle(0, 0, width, height);
+            BitmapData data = bitmap.LockBits(rec, ImageLockMode.WriteOnly, format);
+            IntPtr pixelPtr = data.Scan0;
+
+            //Request the pixel data from Java and copy it to .NET
+            WritableRaster raster = img.getRaster();
+            int[] pixelData = raster.getPixels(0, 0, width, height, (int[])null);
+            Marshal.Copy(pixelData, 0, pixelPtr, pixelData.Length);
+
+            bitmap.UnlockBits(data);
+            return bitmap;
         }
 
         internal static PointF ConvertPoint(java.awt.geom.Point2D point)
@@ -95,11 +123,6 @@ namespace ikvm.awt
             return new RectangleF((float)rect.getX(), (float)rect.getY(), (float)rect.getWidth(), (float)rect.getHeight());
         }
 
-        internal static Rectangle ConvertRect(java.awt.Rectangle rect)
-        {
-            return new Rectangle(rect.x, rect.y, rect.width, rect.height);
-        }
-
         /// <summary>
         /// Create a rounded rectangle using lines and arcs
         /// </summary>
@@ -107,35 +130,21 @@ namespace ikvm.awt
         /// <param name="y">upper left y coordinate</param>
         /// <param name="w">width</param>
         /// <param name="h">height</param>
-        /// <param name="arcWidth">the horizontal diameter of the arc at the four corners</param>
-        /// <param name="arcHeight">the vertical diameter of the arc at the four corners</param>
+        /// <param name="radius">radius of arc</param>
         /// <returns></returns>
-		internal static GraphicsPath ConvertRoundRect(int x, int y, int w, int h, int arcWidth, int arcHeight)
+        internal static GraphicsPath ConvertRoundRect(int x, int y, int w, int h, int radius)
         {
             GraphicsPath gp = new GraphicsPath();
-            bool drawArc = arcWidth > 0 && arcHeight > 0;
-            int a = arcWidth / 2;
-            int b = arcHeight / 2;
-			gp.AddLine(x + a, y, x + w - a, y);
-            if (drawArc)
-            {
-                gp.AddArc(x + w - arcWidth, y, arcWidth, arcHeight, 270, 90); //upper right arc
-            }
-            gp.AddLine(x + w, y + b, x + w, y + h - b);
-            if (drawArc)
-            {
-                gp.AddArc(x + w - arcWidth, y + h - arcHeight, arcWidth, arcHeight, 0, 90); //lower right arc
-            }
-            gp.AddLine(x + w - a, y + h, x + a, y + h);
-            if (drawArc)
-            {
-                gp.AddArc(x, y + h - arcHeight, arcWidth, arcHeight, 90, 90);//lower left arc
-            }
-            gp.AddLine(x, y + h - b, x, y + b);
-            if (drawArc)
-            {
-                gp.AddArc(x, y, arcWidth, arcHeight, 180, 90); //upper left arc
-            }
+
+            gp.AddLine(x + radius, y, x + w - (radius * 2), y);
+            gp.AddArc(x + w - (radius * 2), y, radius * 2, radius * 2, 270, 90);
+            gp.AddLine(x + w, y + radius, x + w, y + h - (radius * 2));
+            gp.AddArc(x + w - (radius * 2), y + h - (radius * 2), radius * 2, radius * 2, 0, 90);
+            gp.AddLine(x + w - (radius * 2), y + h, x + radius, y + h);
+            gp.AddArc(x, y + h - (radius * 2), radius * 2, radius * 2, 90, 90);
+            gp.AddLine(x, y + h - (radius * 2), x, y + radius);
+            gp.AddArc(x, y, radius * 2, radius * 2, 180, 90);
+
             gp.CloseFigure();
 
             return gp;
@@ -143,9 +152,18 @@ namespace ikvm.awt
 
         internal static GraphicsPath ConvertShape(java.awt.Shape shape)
         {
-            java.awt.geom.PathIterator iterator = shape.getPathIterator(null);
+            java.awt.geom.GeneralPath path = new java.awt.geom.GeneralPath(shape);
+            java.awt.geom.PathIterator iterator = path.getPathIterator(new java.awt.geom.AffineTransform());
             GraphicsPath gp = new GraphicsPath();
-            gp.FillMode = (FillMode)iterator.getWindingRule();
+            switch (iterator.getWindingRule())
+            {
+                case java.awt.geom.PathIterator.__Fields.WIND_EVEN_ODD:
+                    gp.FillMode = System.Drawing.Drawing2D.FillMode.Alternate;
+                    break;
+                case java.awt.geom.PathIterator.__Fields.WIND_NON_ZERO:
+                    gp.FillMode = System.Drawing.Drawing2D.FillMode.Winding;
+                    break;
+            }
             float[] coords = new float[6];
             float x = 0;
             float y = 0;
@@ -183,20 +201,9 @@ namespace ikvm.awt
             return gp;
         }
 
-        internal static LineJoin ConvertLineJoin(int join)
+        internal static Brush CreateBrush(java.awt.Color color)
         {
-            switch (join)
-            {
-                case java.awt.BasicStroke.JOIN_MITER:
-                    return LineJoin.Miter;
-                case java.awt.BasicStroke.JOIN_ROUND:
-                    return LineJoin.Round;
-                case java.awt.BasicStroke.JOIN_BEVEL:
-                    return LineJoin.Bevel;
-                default:
-                    Console.WriteLine("Unknown line join type:" + join);
-                    return LineJoin.Miter;
-            }
+            return new SolidBrush(Color.FromArgb(color.getRGB()));
         }
 
         internal static Matrix ConvertTransform(java.awt.geom.AffineTransform tx)
@@ -212,30 +219,30 @@ namespace ikvm.awt
 
         internal static FontFamily CreateFontFamily(String name)
         {
-            String name2 = name == null ? null : name.ToLower();
-			switch (name2)
-			{
-				case "monospaced":
-				case "courier":
-					return FontFamily.GenericMonospace;
-				case "serif":
-					return FontFamily.GenericSerif;
-				case "sansserif":
-				case "dialog":
-				case "dialoginput":
-				case null:
-				case "default":
-					return FontFamily.GenericSansSerif;
-				default:
-					try
-					{
-						return new FontFamily(name);
-					}
-					catch (ArgumentException)
-					{
-						return FontFamily.GenericSansSerif;
-					}
-			}
+            switch (name)
+            {
+                case "Monospaced":
+                case "Courier":
+                case "courier":
+                    return FontFamily.GenericMonospace;
+                case "Serif":
+                    return FontFamily.GenericSerif;
+                case "SansSerif":
+                case "Dialog":
+                case "DialogInput":
+                case null:
+                case "Default":
+                    return FontFamily.GenericSansSerif;
+                default:
+                    try
+                    {
+                        return new FontFamily(name);
+                    }
+                    catch (ArgumentException)
+                    {
+                        return FontFamily.GenericSansSerif;
+                    }
+            }
         }
 
 		private static FontStyle ConvertFontStyle(int style)
@@ -279,52 +286,6 @@ namespace ikvm.awt
             return new Font(family, size, fontStyle, GraphicsUnit.Pixel);
         }
 
-
-		internal static Region ConvertRegion(sun.java2d.pipe.Region shape)
-		{
-            if (shape == null)
-            {
-                return null;
-            }
-			if (shape.isRectangular())
-			{
-				int x = shape.getLoX();
-				int y = shape.getLoY();
-				int w = shape.getHiX() - x;
-				int h = shape.getHiY() - y;
-				if (w < 0 || h < 0)
-				{
-					return new Region();
-				}
-				else
-				{
-					return new Region(new Rectangle(x, y, w, h));
-				}
-			}
-			else
-			{
-				using (GraphicsPath path = new GraphicsPath())
-				{
-					sun.java2d.pipe.SpanIterator iter = shape.getSpanIterator();
-					int[] box = new int[4];
-					while (iter.nextSpan(box))
-					{
-						path.AddRectangle(new Rectangle(box[0], box[1], box[2] - box[0], box[3] - box[1]));
-					}
-					return new Region(path);
-				}
-			}
-		}
-
-        internal static string ConvertGlyphVector(java.awt.font.GlyphVector gv) {
-            int count = gv.getNumGlyphs();
-            char[] text = new char[count];
-            for (int i = 0; i < count; i++) {
-                text[i] = (char)gv.getGlyphCode(i);
-            }
-            return new string(text);
-        }
-
     }
 
     /// <summary>
@@ -343,60 +304,5 @@ namespace ikvm.awt
             return new java.awt.Rectangle((int)rec.X, (int)rec.Y, (int)rec.Width, (int)rec.Height);
         }
 
-        internal static java.awt.Color ConvertColor(Color color)
-        {
-            return color == Color.Empty ? null : new java.awt.Color(color.ToArgb(),true);
-        }
-
-        internal static java.awt.Font ConvertFont(Font font)
-        {
-            float size = font.Size;
-            if (font.Unit != GraphicsUnit.Pixel)
-            {
-                size = font.SizeInPoints * java.awt.Toolkit.getDefaultToolkit().getScreenResolution() / 72;
-            }
-            java.awt.Font jFont = new java.awt.Font(font.Name, (int)font.Style, (int)size);
-            if (jFont.getSize2D() != size)
-            {
-                jFont = jFont.deriveFont(size);
-            }
-            //TODO performance we should set the .NET Font, we can do it with an aditional constructor.
-            return jFont;
-        }
-
-        internal static java.awt.Shape ConvertShape(GraphicsPath path) {
-            java.awt.geom.GeneralPath shape = new java.awt.geom.GeneralPath();
-            shape.setWindingRule((int)path.FillMode);
-            for (int i = 0; i < path.PointCount; i++) {
-                byte pathType = path.PathTypes[i];
-                int type = pathType & 0x07;
-                PointF point = path.PathPoints[i];
-                switch (type) {
-                    case 0:
-                        // Indicates that the point is the start of a figure. 
-                        shape.moveTo(point.X, point.Y);
-                        break;
-                    case 1:
-                        // Indicates that the point is one of the two endpoints of a line. 
-                        shape.lineTo(point.X, point.Y);
-                        break;
-                    case 3:
-                        // Indicates that the point is an endpoint or control point of a cubic B�zier spline. 
-                        PointF point2 = path.PathPoints[++i];
-                        PointF point3 = path.PathPoints[++i];
-                        shape.curveTo(point.X, point.Y, point2.X, point2.Y, point3.X, point3.Y);
-                        pathType = path.PathTypes[i];
-                        break;
-                    default:
-                        Console.WriteLine("Unknown GraphicsPath type: " + type);
-                        break;
-                }
-                if ((pathType & 0x80) > 0) {
-                    // Specifies that the point is the last point in a closed subpath (figure).
-                    shape.closePath();
-                }
-            }
-            return shape;
-        }
     }
 }

@@ -1,8 +1,7 @@
 /*
   Copyright (C) 2002, 2004, 2005, 2006, 2007 Jeroen Frijters
   Copyright (C) 2006 Active Endpoints, Inc.
-  Copyright (C) 2006 - 2013 Volker Berlin (i-net software)
-  Copyright (C) 2011 Karsten Heinrich (i-net software)
+  Copyright (C) 2006, 2007 Volker Berlin
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -26,6 +25,7 @@
 */
 
 using System;
+using System.Collections;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
@@ -41,47 +41,21 @@ namespace ikvm.awt
     {
         private readonly Bitmap bitmap;
 
-        internal BitmapGraphics(Bitmap bitmap, java.awt.Font font, Color fgcolor, Color bgcolor)
-            : base(createGraphics(bitmap), font, fgcolor, bgcolor)
-        {
-            this.bitmap = bitmap;
-        }
-
         internal BitmapGraphics(Bitmap bitmap)
-            : base(createGraphics(bitmap), null, Color.White, Color.Black)
+            : base(Graphics.FromImage(bitmap), null, Color.White)
         {
             this.bitmap = bitmap;
-        }
-
-        protected override SizeF GetSize() {
-            return bitmap.Size;
-        }
-
-        private static Graphics createGraphics(Bitmap bitmap)
-        {
-            // lock to prevent the exception
-            // System.InvalidOperationException: Object is currently in use elsewhere
-            lock (bitmap)
-            {
-                return Graphics.FromImage(bitmap);
-            }
         }
 
         public override java.awt.Graphics create()
         {
             BitmapGraphics newGraphics = (BitmapGraphics)MemberwiseClone();
-            newGraphics.init(createGraphics(bitmap));
+            newGraphics.init(Graphics.FromImage(bitmap));
             return newGraphics;
         }
 
-        public override void copyArea(int x, int y, int width, int height, int dx, int dy)
+		public override void copyArea(int x, int y, int width, int height, int dx, int dy)
 		{
-            Bitmap copy = new Bitmap(width, height);
-            using (Graphics gCopy = Graphics.FromImage(copy))
-            {
-                gCopy.DrawImage(bitmap, new Rectangle(0, 0, width, height), x, y, width, height, GraphicsUnit.Pixel);
-            }
-            g.DrawImageUnscaled(copy, x + dx, y + dy);
 		}
     }
 
@@ -89,14 +63,10 @@ namespace ikvm.awt
     {
         private readonly Control control;
 
-        internal ComponentGraphics(Control control, java.awt.Color fgColor, java.awt.Color bgColor, java.awt.Font font)
-            : base(control.CreateGraphics(), font, J2C.ConvertColor(fgColor), J2C.ConvertColor(bgColor))
+        internal ComponentGraphics(NetComponentPeer peer)
+            : base(peer.control.CreateGraphics(), peer.component.getFont(), peer.control.BackColor)
         {
-            this.control = control;
-        }
-
-        protected override SizeF GetSize() {
-            return control.Size;
+            control = peer.control;
         }
 
         public override java.awt.Graphics create()
@@ -106,725 +76,60 @@ namespace ikvm.awt
             return newGraphics;
         }
 
-        private Point getPointToScreenImpl(Point point)
-        {
-            return this.control.PointToScreen(point);
-        }
-
-        private Point getPointToScreen(Point point)
-        {
-            return (Point)this.control.Invoke(new Converter<Point,Point>(getPointToScreenImpl),point);
-        }
-
 		public override void copyArea(int x, int y, int width, int height, int dx, int dy)
 		{
-            Point src = getPointToScreen(new Point(x + (int)this.g.Transform.OffsetX, y + (int)this.g.Transform.OffsetY));
-            Point dest = new Point(x + (int)this.g.Transform.OffsetX + dx, y + (int)this.g.Transform.OffsetY + dy);
-            this.g.CopyFromScreen(src, dest, new Size(width, height));
+			throw new NotImplementedException();
 		}
-
-		public override void clip(java.awt.Shape shape)
-		{
-			if (shape == null)
-			{
-				// the API specification says that this will clear
-				// the clip, but in fact the reference implementation throws a 
-				// NullPointerException - see the following entry in the bug parade:
-				// http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=6206189
-				throw new java.lang.NullPointerException();
-			}
-			base.clip(shape);
-		}
-    }
-
-    internal class PrintGraphicsContext
-    {
-        internal PrintGraphics Current;
-    }
-
-    internal class PrintGraphics : NetGraphics
-    {
-        private NetGraphicsState myState;
-        private PrintGraphicsContext baseContext;
-        private bool disposed = false;
-        private bool isBase = true;
-
-        internal PrintGraphics(Graphics g)
-            : base(g, null, Color.White, Color.Black)
-        {
-            baseContext = new PrintGraphicsContext();
-            baseContext.Current = this;
-        }
-
-        public override java.awt.Graphics create()
-        {
-            checkState();
-            myState = new NetGraphicsState();
-            myState.saveGraphics(this);
-            PrintGraphics newGraphics = (PrintGraphics)MemberwiseClone();
-            newGraphics.myState = null;
-            newGraphics.isBase = false;
-            newGraphics.baseContext = baseContext;
-            baseContext.Current = newGraphics; // since it is very likely that the next op will be on that graphics
-            // this is similar to init
-            myState.restoreGraphics(newGraphics);
-            return newGraphics;
-        }
-
-        /// <summary>
-        /// Checks whether the properties of this instance are set to the bse Graphics. If not, the context
-        /// of the currently PrintGraphics is saved and the context if this instance is restored.
-        /// </summary>
-        private void checkState()
-        {
-            // this is required to simulate Graphics.create(), which is not possible in .NET
-            // we simply call Save on create() an restore this state, if any method is called
-            // on the current graphics. This will work for almost any use case of create()
-            if (baseContext != null && baseContext.Current != this)
-            {
-                if (!baseContext.Current.disposed)
-                {
-                    if (baseContext.Current.myState == null)
-                    {
-                        baseContext.Current.myState = new NetGraphicsState(baseContext.Current);
-                    }
-                    else
-                    {
-                        baseContext.Current.myState.saveGraphics(baseContext.Current);
-                    }
-                }
-                baseContext.Current = this;
-                if (myState != null) // is only null, if this instance was already disposed
-                {
-                    myState.restoreGraphics(this);
-                }
-            }
-        }
-
-        public override void copyArea(int x, int y, int width, int height, int dx, int dy)
-        {
-            throw new NotImplementedException();
-        }
-
-        public override void clearRect(int x, int y, int width, int height)
-        {
-            checkState();
-            base.clearRect(x, y, width, height);
-        }
-
-        public override void clipRect(int x, int y, int w, int h)
-        {
-            checkState();
-            base.clearRect(x, y, w, h);
-        }
-
-        public override void clip(java.awt.Shape shape)
-        {
-            checkState();
-            base.clip(shape);
-        }
-
-        public override void dispose()
-        {            
-            myState = null;
-            if (pen != null) pen.Dispose();
-            if (brush != null) brush.Dispose();
-            disposed = true;
-            if (!isBase)
-            {
-                // only dispose the underlying Graphics if this is the base PrintGraphics!
-                return;
-            }
-            base.dispose();
-        }
-
-        public override void drawArc(int x, int y, int width, int height, int startAngle, int arcAngle)
-        {
-            checkState();
-            base.drawArc(x, y, width, height, startAngle, arcAngle);
-        }
-
-        public override void drawBytes(byte[] data, int offset, int length, int x, int y)
-        {
-            checkState();
-            base.drawBytes(data, offset, length, x, y);
-        }
-
-        public override void drawChars(char[] data, int offset, int length, int x, int y)
-        {
-            checkState();
-            base.drawChars(data, offset, length, x, y);
-        }
-
-        public override bool drawImage(java.awt.Image img, int dx1, int dy1, int dx2, int dy2, int sx1, int sy1, int sx2, int sy2, java.awt.Color color, java.awt.image.ImageObserver observer)
-        {
-            checkState();
-            return base.drawImage(img, dx1, dy1, dx2, dy2, sx1, sy1, sx2, sy2, color, observer);
-        }
-
-        public override bool drawImage(java.awt.Image img, int dx1, int dy1, int dx2, int dy2, int sx1, int sy1, int sx2, int sy2, java.awt.image.ImageObserver observer)
-        {
-            checkState();
-            return base.drawImage(img, dx1, dy1, dx2, dy2, sx1, sy1, sx2, sy2, observer);
-        }
-
-        public override bool drawImage(java.awt.Image img, int x, int y, int width, int height, java.awt.Color bgcolor, java.awt.image.ImageObserver observer)
-        {
-            checkState();
-            return base.drawImage( img, x, y, width, height, bgcolor, observer);
-        }
-
-        public override bool drawImage(java.awt.Image img, int x, int y, java.awt.Color bgcolor, java.awt.image.ImageObserver observer)
-        {
-            checkState();
-            return base.drawImage(img, x, y, bgcolor, observer);
-        }
-
-        public override bool drawImage(java.awt.Image img, int x, int y, int width, int height, java.awt.image.ImageObserver observer)
-        {
-            checkState();
-            return base.drawImage( img, x, y, width, height, observer);
-        }
-
-        public override bool drawImage(java.awt.Image img, int x, int y, java.awt.image.ImageObserver observer)
-        {
-            checkState();
-            return base.drawImage(img, x, y, observer);
-        }
-
-        public override void drawLine(int x1, int y1, int x2, int y2)
-        {
-            checkState();
-            base.drawLine(x1, y1, x2, y2);
-        }
-
-        public override void drawOval(int x, int y, int w, int h)
-        {
-            checkState();
-            base.drawOval(x, y, w, h);
-        }
-
-        public override void drawPolygon(java.awt.Polygon polygon)
-        {
-            checkState();
-            base.drawPolygon(polygon);
-        }
-
-        public override void drawPolygon(int[] aX, int[] aY, int aLength)
-        {
-            checkState();
-            base.drawPolygon(aX, aY, aLength);
-        }
-
-        public override void drawPolyline(int[] aX, int[] aY, int aLength)
-        {
-            checkState();
-            base.drawPolyline(aX, aY, aLength);
-        }
-
-        public override void drawRect(int x, int y, int width, int height)
-        {
-            checkState();
-            base.drawRect(x, y, width, height);
-        }
-
-        public override void drawRoundRect(int x, int y, int w, int h, int arcWidth, int arcHeight)
-        {
-            checkState();
-            base.drawRoundRect(x, y, w, h, arcWidth, arcHeight);
-        }
-
-        public override void fill3DRect(int x, int y, int width, int height, bool raised)
-        {
-            checkState();
-            base.fill3DRect(x, y, width, height, raised);
-        }
-
-        public override void fillArc(int x, int y, int width, int height, int startAngle, int arcAngle)
-        {
-            checkState();
-            base.fillArc(x, y, width, height, startAngle, arcAngle);
-        }
-
-        public override void fillOval(int x, int y, int w, int h)
-        {
-            checkState();
-            base.fillOval(x, y, w, h);
-        }
-
-        public override void fillPolygon(java.awt.Polygon polygon)
-        {
-            checkState();
-            base.fillPolygon(polygon);
-        }
-
-        public override void fillPolygon(int[] aX, int[] aY, int aLength)
-        {
-            checkState();
-            base.fillPolygon(aX, aY, aLength);
-        }
-
-        public override void fillRect(int x, int y, int width, int height)
-        {
-            checkState();
-            base.fillRect(x, y, width, height);
-        }
-
-        public override void fillRoundRect(int x, int y, int w, int h, int arcWidth, int arcHeight)
-        {
-            checkState();
-            base.fillRoundRect(x, y, w, h, arcWidth, arcHeight);
-        }
-
-        public override java.awt.Shape getClip()
-        {
-            checkState();
-            return base.getClip();
-        }
-
-        public override java.awt.Rectangle getClipBounds(java.awt.Rectangle r)
-        {
-            checkState();
-            return base.getClipBounds( r );
-        }
-
-        public override java.awt.Rectangle getClipBounds()
-        {
-            checkState();
-            return base.getClipBounds();
-        }
-
-        [Obsolete]
-        public override java.awt.Rectangle getClipRect()
-        {
-            checkState();
-            return base.getClipRect();
-        }
-
-        public override java.awt.Color getColor()
-        {
-            checkState();
-            return base.getColor();
-        }
-
-        public override java.awt.Font getFont()
-        {
-            checkState();
-            return base.getFont();
-        }
-
-        public override java.awt.FontMetrics getFontMetrics(java.awt.Font f)
-        {
-            checkState();
-            return base.getFontMetrics(f);
-        }
-
-        public override java.awt.FontMetrics getFontMetrics()
-        {
-            checkState();
-            return base.getFontMetrics();
-        }
-
-        public override void setClip(int x, int y, int width, int height)
-        {
-            checkState();
-            base.setClip(x,y,width,height);
-        }
-
-        public override void setClip(java.awt.Shape shape)
-        {
-            checkState();
-            base.setClip(shape);
-        }
-
-        public override void setColor(java.awt.Color color)
-        {
-            checkState();
-            base.setColor(color);
-        }
-
-        public override void setFont(java.awt.Font f)
-        {
-            checkState();
-            base.setFont(f);
-        }
-
-        public override void setPaintMode()
-        {
-            checkState();
-            base.setPaintMode();
-        }
-
-        public override void setXORMode(java.awt.Color param)
-        {
-            checkState();
-            base.setXORMode(param);
-        }
-
-        public override void translate(int x, int y)
-        {
-            checkState();
-            base.translate(x, y);
-        }
-
-        public override void draw(java.awt.Shape shape)
-        {
-            checkState();
-            base.draw(shape);
-        }
-
-        public override bool drawImage(java.awt.Image img, java.awt.geom.AffineTransform xform, ImageObserver observer)
-        {
-            checkState();
-            return base.drawImage(img, xform, observer);
-        }
-
-        public override void drawImage(java.awt.image.BufferedImage image, BufferedImageOp op, int x, int y)
-        {
-            checkState();
-            base.drawImage(image, op, x, y);
-        }
-       
-        public override void drawRenderedImage(java.awt.image.RenderedImage img, java.awt.geom.AffineTransform xform)
-        {
-            checkState();
-            base.drawRenderedImage(img, xform);
-        }
-
-        public override void drawRenderableImage(java.awt.image.renderable.RenderableImage image, java.awt.geom.AffineTransform xform)
-        {
-            checkState();
-            base.drawRenderableImage(image, xform);
-        }
-
-        public override void drawString(string str, int x, int y)
-        {
-            checkState();
-            base.drawString(str, x, y);
-        }
-
-        public override void drawString(string text, float x, float y)
-        {
-            checkState();
-            base.drawString(text, x, y);
-        }
-
-        public override void drawString(java.text.AttributedCharacterIterator iterator, int x, int y)
-        {
-            checkState();
-            base.drawString(iterator, x, y);
-        }
-
-        public override void drawString(java.text.AttributedCharacterIterator iterator, float x, float y)
-        {
-            checkState();
-            base.drawString(iterator, x, y);
-        }
-
-        public override void fill(java.awt.Shape shape)
-        {
-            checkState();
-            base.fill(shape);
-        }
-
-        public override bool hit(java.awt.Rectangle rect, java.awt.Shape s, bool onStroke)
-        {
-            checkState();
-            return base.hit(rect, s, onStroke);
-        }
-
-        public override java.awt.GraphicsConfiguration getDeviceConfiguration()
-        {
-            // no check here, since invariant
-            return base.getDeviceConfiguration();
-        }
-
-        public override void setComposite(java.awt.Composite comp)
-        {
-            checkState();
-            base.setComposite(comp);
-        }
-
-        public override void setPaint(java.awt.Paint paint)
-        {
-            checkState();
-            base.setPaint(paint);
-        }
-
-        public override void setStroke(java.awt.Stroke stroke)
-        {
-            checkState();
-            base.setStroke(stroke);
-        }
-
-        public override void setRenderingHint(java.awt.RenderingHints.Key hintKey, Object hintValue)
-        {
-            checkState();
-            base.setRenderingHint(hintKey, hintValue);
-        }
-
-        public override object getRenderingHint(java.awt.RenderingHints.Key hintKey)
-        {
-            checkState();
-            return base.getRenderingHint(hintKey);
-        }
-
-        public override void setRenderingHints(java.util.Map hints)
-        {
-            checkState();
-            base.setRenderingHints(hints);            
-        }
-
-        public override void addRenderingHints(java.util.Map hints)
-        {
-            checkState();
-            base.addRenderingHints(hints);
-        }
-
-        public override java.awt.RenderingHints getRenderingHints()
-        {
-            checkState();
-            return base.getRenderingHints();
-        }
-
-        public override void translate(double x, double y)
-        {
-            checkState();
-            base.translate(x, y);
-        }
-
-        public override void rotate(double theta)
-        {
-            checkState();
-            base.rotate(theta);
-        }
-
-        public override void rotate(double theta, double x, double y)
-        {
-            checkState();
-            base.rotate(theta, x, y);
-        }
-
-        public override void scale(double scaleX, double scaleY)
-        {
-            checkState();
-            base.scale(scaleX, scaleY);
-        }
-
-        public override void shear(double shearX, double shearY)
-        {
-            checkState();
-            base.shear(shearX, shearY);
-        }
-
-        public override void transform(java.awt.geom.AffineTransform tx)
-        {
-            checkState();
-            base.transform(tx);
-        }
-
-        public override void setTransform(java.awt.geom.AffineTransform tx)
-        {
-            checkState();
-            base.setTransform(tx);
-        }
-
-        public override java.awt.geom.AffineTransform getTransform()
-        {
-            checkState();
-            return base.getTransform();
-        }
-
-        public override java.awt.Paint getPaint()
-        {
-            checkState();
-            return base.getPaint();
-        }
-
-        public override java.awt.Composite getComposite()
-        {
-            checkState();
-            return base.getComposite();
-        }
-
-        public override void setBackground(java.awt.Color color)
-        {
-            checkState();
-            base.setBackground(color);
-        }
-
-        public override java.awt.Color getBackground()
-        {
-            checkState();
-            return base.getBackground();
-        }
-
-        public override java.awt.Stroke getStroke()
-        {
-            checkState();
-            return base.getStroke();
-        }
-
-        public override java.awt.font.FontRenderContext getFontRenderContext()
-        {
-            checkState();
-            return base.getFontRenderContext();
-        }
-
-        public override void drawGlyphVector(java.awt.font.GlyphVector gv, float x, float y)
-        {
-            checkState();
-            base.drawGlyphVector(gv, x, y);
-        }
-    }
-
-    /// <summary>
-    /// State to store/restore the state of a NetGraphics/Graphics object
-    /// </summary>
-    internal class NetGraphicsState
-    {
-        private Brush brush;
-        private Pen pen;
-
-        // Graphics State
-        private Matrix Transform;
-        private Region Clip;
-        private SmoothingMode SmoothingMode;
-        private PixelOffsetMode PixelOffsetMode;
-        private TextRenderingHint TextRenderingHint;
-        private InterpolationMode InterpolationMode;
-        private CompositingMode CompositingMode;
-
-        private bool savedGraphics = false;
-
-        public NetGraphicsState()
-        {
-        }
-
-        public NetGraphicsState( NetGraphics netG )
-        {
-            saveGraphics(netG);
-        }
-
-        public void saveGraphics(NetGraphics netG)
-        {
-            if (netG == null )
-            {
-                return;
-            }
-            if (netG.g != null )
-            {
-                this.Transform = netG.g.Transform;
-                this.Clip = netG.g.Clip;
-                this.SmoothingMode = netG.g.SmoothingMode;
-                this.PixelOffsetMode = netG.g.PixelOffsetMode;
-                this.TextRenderingHint = netG.g.TextRenderingHint;
-                this.InterpolationMode = netG.g.InterpolationMode;
-                this.CompositingMode = netG.g.CompositingMode;
-                savedGraphics = true;
-            }
-            if (netG.pen != null && netG.brush != null)
-            {
-                pen = (Pen)netG.pen.Clone();
-                brush = (Brush)netG.brush.Clone();
-            }
-        }
-
-        public void restoreGraphics(NetGraphics netG)
-        {
-            if (netG == null)
-            {
-                return;
-            }
-            if (netG.g != null)
-            {
-                if (savedGraphics)
-                {
-                    netG.g.Transform = Transform;
-                    netG.g.Clip = Clip;
-                    netG.g.SmoothingMode = SmoothingMode;
-                    netG.g.PixelOffsetMode = PixelOffsetMode;
-                    netG.g.TextRenderingHint = TextRenderingHint;
-                    netG.g.InterpolationMode = InterpolationMode;
-                    netG.g.CompositingMode = CompositingMode;
-                }
-                else
-                {
-                    // default values that Java used
-                    netG.g.InterpolationMode = InterpolationMode.NearestNeighbor;
-                }
-            }
-            if ( pen != null && brush != null )
-            {
-                netG.pen = (Pen)pen.Clone();
-                netG.brush = (Brush)brush.Clone();
-            }
-            else
-            {
-                netG.pen = new Pen(netG.color);
-                netG.brush = new SolidBrush(netG.color);
-                netG.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_DEFAULT);
-            }
-        }
     }
 
     internal abstract class NetGraphics : java.awt.Graphics2D
     {
-        internal Graphics g;
-        internal Graphics JGraphics { get { return g; } }
+        protected Graphics g;
         private java.awt.Color javaColor;
         private java.awt.Paint javaPaint;
-        internal Color color;
+        private Color color = SystemColors.WindowText;
         private Color bgcolor;
         private java.awt.Font font;
         private java.awt.Stroke stroke;
         private static java.awt.BasicStroke defaultStroke = new java.awt.BasicStroke();
         private Font netfont;
-        internal Brush brush;
-        internal Pen pen;
-        private CompositeHelper composite;
-        private java.awt.Composite javaComposite = java.awt.AlphaComposite.SrcOver;
-        private Object textAntialiasHint;
-        private Object fractionalHint = java.awt.RenderingHints.VALUE_FRACTIONALMETRICS_DEFAULT;
+        private Brush brush;
+        private Pen pen;
 
-        protected NetGraphics(Graphics g, java.awt.Font font, Color fgcolor, Color bgcolor)
+        protected NetGraphics(Graphics g, java.awt.Font font, Color bgcolor)
         {
             if (font == null)
             {
                 font = new java.awt.Font("Dialog", java.awt.Font.PLAIN, 12);
             }
             this.font = font;
-            netfont = font.getNetFont();
-			this.color = fgcolor;
+            netfont = ((NetFontPeer)font.getPeer()).netFont;
             this.bgcolor = bgcolor;
-            composite = CompositeHelper.Create(javaComposite, g);
             init(g);
         }
 
         protected void init(Graphics graphics)
         {
-            NetGraphicsState state = new NetGraphicsState();
-            state.saveGraphics(this);
+            if (g != null)
+            {
+                //Transfer the state from the original graphics
+                //occur on call of create()
+                graphics.Transform = g.Transform;
+                graphics.Clip = g.Clip;
+                graphics.SmoothingMode = g.SmoothingMode;
+                graphics.TextRenderingHint = g.TextRenderingHint;
+                graphics.InterpolationMode = g.InterpolationMode;
+            }
             g = graphics;
-            state.restoreGraphics(this);            
-        }
-
-        /// <summary>
-        /// Get the size of the graphics. This is used as a hind for some hacks.
-        /// </summary>
-        /// <returns></returns>
-        protected virtual SizeF GetSize() {
-            return g.ClipBounds.Size;
+            brush = new SolidBrush(color);
+            pen = new Pen(color);
         }
 
         public override void clearRect(int x, int y, int width, int height)
         {
-            using (Brush br = bgcolor != Color.Empty ? new SolidBrush(bgcolor) : brush)
+            using (Brush br = new SolidBrush(bgcolor))
             {
-                CompositingMode tempMode = g.CompositingMode;
-                g.CompositingMode = CompositingMode.SourceCopy;
                 g.FillRectangle(br, x, y, width, height);
-                g.CompositingMode = tempMode;
             }
         }
 
@@ -837,8 +142,11 @@ namespace ikvm.awt
         {
             if (shape == null)
             {
-				// note that ComponentGraphics overrides clip() to throw a NullPointerException when shape is null
-				g.ResetClip();
+                // the API specification says that this will clear
+                // the clip, but in fact the reference implementation throws a 
+                // NullPointerException - see the following entry in the bug parade:
+                // http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=6206189
+                throw new java.lang.NullPointerException();
             }
             else
             {
@@ -848,14 +156,12 @@ namespace ikvm.awt
 
         public override void dispose()
         {
-            if (pen!=null) pen.Dispose();
-            if (brush!=null) brush.Dispose();
             g.Dispose();
         }
 
         public override void drawArc(int x, int y, int width, int height, int startAngle, int arcAngle)
         {
-			g.DrawArc(pen, x, y, width, height, 360 - startAngle - arcAngle, arcAngle);
+            g.DrawArc(pen, x, y, width, height, startAngle, arcAngle);
         }
 
         public override void drawBytes(byte[] data, int offset, int length, int x, int y)
@@ -881,13 +187,12 @@ namespace ikvm.awt
                 return false;
             }
             Rectangle destRect = new Rectangle(dx1, dy1, dx2 - dx1, dy2 - dy1);
-            using (Brush brush = new SolidBrush(composite.GetColor(color))) {
+            Rectangle srcRect = new Rectangle(sx1, sy1, sx2 - sx1, sy2 - sy1);
+            using (Brush brush = J2C.CreateBrush(color))
+            {
                 g.FillRectangle(brush, destRect);
             }
-			lock (image)
-			{
-                g.DrawImage(image, destRect, sx1, sy1, sx2 - sx1, sy2 - sy1, GraphicsUnit.Pixel, composite.GetImageAttributes());
-			}
+            g.DrawImage(image, destRect, srcRect, GraphicsUnit.Pixel);
             return true;
         }
 
@@ -899,10 +204,8 @@ namespace ikvm.awt
                 return false;
             }
             Rectangle destRect = new Rectangle(dx1, dy1, dx2 - dx1, dy2 - dy1);
-			lock (image)
-			{
-                g.DrawImage(image, destRect, sx1, sy1, sx2 - sx1, sy2 - sy1, GraphicsUnit.Pixel, composite.GetImageAttributes());
-			}
+            Rectangle srcRect = new Rectangle(sx1, sy1, sx2 - sx1, sy2 - sy1);
+            g.DrawImage(image, destRect, srcRect, GraphicsUnit.Pixel);
             return true;
         }
 
@@ -913,22 +216,27 @@ namespace ikvm.awt
 			{
 				return false;
 			}
-            using (Brush brush = new SolidBrush(composite.GetColor(bgcolor))) {
-                g.FillRectangle(brush, x, y, width, height);
-            }
-			lock (image)
+			using (Brush brush = J2C.CreateBrush(bgcolor))
 			{
-                g.DrawImage(image, new Rectangle( x, y, width, height), 0, 0, image.Width, image.Height, GraphicsUnit.Pixel, composite.GetImageAttributes());
+				g.FillRectangle(brush, x, y, width, height);
 			}
+			g.DrawImage(image, x, y, width, height);
 			return true;
 		}
 
         public override bool drawImage(java.awt.Image img, int x, int y, java.awt.Color bgcolor, java.awt.image.ImageObserver observer)
         {
-            if (img == null) {
-                return false;
-            }
-            return drawImage(img, x, y, img.getWidth(observer), img.getHeight(observer), bgcolor, observer);
+			Image image = J2C.ConvertImage(img);
+			if (image == null)
+			{
+				return false;
+			}
+			using (Brush brush = J2C.CreateBrush(bgcolor))
+			{
+				g.FillRectangle(brush, x, y, image.Width, image.Height);
+			}
+			g.DrawImage(image, x, y);
+			return true;
 		}
 
         public override bool drawImage(java.awt.Image img, int x, int y, int width, int height, java.awt.image.ImageObserver observer)
@@ -938,19 +246,19 @@ namespace ikvm.awt
 			{
 				return false;
 			}
-			lock (image)
-			{
-                g.DrawImage(image, new Rectangle(x, y, width, height), 0, 0, image.Width, image.Height, GraphicsUnit.Pixel, composite.GetImageAttributes());
-			}
+			g.DrawImage(image, x, y, width, height);
 			return true;
 		}
 
         public override bool drawImage(java.awt.Image img, int x, int y, java.awt.image.ImageObserver observer)
         {
-            if (img == null) {
-                return false;
-            }
-            return drawImage(img, x, y, img.getWidth(observer), img.getHeight(observer), observer);
+			Image image = J2C.ConvertImage(img);
+			if (image == null)
+			{
+				return false;
+			}
+			g.DrawImage(image, x, y);
+			return true;
 		}
 
         public override void drawLine(int x1, int y1, int x2, int y2)
@@ -1013,37 +321,32 @@ namespace ikvm.awt
         /// Apparently there is no rounded rec function in .Net. Draw the
         /// rounded rectangle by using lines and arcs.
         /// </summary>
-		public override void drawRoundRect(int x, int y, int w, int h, int arcWidth, int arcHeight)
+        public override void drawRoundRect(int x, int y, int w, int h, int radius, int param6)
         {
-    	    using (GraphicsPath gp = J2C.ConvertRoundRect(x, y, w, h, arcWidth, arcHeight))
+            using (GraphicsPath gp = J2C.ConvertRoundRect(x, y, w, h, radius))
                 g.DrawPath(pen, gp);
         }
 
-        public override void fill3DRect(int x, int y, int width, int height, bool raised)
+        public override void drawString(java.text.AttributedCharacterIterator param1, int param2, int param3)
         {
-            java.awt.Paint p = getPaint();
-            java.awt.Color c = getColor();
-            java.awt.Color brighter = c.brighter();
-            java.awt.Color darker = c.darker();
+            throw new NotImplementedException();
+        }
 
-            if( !raised ) {
-                setColor(darker);
-            } else if( p != c ) {
-                setColor(c);
-            }
-            fillRect(x + 1, y + 1, width - 2, height - 2);
-            setColor(raised ? brighter : darker);
-            fillRect(x, y, 1, height);
-            fillRect(x + 1, y, width - 2, 1);
-            setColor(raised ? darker : brighter);
-            fillRect(x + 1, y + height - 1, width - 1, 1);
-            fillRect(x + width - 1, y, 1, height - 1);
-            setPaint(p);
+        public override void drawString(string str, int x, int y)
+        {
+            int descent = netfont.FontFamily.GetCellDescent(netfont.Style);
+            int descentPixel = (int)Math.Round(netfont.Size * descent / netfont.FontFamily.GetEmHeight(netfont.Style));
+			g.DrawString(str, netfont, brush, x, y - netfont.Height + descentPixel);
+        }
+
+        public override void fill3DRect(int param1, int param2, int param3, int param4, bool param5)
+        {
+            throw new NotImplementedException();
         }
 
         public override void fillArc(int x, int y, int width, int height, int startAngle, int arcAngle)
         {
-			g.FillPie(brush, x, y, width, height, 360 - startAngle - arcAngle, arcAngle);
+            g.FillPie(brush, x, y, width, height, startAngle, arcAngle);
         }
 
         public override void fillOval(int x, int y, int w, int h)
@@ -1072,12 +375,12 @@ namespace ikvm.awt
             g.FillRectangle(brush, x, y, width, height);
         }
 
-		public override void fillRoundRect(int x, int y, int w, int h, int arcWidth, int arcHeight)
-		{
-			GraphicsPath gp = J2C.ConvertRoundRect(x, y, w, h, arcWidth, arcHeight);
-			g.FillPath(brush, gp);
-			gp.Dispose();
-		}
+        public override void fillRoundRect(int x, int y, int w, int h, int radius, int param6)
+        {
+            GraphicsPath gp = J2C.ConvertRoundRect(x, y, w, h, radius);
+            g.FillPath(brush, gp);
+            gp.Dispose();
+        }
 
         public override java.awt.Shape getClip()
         {
@@ -1086,31 +389,27 @@ namespace ikvm.awt
 
         public override java.awt.Rectangle getClipBounds(java.awt.Rectangle r)
         {
-            using (Region clip = g.Clip)
+            Region clip = g.Clip;
+            if (!clip.IsInfinite(g))
             {
-                if (!clip.IsInfinite(g))
-                {
-                    RectangleF rec = clip.GetBounds(g);
-                    r.x = (int) rec.X;
-                    r.y = (int) rec.Y;
-                    r.width = (int) rec.Width;
-                    r.height = (int) rec.Height;
-                }
-                return r;
+                RectangleF rec = clip.GetBounds(g);
+                r.x = (int)rec.X;
+                r.y = (int)rec.Y;
+                r.width = (int)rec.Width;
+                r.height = (int)rec.Height;
             }
+            return r;
         }
 
         public override java.awt.Rectangle getClipBounds()
         {
-            using (Region clip = g.Clip)
+            Region clip = g.Clip;
+            if (clip.IsInfinite(g))
             {
-                if (clip.IsInfinite(g))
-                {
-                    return null;
-                }
-                RectangleF rec = clip.GetBounds(g);
-                return C2J.ConvertRectangle(rec);
+                return null;
             }
+            RectangleF rec = clip.GetBounds(g);
+            return C2J.ConvertRectangle(rec);
         }
 
         [Obsolete]
@@ -1123,7 +422,7 @@ namespace ikvm.awt
         {
             if (javaColor == null)
             {
-                javaColor = composite.GetColor(color);
+                javaColor = new java.awt.Color(color.ToArgb());
             }
             return javaColor;
         }
@@ -1135,12 +434,12 @@ namespace ikvm.awt
 
         public override java.awt.FontMetrics getFontMetrics(java.awt.Font f)
         {
-            return sun.font.FontDesignMetrics.getMetrics(f);
+            return new NetFontMetrics(f);
         }
 
         public override java.awt.FontMetrics getFontMetrics()
         {
-            return sun.font.FontDesignMetrics.getMetrics(font);
+            return new NetFontMetrics(font);
         }
 
         public override void setClip(int x, int y, int width, int height)
@@ -1164,13 +463,14 @@ namespace ikvm.awt
 
         public override void setColor(java.awt.Color color)
         {
-            if (color == null || color == this.javaPaint)
+            if (color == null)
             {
-                // Does not change the color, if it is null like in SunGraphics2D
-                return;
+                // TODO is this the correct default color?
+                color = java.awt.SystemColor.controlText;
+                //throw new java.lang.IllegalArgumentException("Color can't be null");
             }
             this.javaPaint = this.javaColor = color;
-            this.color = composite.GetColor(color);
+            this.color = Color.FromArgb(color.getRGB());
             if (brush is SolidBrush)
             {
                 ((SolidBrush)brush).Color = this.color;
@@ -1186,10 +486,16 @@ namespace ikvm.awt
 
         public override void setFont(java.awt.Font f)
         {
-            if (f != null && f != font)
+            // TODO why is Component calling us with a null reference and is this legal?
+            if (f != null)
             {
-                netfont = f.getNetFont();
+                netfont = ((NetFontPeer)f.getPeer()).netFont;
                 font = f;
+            }
+            else
+            {
+                Console.WriteLine("Font is null");
+                Console.WriteLine(new System.Diagnostics.StackTrace());
             }
         }
 
@@ -1200,9 +506,6 @@ namespace ikvm.awt
 
         public override void setXORMode(java.awt.Color param)
         {
-            if( param == null ) {
-                throw new java.lang.IllegalArgumentException("null XORColor");
-            }
             throw new NotImplementedException();
         }
 
@@ -1221,51 +524,21 @@ namespace ikvm.awt
             }
         }
 
-        public override bool drawImage(java.awt.Image img, java.awt.geom.AffineTransform xform, ImageObserver observer)
+        public override bool drawImage(java.awt.Image image, java.awt.geom.AffineTransform xform, ImageObserver obs)
         {
-            if (img == null) {
-                return true;
-            }
-     
-            if (xform == null || xform.isIdentity()) {
-                return drawImage(img, 0, 0, null, observer);
-            }
-
-            NetGraphics clone = (NetGraphics)create();
-            clone.transform(xform);
-            bool rendered = clone.drawImage(img, 0, 0, null, observer);
-            clone.dispose();
-            return rendered;
+            Console.WriteLine(new System.Diagnostics.StackTrace());
+            throw new NotImplementedException();
         }
 
         public override void drawImage(java.awt.image.BufferedImage image, BufferedImageOp op, int x, int y)
         {
-
-            if( op == null ) {
-                drawImage(image, x, y, null);
-            } else {
-                if( !(op is AffineTransformOp) ) {
-                    drawImage(op.filter(image, null), x, y, null);
-                } else {
-                    Console.WriteLine(new System.Diagnostics.StackTrace());
-                    throw new NotImplementedException();
-                }
-            }
+            Console.WriteLine(new System.Diagnostics.StackTrace());
+            throw new NotImplementedException();
         }
 
-        public override void drawRenderedImage(java.awt.image.RenderedImage img, java.awt.geom.AffineTransform xform)
+        public override void drawRenderedImage(java.awt.image.RenderedImage image, java.awt.geom.AffineTransform xform)
         {
-            if (img == null) {
-                return;
-            }
-    
-            // BufferedImage case: use a simple drawImage call
-            if (img is BufferedImage) {
-                BufferedImage bufImg = (BufferedImage)img;
-                drawImage(bufImg,xform,null);
-                return;
-            }            
-            throw new NotImplementedException("drawRenderedImage not implemented for images which are not BufferedImages.");
+            throw new NotImplementedException();
         }
 
         public override void drawRenderableImage(java.awt.image.renderable.RenderableImage image, java.awt.geom.AffineTransform xform)
@@ -1273,59 +546,22 @@ namespace ikvm.awt
             throw new NotImplementedException();
         }
 
-        public override void drawString(string str, int x, int y)
+        public override void drawString(string text, float x, float y)
         {
-            drawString(str, (float)x, (float)y);
-        }
-
-        public override void drawString(String text, float x, float y)
-        {
-            if (text.Length == 0)
-            {
-                return;
-            }
-            bool fractional = isFractionalMetrics();
-            StringFormat format = new StringFormat(StringFormat.GenericTypographic);
-            format.FormatFlags = StringFormatFlags.MeasureTrailingSpaces | StringFormatFlags.NoWrap | StringFormatFlags.FitBlackBox;
-            format.Trimming = StringTrimming.None;
-            if (fractional || !sun.font.StandardGlyphVector.isSimpleString(font, text))
-            {
-                g.DrawString(text, netfont, brush, x, y - font.getSize(), format);
-            }
-            else
-            {
-                // fixed metric for simple text, we position every character to simulate the Java behaviour
-                java.awt.font.FontRenderContext frc = new java.awt.font.FontRenderContext(null, isAntiAlias(), fractional);
-                sun.font.FontDesignMetrics metrics = sun.font.FontDesignMetrics.getMetrics(font, frc);
-                y -= font.getSize();
-                for (int i = 0; i < text.Length; i++)
-                {
-                    g.DrawString(text.Substring(i, 1), netfont, brush, x, y, format);
-                    x += metrics.charWidth(text[i]);
-                }
-            }
-        }
-
-        public override void drawString(java.text.AttributedCharacterIterator iterator, int x, int y)
-        {
-            drawString(iterator, (float) x, (float) y);
+            g.DrawString(text, netfont, brush, x, y);
         }
 
         public override void drawString(java.text.AttributedCharacterIterator iterator, float x, float y)
         {
-            if( iterator == null ) {
-                throw new java.lang.NullPointerException("AttributedCharacterIterator is null");
-            }
-            if( iterator.getBeginIndex() == iterator.getEndIndex() ) {
-                return; /* nothing to draw */
-            }
-            java.awt.font.TextLayout tl = new java.awt.font.TextLayout(iterator, getFontRenderContext());
-            tl.draw(this, x, y);
+            throw new NotImplementedException();
         }
 
         public override void fill(java.awt.Shape shape)
         {
-            g.FillPath(brush, J2C.ConvertShape(shape));
+            using (Region region = new Region(J2C.ConvertShape(shape)))
+            {
+                g.FillRegion(brush, region);
+            }
         }
 
         public override bool hit(java.awt.Rectangle rect, java.awt.Shape s, bool onStroke)
@@ -1340,20 +576,12 @@ namespace ikvm.awt
 
         public override java.awt.GraphicsConfiguration getDeviceConfiguration()
         {
-			return new NetGraphicsConfiguration(Screen.PrimaryScreen);
+            throw new NotImplementedException();
         }
 
         public override void setComposite(java.awt.Composite comp)
         {
-            if (comp == null)
-            {
-                throw new java.lang.IllegalArgumentException("null Composite");
-            }
-            this.javaComposite = comp;
-            java.awt.Paint oldPaint = getPaint(); //getPaint() is never null
-            composite = CompositeHelper.Create(comp, g);
-            javaPaint = null;
-            setPaint(oldPaint);
+            throw new NotImplementedException();
         }
 
         public override void setPaint(java.awt.Paint paint)
@@ -1364,7 +592,7 @@ namespace ikvm.awt
                 return;
             }
 
-            if (paint == null || this.javaPaint == paint)
+            if (this.javaPaint == paint)
             {
                 return;
             }
@@ -1379,16 +607,16 @@ namespace ikvm.awt
                     linear = new LinearGradientBrush(
                         J2C.ConvertPoint(gradient.getPoint1()),
                         J2C.ConvertPoint(gradient.getPoint2()),
-                        composite.GetColor(gradient.getColor1()),
-                        composite.GetColor(gradient.getColor2()));
+                        J2C.ConvertColor(gradient.getColor1()),
+                        J2C.ConvertColor(gradient.getColor2()));
                 }
                 else
                 {
                     //HACK because .NET does not support continue gradient like Java else Tile Gradient
                     //that we receize the rectangle very large (factor z) and set 4 color values
                     // a exact solution will calculate the size of the Graphics with the current transform
-                    Color color1 = composite.GetColor(gradient.getColor1());
-                    Color color2 = composite.GetColor(gradient.getColor2());
+                    Color color1 = J2C.ConvertColor(gradient.getColor1());
+                    Color color2 = J2C.ConvertColor(gradient.getColor2());
                     float x1 = (float)gradient.getPoint1().getX();
                     float x2 = (float)gradient.getPoint2().getX();
                     float y1 = (float)gradient.getPoint1().getY();
@@ -1420,286 +648,24 @@ namespace ikvm.awt
             if (paint is java.awt.TexturePaint)
             {
                 java.awt.TexturePaint texture = (java.awt.TexturePaint)paint;
-                Bitmap txtr = J2C.ConvertImage(texture.getImage());
-                java.awt.geom.Rectangle2D anchor = texture.getAnchorRect();
-                TextureBrush txtBrush;
-                brush = txtBrush = new TextureBrush(txtr, new Rectangle(0, 0, txtr.Width, txtr.Height), composite.GetImageAttributes());
-                txtBrush.TranslateTransform((float)anchor.getX(), (float)anchor.getY());
-                txtBrush.ScaleTransform((float)anchor.getWidth() / txtr.Width, (float)anchor.getHeight() / txtr.Height);
-                txtBrush.WrapMode = WrapMode.Tile;
+                brush = new TextureBrush(
+                    J2C.ConvertImage(texture.getImage()),
+                    J2C.ConvertRect(texture.getAnchorRect()));
                 pen.Brush = brush;
                 return;
             }
 
-            if (paint is java.awt.LinearGradientPaint) {
-                java.awt.LinearGradientPaint gradient = (java.awt.LinearGradientPaint)paint;
-                PointF start = J2C.ConvertPoint(gradient.getStartPoint());
-                PointF end = J2C.ConvertPoint(gradient.getEndPoint());
-
-                java.awt.Color[] javaColors = gradient.getColors();
-                ColorBlend colorBlend;
-                Color[] colors;
-                bool noCycle = gradient.getCycleMethod() == java.awt.MultipleGradientPaint.CycleMethod.NO_CYCLE;
-                if (noCycle) {
-                    //HACK because .NET does not support continue gradient like Java else Tile Gradient
-                    //that we receize the rectangle very large (factor z) and set 2 additional color values
-                    //an exact solution will calculate the size of the Graphics with the current transform
-                    float diffX = end.X - start.X;
-                    float diffY = end.Y - start.Y;
-                    SizeF size = GetSize();
-                    //HACK zoom factor, with a larger factor .NET will make the gradient wider.
-                    float z = Math.Min(10, Math.Max(size.Width / diffX, size.Height / diffY));
-                    start.X -= z * diffX;
-                    start.Y -= z * diffY;
-                    end.X += z * diffX;
-                    end.Y += z * diffY;
-
-                    colorBlend = new ColorBlend(javaColors.Length + 2);
-                    colors = colorBlend.Colors;
-                    float[] fractions = gradient.getFractions();
-                    float[] positions = colorBlend.Positions;
-                    for (int i = 0; i < javaColors.Length; i++) {
-                        colors[i + 1] = composite.GetColor(javaColors[i]);
-                        positions[i + 1] = (z + fractions[i]) / (2 * z + 1);
-                    }
-                    colors[0] = colors[1];
-                    colors[colors.Length - 1] = colors[colors.Length - 2];
-                    positions[positions.Length - 1] = 1.0f;
-                } else {
-                    colorBlend = new ColorBlend(javaColors.Length);
-                    colors = colorBlend.Colors;
-                    colorBlend.Positions = gradient.getFractions();
-                    for (int i = 0; i < javaColors.Length; i++) {
-                        colors[i] = composite.GetColor(javaColors[i]);
-                    }
-                }
-                LinearGradientBrush linear = new LinearGradientBrush(start, end, colors[0], colors[colors.Length - 1]);
-                linear.InterpolationColors = colorBlend;
-                switch (gradient.getCycleMethod().ordinal()) {
-                    case (int)java.awt.MultipleGradientPaint.CycleMethod.__Enum.NO_CYCLE:
-                    case (int)java.awt.MultipleGradientPaint.CycleMethod.__Enum.REFLECT:
-                        linear.WrapMode = WrapMode.TileFlipXY;
-                        break;
-                    case (int)java.awt.MultipleGradientPaint.CycleMethod.__Enum.REPEAT:
-                        linear.WrapMode = WrapMode.Tile;
-                        break;
-                }
-                brush = linear;
-                pen.Brush = brush;
-                return;
-            }
-
-            if (paint is java.awt.RadialGradientPaint )
-            {
-                java.awt.RadialGradientPaint gradient = (java.awt.RadialGradientPaint)paint;
-                GraphicsPath path = new GraphicsPath();
-                SizeF size = GetSize();
-
-                PointF center = J2C.ConvertPoint(gradient.getCenterPoint());
-
-                float radius = gradient.getRadius();
-                int factor = (int)Math.Ceiling(Math.Max(size.Width, size.Height) / radius);
-
-                float diameter = radius * factor;
-                path.AddEllipse(center.X - diameter, center.Y - diameter, diameter * 2, diameter * 2);
-
-                java.awt.Color[] javaColors = gradient.getColors();
-                float[] fractions = gradient.getFractions();
-                int length = javaColors.Length;
-                ColorBlend colorBlend = new ColorBlend(length * factor);
-                Color[] colors = colorBlend.Colors;
-                float[] positions = colorBlend.Positions;
-
-                for (int c = 0, j = length - 1; j >= 0; )
-                {
-                    positions[c] = (1 - fractions[j]) / factor;
-                    colors[c++] = composite.GetColor(javaColors[j--]);
-                }
-
-                java.awt.MultipleGradientPaint.CycleMethod.__Enum cycle = (java.awt.MultipleGradientPaint.CycleMethod.__Enum)gradient.getCycleMethod().ordinal();
-                for (int f = 1; f < factor; f++)
-                {
-                    int off = f * length;
-                    for (int c = 0, j = length - 1; j >= 0; j--, c++)
-                    {
-                        switch (cycle)
-                        {
-                            case java.awt.MultipleGradientPaint.CycleMethod.__Enum.REFLECT:
-                                if (f % 2 == 0)
-                                {
-                                    positions[off + c] = (f + 1 - fractions[j]) / factor;
-                                    colors[off + c] = colors[c];
-                                }
-                                else
-                                {
-                                    positions[off + c] = (f + fractions[c]) / factor;
-                                    colors[off + c] = colors[j];
-                                }
-                                break;
-                            case java.awt.MultipleGradientPaint.CycleMethod.__Enum.NO_CYCLE:
-                                positions[off + c] = (f + 1 - fractions[j]) / factor;
-                                break;
-                            default: //CycleMethod.REPEAT
-                                positions[off + c] = (f + 1 - fractions[j]) / factor;
-                                colors[off + c] = colors[c];
-                                break;
-                        }
-                    }
-                }
-                if (cycle == java.awt.MultipleGradientPaint.CycleMethod.__Enum.NO_CYCLE && factor > 1)
-                {
-                    Array.Copy(colors, 0, colors, colors.Length - length, length);
-                    Color color = colors[length - 1];
-                    for (int i = colors.Length - length - 1; i >= 0; i--)
-                    {
-                        colors[i] = color;
-                    }
-                }
-
-                PathGradientBrush pathBrush = new PathGradientBrush(path);
-                pathBrush.CenterPoint = center;
-                pathBrush.InterpolationColors = colorBlend;
-
-                brush = pathBrush;
-                pen.Brush = brush;
-                return;
-            }
-
-            //generic paint to brush conversion for custom paints
-            //the tranform of the graphics should not change between the creation and it usage
-            using (Matrix transform = g.Transform)
-            {
-                SizeF size = GetSize();
-                int width = (int)size.Width;
-                int height = (int)size.Height;
-                java.awt.Rectangle bounds = new java.awt.Rectangle(0, 0, width, height);
-
-                java.awt.PaintContext context = paint.createContext(ColorModel.getRGBdefault(), bounds, bounds, C2J.ConvertMatrix(transform), getRenderingHints());
-                WritableRaster raster = (WritableRaster)context.getRaster(0, 0, width, height);
-                BufferedImage txtrImage = new BufferedImage(context.getColorModel(), raster, true, null);
-                Bitmap txtr = J2C.ConvertImage(txtrImage);
-
-                TextureBrush txtBrush;
-                brush = txtBrush = new TextureBrush(txtr, new Rectangle(0, 0, width, height), composite.GetImageAttributes());
-                transform.Invert();
-                txtBrush.Transform = transform;
-                txtBrush.WrapMode = WrapMode.Tile;
-                pen.Brush = brush;
-                return;
-            }
+            throw new NotImplementedException("setPaint("+paint.GetType().FullName+")");
         }
 
-		public override void setStroke(java.awt.Stroke stroke)
-		{
-			if (this.stroke != null && this.stroke.Equals(stroke))
-			{
-				return;
-			}
-			this.stroke = stroke;
-            if (stroke is java.awt.BasicStroke)
-            {
-                java.awt.BasicStroke s = (java.awt.BasicStroke)stroke;
-
-                pen = new Pen(pen.Brush, s.getLineWidth());
-
-                SetLineJoin(s);
-                SetLineDash(s);
-            }
-            else
-            {
-                Console.WriteLine("Unknown Stroke type: " + stroke.GetType().FullName);
-            }
-		}
-
-        private void SetLineJoin(java.awt.BasicStroke s)
+        public override void setStroke(java.awt.Stroke stroke)
         {
-            pen.MiterLimit = s.getMiterLimit();
-			pen.LineJoin = J2C.ConvertLineJoin(s.getLineJoin());
-        }
-
-        private void SetLineDash(java.awt.BasicStroke s)
-        {
-            float[] dash = s.getDashArray();
-            if (dash == null)
+            if (defaultStroke.equals(stroke))
             {
-                pen.DashStyle = DashStyle.Solid;
-            } else {
-                if (dash.Length % 2 == 1)
-                {
-                    int len = dash.Length;
-                    Array.Resize(ref dash, len * 2);
-                    Array.Copy(dash, 0, dash, len, len);
-                }
-                float lineWidth = s.getLineWidth();
-                if (lineWidth > 1) // for values < 0 there is no correctur needed
-                {
-                    for (int i = 0; i < dash.Length; i++)
-                    {
-                        //dividing by line thickness because of the representation difference
-                        dash[i] = dash[i] / lineWidth;
-                    }
-                }
-                // To fix the problem where solid style in Java can be represented at { 1.0, 0.0 }.
-                // In .NET, however, array can only have positive value
-                if (dash.Length == 2 && dash[dash.Length - 1] == 0)
-                {
-                    Array.Resize(ref dash, 1);
-                }
-
-                float dashPhase = s.getDashPhase();
-                // correct the dash cap
-                switch (s.getEndCap())
-                {
-                    case java.awt.BasicStroke.CAP_BUTT:
-                        pen.DashCap = DashCap.Flat;
-                        break;
-                    case java.awt.BasicStroke.CAP_ROUND:
-                        pen.DashCap = DashCap.Round;
-                        break;
-                    case java.awt.BasicStroke.CAP_SQUARE:
-                        pen.DashCap = DashCap.Flat;
-                        // there is no equals DashCap in .NET, we need to emulate it
-                        dashPhase += lineWidth / 2;
-                        for (int i = 0; i < dash.Length; i++)
-                        {
-                            if (i % 2 == 0)
-                            {
-                                dash[i] += 1;
-                            }
-                            else
-                            {
-                                dash[i] = Math.Max(0.00001F, dash[i] - 1);
-                            }
-                        }
-                        break;
-                    default:
-                        Console.WriteLine("Unknown dash cap type:" + s.getEndCap());
-                        break;
-                }
-
-                // calc the dash offset
-                if (lineWidth > 0)
-                {
-                    //dividing by line thickness because of the representation difference
-                    pen.DashOffset = dashPhase / lineWidth;
-                }
-                else
-                {
-                    // thickness == 0
-                    if (dashPhase > 0)
-                    {
-                        pen.Width = lineWidth = 0.001F; // hack to prevent a division with 0
-                        pen.DashOffset = dashPhase / lineWidth;
-                    }
-                    else
-                    {
-                        pen.DashOffset = 0;
-                    }
-                }
-
-                // set the final dash pattern 
-                pen.DashPattern = dash;
+                stroke = null;
+                return;
             }
+            this.stroke = stroke;
         }
 
         public override void setRenderingHint(java.awt.RenderingHints.Key hintKey, Object hintValue)
@@ -1709,19 +675,16 @@ namespace ikvm.awt
                 if (hintValue == java.awt.RenderingHints.VALUE_ANTIALIAS_DEFAULT)
                 {
                     g.SmoothingMode = SmoothingMode.Default;
-                    g.PixelOffsetMode = PixelOffsetMode.Default;
                     return;
                 }
                 if (hintValue == java.awt.RenderingHints.VALUE_ANTIALIAS_OFF)
                 {
                     g.SmoothingMode = SmoothingMode.None;
-                    g.PixelOffsetMode = PixelOffsetMode.Default;
                     return;
                 }
                 if (hintValue == java.awt.RenderingHints.VALUE_ANTIALIAS_ON)
                 {
                     g.SmoothingMode = SmoothingMode.AntiAlias;
-                    g.PixelOffsetMode = PixelOffsetMode.HighQuality;
                     return;
                 }
                 return;
@@ -1730,12 +693,12 @@ namespace ikvm.awt
             {
                 if (hintValue == java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR)
                 {
-                    g.InterpolationMode = InterpolationMode.HighQualityBilinear;
+                    g.InterpolationMode = InterpolationMode.Bilinear;
                     return;
                 }
                 if (hintValue == java.awt.RenderingHints.VALUE_INTERPOLATION_BICUBIC)
                 {
-                    g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                    g.InterpolationMode = InterpolationMode.Bicubic;
                     return;
                 }
                 if (hintValue == java.awt.RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR)
@@ -1747,32 +710,23 @@ namespace ikvm.awt
             }
             if (hintKey == java.awt.RenderingHints.KEY_TEXT_ANTIALIASING)
             {
-                if (hintValue == java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_DEFAULT ||
-                    hintValue == java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_OFF)
+                if (hintValue == java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_DEFAULT)
                 {
-                    g.TextRenderingHint = TextRenderingHint.SingleBitPerPixelGridFit;
-                    textAntialiasHint = hintValue;
+                    g.TextRenderingHint = TextRenderingHint.SystemDefault;
+                    return;
+                }
+                if (hintValue == java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_OFF)
+                {
+                    g.TextRenderingHint = TextRenderingHint.SingleBitPerPixel;
                     return;
                 }
                 if (hintValue == java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
                 {
                     g.TextRenderingHint = TextRenderingHint.AntiAlias;
-                    textAntialiasHint = hintValue;
                     return;
                 }
                 return;
             }
-            if (hintKey == java.awt.RenderingHints.KEY_FRACTIONALMETRICS) 
-            {
-                if (hintValue == java.awt.RenderingHints.VALUE_FRACTIONALMETRICS_DEFAULT || 
-                    hintValue == java.awt.RenderingHints.VALUE_FRACTIONALMETRICS_OFF ||
-                    hintValue == java.awt.RenderingHints.VALUE_FRACTIONALMETRICS_ON) 
-                {
-                    fractionalHint = hintValue;
-                }
-                return;
-            }
-
         }
 
         public override object getRenderingHint(java.awt.RenderingHints.Key hintKey)
@@ -1827,8 +781,20 @@ namespace ikvm.awt
                     break;
             }
 
-            hints.put(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, textAntialiasHint);
-            hints.put(java.awt.RenderingHints.KEY_FRACTIONALMETRICS, fractionalHint);
+            switch (g.TextRenderingHint)
+            {
+                case TextRenderingHint.SystemDefault:
+                    hints.put(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_DEFAULT);
+                    break;
+                case TextRenderingHint.SingleBitPerPixelGridFit:
+                case TextRenderingHint.SingleBitPerPixel:
+                    hints.put(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
+                    break;
+                case TextRenderingHint.AntiAlias:
+                case TextRenderingHint.AntiAliasGridFit:
+                    hints.put(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                    break;
+            }
             return hints;
         }
 
@@ -1903,25 +869,22 @@ namespace ikvm.awt
 
         public override java.awt.Paint getPaint()
         {
-            if( javaPaint == null ) {
-                javaPaint = composite.GetColor(color);
-            }
             return javaPaint;
         }
 
         public override java.awt.Composite getComposite()
         {
-            return javaComposite;
+            throw new NotImplementedException();
         }
 
-        public override void setBackground(java.awt.Color backcolor)
+        public override void setBackground(java.awt.Color color)
         {
-            bgcolor = backcolor == null ? Color.Empty : Color.FromArgb(backcolor.getRGB());
+            bgcolor = Color.FromArgb(color.getRGB());
         }
 
         public override java.awt.Color getBackground()
         {
-            return bgcolor == Color.Empty ? null : new java.awt.Color(color.ToArgb(), true);
+            return new java.awt.Color(bgcolor.ToArgb());
         }
 
         public override java.awt.Stroke getStroke()
@@ -1930,82 +893,23 @@ namespace ikvm.awt
             {
                 return defaultStroke;
             }
-            return stroke; 
-        }
-
-        private bool isAntiAlias()
-        {
-            switch (g.TextRenderingHint)
-            {
-                case TextRenderingHint.AntiAlias:
-                case TextRenderingHint.AntiAliasGridFit:
-                case TextRenderingHint.ClearTypeGridFit:
-                    return true;
-                default:
-                    return false;
-            }
-        }
-
-        private bool isFractionalMetrics()
-        {
-            return fractionalHint == java.awt.RenderingHints.VALUE_FRACTIONALMETRICS_ON; 
+            return stroke;
         }
 
         public override java.awt.font.FontRenderContext getFontRenderContext()
         {
-            return new java.awt.font.FontRenderContext(getTransform(), isAntiAlias(), isFractionalMetrics());
+            throw new NotImplementedException();
         }
 
-        public override void drawGlyphVector(java.awt.font.GlyphVector gv, float x, float y)
+        public override void drawGlyphVector(java.awt.font.GlyphVector g, float x, float y)
         {
-            java.awt.font.FontRenderContext frc = gv.getFontRenderContext();
-            Matrix currentMatrix = null;
-            Font currentFont = netfont;
-            TextRenderingHint currentHint = g.TextRenderingHint;
-            try
-            {
-                java.awt.Font javaFont = gv.getFont();
-                if (javaFont != null)
-                {
-                    netfont = javaFont.getNetFont();
-                }
-                if (frc.isAntiAliased()) {
-                    if( frc.usesFractionalMetrics() ){
-                        g.TextRenderingHint = TextRenderingHint.AntiAlias;
-                    } else {
-                        g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
-                    }
-                } else {
-                    if (frc.usesFractionalMetrics()) {
-                        g.TextRenderingHint = TextRenderingHint.SingleBitPerPixel;
-                    } else {
-                        g.TextRenderingHint = TextRenderingHint.SingleBitPerPixelGridFit;
-                    }
-                }
-                if (!frc.getTransform().equals(getTransform()))
-                {
-                    // save the old context and use the transformation from the renderContext
-                    currentMatrix = g.Transform;
-                    g.Transform = J2C.ConvertTransform(frc.getTransform());
-                }
-                drawString(J2C.ConvertGlyphVector(gv), x, y);
-            }
-            finally
-            {
-                // Restore the old context if needed
-                g.TextRenderingHint = currentHint;
-                netfont = currentFont;
-                if (currentMatrix != null)
-                {
-                    g.Transform = currentMatrix;
-                }
-            }
+            throw new NotImplementedException();
         }
     }
 
-    sealed class NetGraphicsConfiguration : java.awt.GraphicsConfiguration
+    class NetGraphicsConfiguration : java.awt.GraphicsConfiguration
     {
-        internal readonly Screen screen;
+        Screen screen;
 
         public NetGraphicsConfiguration(Screen screen)
         {
@@ -2029,7 +933,7 @@ namespace ikvm.awt
 
         public override java.awt.image.BufferedImage createCompatibleImage(int width, int height)
         {
-            return new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+            return new NetBufferedImage(width, height);
         }
 
         public override java.awt.image.VolatileImage createCompatibleVolatileImage(int param1, int param2, java.awt.ImageCapabilities param3)
@@ -2037,9 +941,9 @@ namespace ikvm.awt
             throw new NotImplementedException();
         }
 
-        public override java.awt.image.VolatileImage createCompatibleVolatileImage(int width, int height)
+        public override java.awt.image.VolatileImage createCompatibleVolatileImage(int param1, int param2)
         {
-            return new NetVolatileImage(width, height);
+            throw new NotImplementedException();
         }
 
         public override java.awt.Rectangle getBounds()
@@ -2053,28 +957,19 @@ namespace ikvm.awt
             throw new NotImplementedException();
         }
 
-        public override java.awt.image.ColorModel getColorModel(int transparency)
+        public override java.awt.image.ColorModel getColorModel(int param)
         {
-            if (transparency == java.awt.Transparency.__Fields.TRANSLUCENT)
-            {
-                //we return the default ColorModel because this produce the fewest problems with convertions
-                return ColorModel.getRGBdefault();
-            }
-            else
-            {
-                return null;
-            }
+            throw new NotImplementedException();
         }
 
         public override java.awt.image.ColorModel getColorModel()
         {
-            //we return the default ColorModel because this produce the fewest problems with convertions
-            return ColorModel.getRGBdefault();
+            throw new NotImplementedException();
         }
 
         public override java.awt.geom.AffineTransform getDefaultTransform()
         {
-            return new java.awt.geom.AffineTransform();
+            throw new NotImplementedException();
         }
 
         public override java.awt.GraphicsDevice getDevice()
@@ -2092,19 +987,9 @@ namespace ikvm.awt
             throw new NotImplementedException();
         }
 
-        public override VolatileImage createCompatibleVolatileImage(int width, int height, int transparency)
+        public override VolatileImage createCompatibleVolatileImage(int i1, int i2, int i3)
         {
-            return new NetVolatileImage(width, height);
-        }
-
-        public override VolatileImage createCompatibleVolatileImage(int width, int height, java.awt.ImageCapabilities caps, int transparency)
-        {
-            return new NetVolatileImage(width, height);
-        }
-
-        public override bool isTranslucencyCapable()
-        {
-            return true;
+            throw new NotImplementedException();
         }
     }
 
@@ -2144,15 +1029,16 @@ namespace ikvm.awt
         }
     }
 
-    public class NetGraphicsEnvironment : java.awt.GraphicsEnvironment
+    class NetGraphicsEnvironment : java.awt.GraphicsEnvironment
     {
         // Create a bitmap with the dimensions of the argument image. Then
         // create a graphics objects from the bitmap. All paint operations will
         // then paint the bitmap.
-		public override java.awt.Graphics2D createGraphics(BufferedImage bi)
-		{
-			return new BitmapGraphics(bi.getBitmap());
-		}
+        public override java.awt.Graphics2D createGraphics(BufferedImage bi)
+        {
+            Bitmap bitmap = new Bitmap(bi.getWidth(), bi.getHeight());
+            return new BitmapGraphics(bitmap);
+        }
 
         public override java.awt.Font[] getAllFonts()
         {
@@ -2184,26 +1070,29 @@ namespace ikvm.awt
 
         public override string[] getAvailableFontFamilyNames(Locale locale)
         {
+#if WHIDBEY 
             int language = CultureInfo.GetCultureInfo(locale.toString()).LCID;
+#else
+            int language = new CultureInfo(locale.toString()).LCID;
+#endif
             return getAvailableFontFamilyNames(language);
         }
 
         private String[] getAvailableFontFamilyNames(int language)
         {
-			FontFamily[] families = FontFamily.Families;
-            String[] results = new String[families.Length + 5];
-            int i = 0;
-            for (; i < families.Length; i++)
+            using (Bitmap bitmap = new Bitmap(1, 1))
             {
-                results[i] = families[i].GetName(language);
+                using (Graphics g = Graphics.FromImage(bitmap))
+                {
+                    FontFamily[] families = FontFamily.GetFamilies(g);
+                    String[] results = new String[families.Length];
+                    for (int i = 0; i < results.Length; i++)
+                    {
+                        results[i] = families[i].GetName(language);
+                    }
+                    return results;
+                }
             }
-            results[i++] = "Dialog";
-            results[i++] = "DialogInput";
-            results[i++] = "Serif";
-            results[i++] = "SansSerif";
-            results[i++] = "Monospaced";
-            Array.Sort(results);
-            return results;
         }
 
         public override java.awt.GraphicsDevice getDefaultScreenDevice()
