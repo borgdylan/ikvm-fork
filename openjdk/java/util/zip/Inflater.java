@@ -216,8 +216,7 @@ public class Inflater
    */
   public boolean finished() 
   {
-    return mode == FINISHED
-        && (outputWindow == null || outputWindow.getAvailable() == 0);
+    return mode == FINISHED && outputWindow.getAvailable() == 0;
   }
 
   /**
