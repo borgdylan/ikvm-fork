@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2002-2013 Jeroen Frijters
+  Copyright (C) 2002-2009 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -23,12 +23,10 @@
 */
 using System;
 using System.Collections.Generic;
-#if STATIC_COMPILER || STUB_GENERATOR
-using IKVM.Reflection;
-using IKVM.Reflection.Emit;
-using Type = IKVM.Reflection.Type;
-#else
 using System.Reflection;
+#if IKVM_REF_EMIT
+using IKVM.Reflection.Emit;
+#else
 using System.Reflection.Emit;
 #endif
 using System.Diagnostics;
@@ -38,15 +36,6 @@ using IKVM.Attributes;
 
 namespace IKVM.Internal
 {
-	static class StringConstants
-	{
-		internal static readonly string CLINIT = string.Intern("<clinit>");
-		internal static readonly string INIT = string.Intern("<init>");
-		internal static readonly string SIG_VOID = string.Intern("()V");
-		internal static readonly string FINALIZE = string.Intern("finalize");
-		internal static readonly string CLONE = string.Intern("clone");
-	}
-
 	struct ExModifiers
 	{
 		internal readonly Modifiers Modifiers;
@@ -61,6 +50,7 @@ namespace IKVM.Internal
 
 	static class AttributeHelper
 	{
+		private static CustomAttributeBuilder hideFromJavaAttribute;
 #if STATIC_COMPILER
 		private static CustomAttributeBuilder ghostInterfaceAttribute;
 		private static CustomAttributeBuilder deprecatedAttribute;
@@ -75,33 +65,30 @@ namespace IKVM.Internal
 		private static CustomAttributeBuilder paramArrayAttribute;
 		private static ConstructorInfo nonNestedInnerClassAttribute;
 		private static ConstructorInfo nonNestedOuterClassAttribute;
-		private static readonly Type typeofModifiers = JVM.LoadType(typeof(Modifiers));
-		private static readonly Type typeofSourceFileAttribute = JVM.LoadType(typeof(SourceFileAttribute));
-		private static readonly Type typeofLineNumberTableAttribute = JVM.LoadType(typeof(LineNumberTableAttribute));
+		private static Type typeofModifiers = JVM.LoadType(typeof(Modifiers));
+		private static Type typeofSourceFileAttribute = JVM.LoadType(typeof(SourceFileAttribute));
+		private static Type typeofLineNumberTableAttribute = JVM.LoadType(typeof(LineNumberTableAttribute));
 #endif // STATIC_COMPILER
-		private static readonly Type typeofRemappedClassAttribute = JVM.LoadType(typeof(RemappedClassAttribute));
-		private static readonly Type typeofRemappedTypeAttribute = JVM.LoadType(typeof(RemappedTypeAttribute));
-		private static readonly Type typeofModifiersAttribute = JVM.LoadType(typeof(ModifiersAttribute));
-		private static readonly Type typeofRemappedInterfaceMethodAttribute = JVM.LoadType(typeof(RemappedInterfaceMethodAttribute));
-		private static readonly Type typeofNameSigAttribute = JVM.LoadType(typeof(NameSigAttribute));
-		private static readonly Type typeofJavaModuleAttribute = JVM.LoadType(typeof(JavaModuleAttribute));
-		private static readonly Type typeofSignatureAttribute = JVM.LoadType(typeof(SignatureAttribute));
-		private static readonly Type typeofInnerClassAttribute = JVM.LoadType(typeof(InnerClassAttribute));
-		private static readonly Type typeofImplementsAttribute = JVM.LoadType(typeof(ImplementsAttribute));
-		private static readonly Type typeofGhostInterfaceAttribute = JVM.LoadType(typeof(GhostInterfaceAttribute));
-		private static readonly Type typeofExceptionIsUnsafeForMappingAttribute = JVM.LoadType(typeof(ExceptionIsUnsafeForMappingAttribute));
-		private static readonly Type typeofThrowsAttribute = JVM.LoadType(typeof(ThrowsAttribute));
-		private static readonly Type typeofHideFromReflectionAttribute = JVM.LoadType(typeof(HideFromReflectionAttribute));
-		private static readonly Type typeofHideFromJavaAttribute = JVM.LoadType(typeof(HideFromJavaAttribute));
-		private static readonly Type typeofNoPackagePrefixAttribute = JVM.LoadType(typeof(NoPackagePrefixAttribute));
-		private static readonly Type typeofAnnotationAttributeAttribute = JVM.LoadType(typeof(AnnotationAttributeAttribute));
-		private static readonly Type typeofNonNestedInnerClassAttribute = JVM.LoadType(typeof(NonNestedInnerClassAttribute));
-		private static readonly Type typeofNonNestedOuterClassAttribute = JVM.LoadType(typeof(NonNestedOuterClassAttribute));
-		private static readonly Type typeofEnclosingMethodAttribute = JVM.LoadType(typeof(EnclosingMethodAttribute));
-		private static readonly CustomAttributeBuilder hideFromJavaAttribute = new CustomAttributeBuilder(typeofHideFromJavaAttribute.GetConstructor(Type.EmptyTypes), new object[0]);
-
-		// we don't want beforefieldinit
-		static AttributeHelper() { }
+		private static Type typeofRemappedClassAttribute = JVM.LoadType(typeof(RemappedClassAttribute));
+		private static Type typeofRemappedTypeAttribute = JVM.LoadType(typeof(RemappedTypeAttribute));
+		private static Type typeofModifiersAttribute = JVM.LoadType(typeof(ModifiersAttribute));
+		private static Type typeofRemappedInterfaceMethodAttribute = JVM.LoadType(typeof(RemappedInterfaceMethodAttribute));
+		private static Type typeofNameSigAttribute = JVM.LoadType(typeof(NameSigAttribute));
+		private static Type typeofJavaModuleAttribute = JVM.LoadType(typeof(JavaModuleAttribute));
+		private static Type typeofSignatureAttribute = JVM.LoadType(typeof(SignatureAttribute));
+		private static Type typeofInnerClassAttribute = JVM.LoadType(typeof(InnerClassAttribute));
+		private static Type typeofImplementsAttribute = JVM.LoadType(typeof(ImplementsAttribute));
+		private static Type typeofGhostInterfaceAttribute = JVM.LoadType(typeof(GhostInterfaceAttribute));
+		private static Type typeofExceptionIsUnsafeForMappingAttribute = JVM.LoadType(typeof(ExceptionIsUnsafeForMappingAttribute));
+		private static Type typeofThrowsAttribute = JVM.LoadType(typeof(ThrowsAttribute));
+		private static Type typeofHideFromReflectionAttribute = JVM.LoadType(typeof(HideFromReflectionAttribute));
+		private static Type typeofHideFromJavaAttribute = JVM.LoadType(typeof(HideFromJavaAttribute));
+		private static Type typeofNoPackagePrefixAttribute = JVM.LoadType(typeof(NoPackagePrefixAttribute));
+		private static Type typeofConstantValueAttribute = JVM.LoadType(typeof(ConstantValueAttribute));
+		private static Type typeofAnnotationAttributeAttribute = JVM.LoadType(typeof(AnnotationAttributeAttribute));
+		private static Type typeofNonNestedInnerClassAttribute = JVM.LoadType(typeof(NonNestedInnerClassAttribute));
+		private static Type typeofNonNestedOuterClassAttribute = JVM.LoadType(typeof(NonNestedOuterClassAttribute));
+		private static Type typeofEnclosingMethodAttribute = JVM.LoadType(typeof(EnclosingMethodAttribute));
 
 #if STATIC_COMPILER
 		private static object ParseValue(ClassLoaderWrapper loader, TypeWrapper tw, string val)
@@ -110,22 +97,28 @@ namespace IKVM.Internal
 			{
 				return val;
 			}
-			else if(tw.IsUnloadable)
-			{
-				throw new FatalCompilerErrorException(Message.MapFileTypeNotFound, tw.Name);
-			}
 			else if(tw.TypeAsTBD.IsEnum)
 			{
-				return EnumHelper.Parse(tw.TypeAsTBD, val);
+				if(tw.TypeAsTBD.Assembly.ReflectionOnly)
+				{
+					// TODO implement full parsing semantics
+					FieldInfo field = tw.TypeAsTBD.GetField(val);
+					if(field == null)
+					{
+						throw new NotImplementedException("Parsing enum value: " + val);
+					}
+					return field.GetRawConstantValue();
+				}
+				return Enum.Parse(tw.TypeAsTBD, val);
 			}
-			else if(tw.TypeAsTBD == Types.Type)
+			else if(tw.TypeAsTBD == typeof(Type))
 			{
 				TypeWrapper valtw = loader.LoadClassByDottedNameFast(val);
 				if(valtw != null)
 				{
 					return valtw.TypeAsBaseType;
 				}
-				return StaticCompiler.Universe.GetType(val, true);
+				return Type.GetType(val, true);
 			}
 			else if(tw == PrimitiveTypeWrapper.BOOLEAN)
 			{
@@ -165,17 +158,74 @@ namespace IKVM.Internal
 			}
 		}
 
+		private static void SetPropertiesAndFields(ClassLoaderWrapper loader, Attribute attrib, IKVM.Internal.MapXml.Attribute attr)
+		{
+			Type t = attrib.GetType();
+			if(attr.Properties != null)
+			{
+				foreach(IKVM.Internal.MapXml.Param prop in attr.Properties)
+				{
+					PropertyInfo pi = t.GetProperty(prop.Name);
+					pi.SetValue(attrib, ParseValue(loader, ClassFile.FieldTypeWrapperFromSig(loader, prop.Sig), prop.Value), null);
+				}
+			}
+			if(attr.Fields != null)
+			{
+				foreach(IKVM.Internal.MapXml.Param field in attr.Fields)
+				{
+					FieldInfo fi = t.GetField(field.Name);
+					fi.SetValue(attrib, ParseValue(loader, ClassFile.FieldTypeWrapperFromSig(loader, field.Sig), field.Value));
+				}
+			}
+		}
+
+		internal static Attribute InstantiatePseudoCustomAttribute(ClassLoaderWrapper loader, IKVM.Internal.MapXml.Attribute attr)
+		{
+			Type t = StaticCompiler.GetType(attr.Type);
+			Type[] argTypes;
+			object[] args;
+			GetAttributeArgsAndTypes(loader, attr, out argTypes, out args);
+			ConstructorInfo ci = t.GetConstructor(argTypes);
+			Attribute attrib = ci.Invoke(args) as Attribute;
+			SetPropertiesAndFields(loader, attrib, attr);
+			return attrib;
+		}
+
+		private static bool IsDeclarativeSecurityAttribute(ClassLoaderWrapper loader, IKVM.Internal.MapXml.Attribute attr, out SecurityAction action, out PermissionSet pset)
+		{
+			action = SecurityAction.Demand;
+			pset = null;
+			if(attr.Type != null)
+			{
+				Type t = StaticCompiler.GetType(attr.Type);
+				if(typeof(SecurityAttribute).IsAssignableFrom(t))
+				{
+					Type[] argTypes;
+					object[] args;
+					GetAttributeArgsAndTypes(loader, attr, out argTypes, out args);
+					ConstructorInfo ci = t.GetConstructor(argTypes);
+					SecurityAttribute attrib = ci.Invoke(args) as SecurityAttribute;
+					SetPropertiesAndFields(loader, attrib, attr);
+					action = attrib.Action;
+					pset = new PermissionSet(PermissionState.None);
+					pset.AddPermission(attrib.CreatePermission());
+					return true;
+				}
+			}
+			return false;
+		}
+
 		internal static void SetCustomAttribute(ClassLoaderWrapper loader, TypeBuilder tb, IKVM.Internal.MapXml.Attribute attr)
 		{
-			bool declarativeSecurity;
-			CustomAttributeBuilder cab = CreateCustomAttribute(loader, attr, out declarativeSecurity);
-			if (declarativeSecurity)
+			SecurityAction action;
+			PermissionSet pset;
+			if(IsDeclarativeSecurityAttribute(loader, attr, out action, out pset))
 			{
-				tb.__AddDeclarativeSecurity(cab);
+				tb.AddDeclarativeSecurity(action, pset);
 			}
 			else
 			{
-				tb.SetCustomAttribute(cab);
+				tb.SetCustomAttribute(CreateCustomAttribute(loader, attr));
 			}
 		}
 
@@ -191,15 +241,29 @@ namespace IKVM.Internal
 
 		internal static void SetCustomAttribute(ClassLoaderWrapper loader, MethodBuilder mb, IKVM.Internal.MapXml.Attribute attr)
 		{
-			bool declarativeSecurity;
-			CustomAttributeBuilder cab = CreateCustomAttribute(loader, attr, out declarativeSecurity);
-			if (declarativeSecurity)
+			SecurityAction action;
+			PermissionSet pset;
+			if(IsDeclarativeSecurityAttribute(loader, attr, out action, out pset))
 			{
-				mb.__AddDeclarativeSecurity(cab);
+				mb.AddDeclarativeSecurity(action, pset);
 			}
 			else
 			{
 				mb.SetCustomAttribute(CreateCustomAttribute(loader, attr));
+			}
+		}
+
+		internal static void SetCustomAttribute(ClassLoaderWrapper loader, ConstructorBuilder cb, IKVM.Internal.MapXml.Attribute attr)
+		{
+			SecurityAction action;
+			PermissionSet pset;
+			if(IsDeclarativeSecurityAttribute(loader, attr, out action, out pset))
+			{
+				cb.AddDeclarativeSecurity(action, pset);
+			}
+			else
+			{
+				cb.SetCustomAttribute(CreateCustomAttribute(loader, attr));
 			}
 		}
 
@@ -216,7 +280,7 @@ namespace IKVM.Internal
 		private static void GetAttributeArgsAndTypes(ClassLoaderWrapper loader, IKVM.Internal.MapXml.Attribute attr, out Type[] argTypes, out object[] args)
 		{
 			// TODO add error handling
-			TypeWrapper[] twargs = loader.ArgTypeWrapperListFromSigNoThrow(attr.Sig);
+			TypeWrapper[] twargs = ClassFile.ArgTypeWrapperListFromSig(loader, attr.Sig);
 			argTypes = new Type[twargs.Length];
 			args = new object[argTypes.Length];
 			for(int i = 0; i < twargs.Length; i++)
@@ -225,11 +289,11 @@ namespace IKVM.Internal
 				TypeWrapper tw = twargs[i];
 				if(tw == CoreClasses.java.lang.Object.Wrapper)
 				{
-					tw = loader.FieldTypeWrapperFromSigNoThrow(attr.Params[i].Sig);
+					tw = ClassFile.FieldTypeWrapperFromSig(loader, attr.Params[i].Sig);
 				}
 				if(tw.IsArray)
 				{
-					Array arr = Array.CreateInstance(Type.__GetSystemType(Type.GetTypeCode(tw.ElementTypeWrapper.TypeAsArrayType)), attr.Params[i].Elements.Length);
+					Array arr = Array.CreateInstance(tw.ElementTypeWrapper.TypeAsArrayType, attr.Params[i].Elements.Length);
 					for(int j = 0; j < arr.Length; j++)
 					{
 						arr.SetValue(ParseValue(loader, tw.ElementTypeWrapper, attr.Params[i].Elements[j].Value), j);
@@ -245,24 +309,21 @@ namespace IKVM.Internal
 
 		private static CustomAttributeBuilder CreateCustomAttribute(ClassLoaderWrapper loader, IKVM.Internal.MapXml.Attribute attr)
 		{
-			bool ignore;
-			return CreateCustomAttribute(loader, attr, out ignore);
-		}
-
-		private static CustomAttributeBuilder CreateCustomAttribute(ClassLoaderWrapper loader, IKVM.Internal.MapXml.Attribute attr, out bool isDeclarativeSecurity)
-		{
 			// TODO add error handling
 			Type[] argTypes;
 			object[] args;
 			GetAttributeArgsAndTypes(loader, attr, out argTypes, out args);
 			if(attr.Type != null)
 			{
-				Type t = StaticCompiler.GetTypeForMapXml(loader, attr.Type);
-				isDeclarativeSecurity = t.IsSubclassOf(Types.SecurityAttribute);
+				Type t = StaticCompiler.GetType(attr.Type);
+				if(typeof(SecurityAttribute).IsAssignableFrom(t))
+				{
+					throw new NotImplementedException("Declarative SecurityAttribute support not implemented");
+				}
 				ConstructorInfo ci = t.GetConstructor(argTypes);
 				if(ci == null)
 				{
-					throw new InvalidOperationException(string.Format("Constructor missing: {0}::<init>{1}", attr.Type, attr.Sig));
+					throw new InvalidOperationException(string.Format("Constructor missing: {0}::<init>{1}", attr.Class, attr.Sig));
 				}
 				PropertyInfo[] namedProperties;
 				object[] propertyValues;
@@ -273,7 +334,7 @@ namespace IKVM.Internal
 					for(int i = 0; i < namedProperties.Length; i++)
 					{
 						namedProperties[i] = t.GetProperty(attr.Properties[i].Name);
-						propertyValues[i] = ParseValue(loader, loader.FieldTypeWrapperFromSigNoThrow(attr.Properties[i].Sig), attr.Properties[i].Value);
+						propertyValues[i] = ParseValue(loader, ClassFile.FieldTypeWrapperFromSig(loader, attr.Properties[i].Sig), attr.Properties[i].Value);
 					}
 				}
 				else
@@ -290,7 +351,7 @@ namespace IKVM.Internal
 					for(int i = 0; i < namedFields.Length; i++)
 					{
 						namedFields[i] = t.GetField(attr.Fields[i].Name);
-						fieldValues[i] = ParseValue(loader, loader.FieldTypeWrapperFromSigNoThrow(attr.Fields[i].Sig), attr.Fields[i].Value);
+						fieldValues[i] = ParseValue(loader, ClassFile.FieldTypeWrapperFromSig(loader, attr.Fields[i].Sig), attr.Fields[i].Value);
 					}
 				}
 				else
@@ -307,7 +368,13 @@ namespace IKVM.Internal
 					throw new NotImplementedException("Setting property values on Java attributes is not implemented");
 				}
 				TypeWrapper t = loader.LoadClassByDottedName(attr.Class);
-				isDeclarativeSecurity = t.TypeAsBaseType.IsSubclassOf(Types.SecurityAttribute);
+				MethodWrapper mw = t.GetMethodWrapper("<init>", attr.Sig, false);
+				mw.Link();
+				ConstructorInfo ci = (ConstructorInfo)mw.GetMethod();
+				if(ci == null)
+				{
+					throw new InvalidOperationException(string.Format("Constructor missing: {0}::<init>{1}", attr.Class, attr.Sig));
+				}
 				FieldInfo[] namedFields;
 				object[] fieldValues;
 				if(attr.Fields != null)
@@ -319,7 +386,7 @@ namespace IKVM.Internal
 						FieldWrapper fw = t.GetFieldWrapper(attr.Fields[i].Name, attr.Fields[i].Sig);
 						fw.Link();
 						namedFields[i] = fw.GetField();
-						fieldValues[i] = ParseValue(loader, loader.FieldTypeWrapperFromSigNoThrow(attr.Fields[i].Sig), attr.Fields[i].Value);
+						fieldValues[i] = ParseValue(loader, ClassFile.FieldTypeWrapperFromSig(loader, attr.Fields[i].Sig), attr.Fields[i].Value);
 					}
 				}
 				else
@@ -327,64 +394,70 @@ namespace IKVM.Internal
 					namedFields = new FieldInfo[0];
 					fieldValues = new object[0];
 				}
-				MethodWrapper mw = t.GetMethodWrapper("<init>", attr.Sig, false);
-				if (mw == null)
-				{
-					throw new InvalidOperationException(string.Format("Constructor missing: {0}::<init>{1}", attr.Class, attr.Sig));
-				}
-				mw.Link();
-				ConstructorInfo ci = (mw.GetMethod() as ConstructorInfo) ?? ((MethodInfo)mw.GetMethod()).__AsConstructorInfo();
 				return new CustomAttributeBuilder(ci, args, namedFields, fieldValues);
 			}
 		}
+#endif
 
-		private static CustomAttributeBuilder GetEditorBrowsableNever()
-		{
-			if (editorBrowsableNever == null)
-			{
-				// to avoid having to load (and find) System.dll, we construct a symbolic CustomAttributeBuilder
-				AssemblyName name = Types.Object.Assembly.GetName();
-				name.Name = "System";
-				Universe u = StaticCompiler.Universe;
-				Type typeofEditorBrowsableAttribute = u.ResolveType(Types.Object.Assembly, "System.ComponentModel.EditorBrowsableAttribute, " + name.FullName);
-				Type typeofEditorBrowsableState = u.ResolveType(Types.Object.Assembly, "System.ComponentModel.EditorBrowsableState, " + name.FullName);
-				u.MissingTypeIsValueType += delegate(Type type) { return type == typeofEditorBrowsableState; };
-				ConstructorInfo ctor = (ConstructorInfo)typeofEditorBrowsableAttribute.__CreateMissingMethod(ConstructorInfo.ConstructorName,
-					CallingConventions.Standard | CallingConventions.HasThis, null, default(CustomModifiers), new Type[] { typeofEditorBrowsableState }, null);
-				editorBrowsableNever = CustomAttributeBuilder.__FromBlob(ctor, new byte[] { 01, 00, 01, 00, 00, 00, 00, 00 });
-			}
-			return editorBrowsableNever;
-		}
-
+#if STATIC_COMPILER
 		internal static void SetEditorBrowsableNever(TypeBuilder tb)
 		{
-			tb.SetCustomAttribute(GetEditorBrowsableNever());
+			if(editorBrowsableNever == null)
+			{
+				editorBrowsableNever = new CustomAttributeBuilder(StaticCompiler.GetType("System.ComponentModel.EditorBrowsableAttribute").GetConstructor(new Type[] { StaticCompiler.GetType("System.ComponentModel.EditorBrowsableState") }), new object[] { (int)System.ComponentModel.EditorBrowsableState.Never });
+			}
+			tb.SetCustomAttribute(editorBrowsableNever);
 		}
 
 		internal static void SetEditorBrowsableNever(MethodBuilder mb)
 		{
-			mb.SetCustomAttribute(GetEditorBrowsableNever());
+			if(editorBrowsableNever == null)
+			{
+				editorBrowsableNever = new CustomAttributeBuilder(StaticCompiler.GetType("System.ComponentModel.EditorBrowsableAttribute").GetConstructor(new Type[] { StaticCompiler.GetType("System.ComponentModel.EditorBrowsableState") }), new object[] { (int)System.ComponentModel.EditorBrowsableState.Never });
+			}
+			mb.SetCustomAttribute(editorBrowsableNever);
+		}
+
+		internal static void SetEditorBrowsableNever(ConstructorBuilder cb)
+		{
+			if(editorBrowsableNever == null)
+			{
+				editorBrowsableNever = new CustomAttributeBuilder(StaticCompiler.GetType("System.ComponentModel.EditorBrowsableAttribute").GetConstructor(new Type[] { StaticCompiler.GetType("System.ComponentModel.EditorBrowsableState") }), new object[] { (int)System.ComponentModel.EditorBrowsableState.Never });
+			}
+			cb.SetCustomAttribute(editorBrowsableNever);
 		}
 
 		internal static void SetEditorBrowsableNever(PropertyBuilder pb)
 		{
-			pb.SetCustomAttribute(GetEditorBrowsableNever());
+			if(editorBrowsableNever == null)
+			{
+				editorBrowsableNever = new CustomAttributeBuilder(StaticCompiler.GetType("System.ComponentModel.EditorBrowsableAttribute").GetConstructor(new Type[] { StaticCompiler.GetType("System.ComponentModel.EditorBrowsableState") }), new object[] { (int)System.ComponentModel.EditorBrowsableState.Never });
+			}
+			pb.SetCustomAttribute(editorBrowsableNever);
 		}
 
-		internal static void SetDeprecatedAttribute(MethodBuilder mb)
+		internal static void SetDeprecatedAttribute(MethodBase mb)
 		{
 			if(deprecatedAttribute == null)
 			{
-				deprecatedAttribute = new CustomAttributeBuilder(JVM.Import(typeof(ObsoleteAttribute)).GetConstructor(Type.EmptyTypes), new object[0]);
+				deprecatedAttribute = new CustomAttributeBuilder(typeof(ObsoleteAttribute).GetConstructor(Type.EmptyTypes), new object[0]);
 			}
-			mb.SetCustomAttribute(deprecatedAttribute);
+			MethodBuilder method = mb as MethodBuilder;
+			if(method != null)
+			{
+				method.SetCustomAttribute(deprecatedAttribute);
+			}
+			else
+			{
+				((ConstructorBuilder)mb).SetCustomAttribute(deprecatedAttribute);
+			}
 		}
 
 		internal static void SetDeprecatedAttribute(TypeBuilder tb)
 		{
 			if(deprecatedAttribute == null)
 			{
-				deprecatedAttribute = new CustomAttributeBuilder(JVM.Import(typeof(ObsoleteAttribute)).GetConstructor(Type.EmptyTypes), new object[0]);
+				deprecatedAttribute = new CustomAttributeBuilder(typeof(ObsoleteAttribute).GetConstructor(Type.EmptyTypes), new object[0]);
 			}
 			tb.SetCustomAttribute(deprecatedAttribute);
 		}
@@ -393,7 +466,7 @@ namespace IKVM.Internal
 		{
 			if(deprecatedAttribute == null)
 			{
-				deprecatedAttribute = new CustomAttributeBuilder(JVM.Import(typeof(ObsoleteAttribute)).GetConstructor(Type.EmptyTypes), new object[0]);
+				deprecatedAttribute = new CustomAttributeBuilder(typeof(ObsoleteAttribute).GetConstructor(Type.EmptyTypes), new object[0]);
 			}
 			fb.SetCustomAttribute(deprecatedAttribute);
 		}
@@ -402,20 +475,29 @@ namespace IKVM.Internal
 		{
 			if(deprecatedAttribute == null)
 			{
-				deprecatedAttribute = new CustomAttributeBuilder(JVM.Import(typeof(ObsoleteAttribute)).GetConstructor(Type.EmptyTypes), new object[0]);
+				deprecatedAttribute = new CustomAttributeBuilder(typeof(ObsoleteAttribute).GetConstructor(Type.EmptyTypes), new object[0]);
 			}
 			pb.SetCustomAttribute(deprecatedAttribute);
 		}
 
-		internal static void SetThrowsAttribute(MethodBuilder mb, string[] exceptions)
+		internal static void SetThrowsAttribute(MethodBase mb, string[] exceptions)
 		{
 			if(exceptions != null && exceptions.Length != 0)
 			{
 				if(throwsAttribute == null)
 				{
-					throwsAttribute = typeofThrowsAttribute.GetConstructor(new Type[] { JVM.Import(typeof(string[])) });
+					throwsAttribute = typeofThrowsAttribute.GetConstructor(new Type[] { typeof(string[]) });
 				}
-				mb.SetCustomAttribute(new CustomAttributeBuilder(throwsAttribute, new object[] { exceptions }));
+				if(mb is MethodBuilder)
+				{
+					MethodBuilder method = (MethodBuilder)mb;
+					method.SetCustomAttribute(new CustomAttributeBuilder(throwsAttribute, new object[] { exceptions }));
+				}
+				else
+				{
+					ConstructorBuilder constructor = (ConstructorBuilder)mb;
+					constructor.SetCustomAttribute(new CustomAttributeBuilder(throwsAttribute, new object[] { exceptions }));
+				}
 			}
 		}
 
@@ -432,7 +514,7 @@ namespace IKVM.Internal
 		{
 			if(nonNestedInnerClassAttribute == null)
 			{
-				nonNestedInnerClassAttribute = typeofNonNestedInnerClassAttribute.GetConstructor(new Type[] { Types.String });
+				nonNestedInnerClassAttribute = typeofNonNestedInnerClassAttribute.GetConstructor(new Type[] { typeof(string) });
 			}
 			typeBuilder.SetCustomAttribute(new CustomAttributeBuilder(nonNestedInnerClassAttribute, new object[] { className }));
 		}
@@ -441,7 +523,7 @@ namespace IKVM.Internal
 		{
 			if(nonNestedOuterClassAttribute == null)
 			{
-				nonNestedOuterClassAttribute = typeofNonNestedOuterClassAttribute.GetConstructor(new Type[] { Types.String });
+				nonNestedOuterClassAttribute = typeofNonNestedOuterClassAttribute.GetConstructor(new Type[] { typeof(string) });
 			}
 			typeBuilder.SetCustomAttribute(new CustomAttributeBuilder(nonNestedOuterClassAttribute, new object[] { className }));
 		}
@@ -450,12 +532,6 @@ namespace IKVM.Internal
 		internal static void HideFromReflection(MethodBuilder mb)
 		{
 			CustomAttributeBuilder cab = new CustomAttributeBuilder(typeofHideFromReflectionAttribute.GetConstructor(Type.EmptyTypes), new object[0]);
-			mb.SetCustomAttribute(cab);
-		}
-
-		internal static void HideFromReflection(MethodBuilder mb, int reason)
-		{
-			CustomAttributeBuilder cab = new CustomAttributeBuilder(typeofHideFromReflectionAttribute.GetConstructor(new Type[] { Types.Int32 }), new object[] { reason });
 			mb.SetCustomAttribute(cab);
 		}
 
@@ -471,37 +547,71 @@ namespace IKVM.Internal
 			pb.SetCustomAttribute(cab);
 		}
 
-		internal static bool IsHideFromReflection(MemberInfo mi)
+		internal static bool IsHideFromReflection(MethodInfo mi)
 		{
-			return mi.IsDefined(typeofHideFromReflectionAttribute, false);
+			return IsDefined(mi, typeofHideFromReflectionAttribute);
+		}
+
+		internal static bool IsHideFromReflection(FieldInfo fi)
+		{
+			return IsDefined(fi, typeofHideFromReflectionAttribute);
+		}
+
+		internal static bool IsHideFromReflection(PropertyInfo pi)
+		{
+			return IsDefined(pi, typeofHideFromReflectionAttribute);
 		}
 
 		internal static void HideFromJava(TypeBuilder typeBuilder)
 		{
+			if(hideFromJavaAttribute == null)
+			{
+				hideFromJavaAttribute = new CustomAttributeBuilder(typeofHideFromJavaAttribute.GetConstructor(Type.EmptyTypes), new object[0]);
+			}
 			typeBuilder.SetCustomAttribute(hideFromJavaAttribute);
+		}
+
+		internal static void HideFromJava(ConstructorBuilder cb)
+		{
+			if(hideFromJavaAttribute == null)
+			{
+				hideFromJavaAttribute = new CustomAttributeBuilder(typeofHideFromJavaAttribute.GetConstructor(Type.EmptyTypes), new object[0]);
+			}
+			cb.SetCustomAttribute(hideFromJavaAttribute);
 		}
 
 		internal static void HideFromJava(MethodBuilder mb)
 		{
+			if(hideFromJavaAttribute == null)
+			{
+				hideFromJavaAttribute = new CustomAttributeBuilder(typeofHideFromJavaAttribute.GetConstructor(Type.EmptyTypes), new object[0]);
+			}
 			mb.SetCustomAttribute(hideFromJavaAttribute);
 		}
 
 		internal static void HideFromJava(FieldBuilder fb)
 		{
+			if(hideFromJavaAttribute == null)
+			{
+				hideFromJavaAttribute = new CustomAttributeBuilder(typeofHideFromJavaAttribute.GetConstructor(Type.EmptyTypes), new object[0]);
+			}
 			fb.SetCustomAttribute(hideFromJavaAttribute);
 		}
 
 #if STATIC_COMPILER
 		internal static void HideFromJava(PropertyBuilder pb)
 		{
+			if(hideFromJavaAttribute == null)
+			{
+				hideFromJavaAttribute = new CustomAttributeBuilder(typeofHideFromJavaAttribute.GetConstructor(Type.EmptyTypes), new object[0]);
+			}
 			pb.SetCustomAttribute(hideFromJavaAttribute);
 		}
 #endif // STATIC_COMPILER
 
 		internal static bool IsHideFromJava(Type type)
 		{
-			return type.IsDefined(typeofHideFromJavaAttribute, false)
-				|| (type.IsNested && (type.DeclaringType.IsDefined(typeofHideFromJavaAttribute, false) || type.Name.StartsWith("__<", StringComparison.Ordinal)));
+			return IsDefined(type, typeofHideFromJavaAttribute);
 		}
 
 		internal static bool IsHideFromJava(MemberInfo mi)
@@ -518,70 +628,161 @@ namespace IKVM.Internal
 			{
 				return true;
 			}
-			if (mi.Name.StartsWith("__<", StringComparison.Ordinal))
-			{
-				return true;
-			}
-			return mi.IsDefined(typeofHideFromJavaAttribute, false);
+			return IsDefined(mi, typeofHideFromJavaAttribute);
 		}
 
 #if STATIC_COMPILER
 		internal static void SetImplementsAttribute(TypeBuilder typeBuilder, TypeWrapper[] ifaceWrappers)
 		{
-			string[] interfaces = new string[ifaceWrappers.Length];
-			for(int i = 0; i < interfaces.Length; i++)
+			if(ifaceWrappers != null && ifaceWrappers.Length != 0)
 			{
-				interfaces[i] = ifaceWrappers[i].Name;
+				string[] interfaces = new string[ifaceWrappers.Length];
+				for(int i = 0; i < interfaces.Length; i++)
+				{
+					interfaces[i] = ifaceWrappers[i].Name;
+				}
+				if(implementsAttribute == null)
+				{
+					implementsAttribute = typeofImplementsAttribute.GetConstructor(new Type[] { typeof(string[]) });
+				}
+				typeBuilder.SetCustomAttribute(new CustomAttributeBuilder(implementsAttribute, new object[] { interfaces }));
 			}
-			if(implementsAttribute == null)
-			{
-				implementsAttribute = typeofImplementsAttribute.GetConstructor(new Type[] { JVM.Import(typeof(string[])) });
-			}
-			typeBuilder.SetCustomAttribute(new CustomAttributeBuilder(implementsAttribute, new object[] { interfaces }));
 		}
 #endif
 
 		internal static bool IsGhostInterface(Type type)
 		{
-			return type.IsDefined(typeofGhostInterfaceAttribute, false);
+			return IsDefined(type, typeofGhostInterfaceAttribute);
 		}
 
 		internal static bool IsRemappedType(Type type)
 		{
-			return type.IsDefined(typeofRemappedTypeAttribute, false);
+			return IsDefined(type, typeofRemappedTypeAttribute);
 		}
 
 		internal static bool IsExceptionIsUnsafeForMapping(Type type)
 		{
-			return type.IsDefined(typeofExceptionIsUnsafeForMappingAttribute, false);
+			return IsDefined(type, typeofExceptionIsUnsafeForMappingAttribute);
 		}
 
-		internal static ModifiersAttribute GetModifiersAttribute(MemberInfo member)
+		// this method compares t1 and t2 by name
+		// if the type name and assembly name (ignoring the version and strong name) match
+		// the type are considered the same
+		private static bool MatchTypes(Type t1, Type t2)
 		{
-#if !STATIC_COMPILER && !STUB_GENERATOR
-			object[] attr = member.GetCustomAttributes(typeof(ModifiersAttribute), false);
-			return attr.Length == 1 ? (ModifiersAttribute)attr[0] : null;
-#else
-			IList<CustomAttributeData> attr = CustomAttributeData.__GetCustomAttributes(member, typeofModifiersAttribute, false);
-			if(attr.Count == 1)
+			return t1.FullName == t2.FullName
+				&& t1.Assembly.GetName().Name == t2.Assembly.GetName().Name;
+		}
+
+		internal static object GetConstantValue(FieldInfo field)
+		{
+#if !STATIC_COMPILER
+			if(!field.DeclaringType.Assembly.ReflectionOnly)
 			{
-				IList<CustomAttributeTypedArgument> args = attr[0].ConstructorArguments;
-				if(args.Count == 2)
+				// In Java, instance fields can also have a ConstantValue attribute so we emulate that
+				// with ConstantValueAttribute (for consumption by ikvmstub only)
+				object[] attrib = field.GetCustomAttributes(typeof(ConstantValueAttribute), false);
+				if(attrib.Length == 1)
 				{
-					return new ModifiersAttribute((Modifiers)args[0].Value, (bool)args[1].Value);
+					return ((ConstantValueAttribute)attrib[0]).GetConstantValue();
 				}
-				return new ModifiersAttribute((Modifiers)args[0].Value);
+				return null;
 			}
-			return null;
+			else
 #endif
+			{
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(field))
+				{
+					if(MatchTypes(cad.Constructor.DeclaringType, typeofConstantValueAttribute))
+					{
+						return cad.ConstructorArguments[0].Value;
+					}
+				}
+				return null;
+			}
+		}
+
+		internal static ModifiersAttribute GetModifiersAttribute(Type type)
+		{
+#if !STATIC_COMPILER
+			if(!type.Assembly.ReflectionOnly)
+			{
+				object[] attr = type.GetCustomAttributes(typeof(ModifiersAttribute), false);
+				return attr.Length == 1 ? (ModifiersAttribute)attr[0] : null;
+			}
+			else
+#endif
+			{
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(type))
+				{
+					if(MatchTypes(cad.Constructor.DeclaringType, typeofModifiersAttribute))
+					{
+						IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
+						if(args.Count == 2)
+						{
+							return new ModifiersAttribute((Modifiers)args[0].Value, (bool)args[1].Value);
+						}
+						return new ModifiersAttribute((Modifiers)args[0].Value);
+					}
+				}
+				return null;
+			}
+		}
+
+		internal static ModifiersAttribute GetModifiersAttribute(PropertyInfo property)
+		{
+#if !STATIC_COMPILER
+			if (!property.DeclaringType.Assembly.ReflectionOnly)
+			{
+				object[] attr = property.GetCustomAttributes(typeof(ModifiersAttribute), false);
+				return attr.Length == 1 ? (ModifiersAttribute)attr[0] : null;
+			}
+			else
+#endif
+			{
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(property))
+				{
+					if(MatchTypes(cad.Constructor.DeclaringType, typeofModifiersAttribute))
+					{
+						IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
+						if(args.Count == 2)
+						{
+							return new ModifiersAttribute((Modifiers)args[0].Value, (bool)args[1].Value);
+						}
+						return new ModifiersAttribute((Modifiers)args[0].Value);
+					}
+				}
+				return null;
+			}
 		}
 
 		internal static ExModifiers GetModifiers(MethodBase mb, bool assemblyIsPrivate)
 		{
-			ModifiersAttribute attr = GetModifiersAttribute(mb);
-			if(attr != null)
+#if !STATIC_COMPILER
+			if(!mb.DeclaringType.Assembly.ReflectionOnly)
 			{
-				return new ExModifiers(attr.Modifiers, attr.IsInternal);
+				object[] customAttribute = mb.GetCustomAttributes(typeof(ModifiersAttribute), false);
+				if(customAttribute.Length == 1)
+				{
+					ModifiersAttribute mod = (ModifiersAttribute)customAttribute[0];
+					return new ExModifiers(mod.Modifiers, mod.IsInternal);
+				}
+			}
+			else
+#endif
+			{
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(mb))
+				{
+					if(MatchTypes(cad.Constructor.DeclaringType, typeofModifiersAttribute))
+					{
+						IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
+						if(args.Count == 2)
+						{
+							return new ExModifiers((Modifiers)args[0].Value, (bool)args[1].Value);
+						}
+						return new ExModifiers((Modifiers)args[0].Value, false);
+					}
+				}
 			}
 			Modifiers modifiers = 0;
 			if(mb.IsPublic)
@@ -629,7 +830,7 @@ namespace IKVM.Internal
 				modifiers |= Modifiers.Native;
 			}
 			ParameterInfo[] parameters = mb.GetParameters();
-			if(parameters.Length > 0 && parameters[parameters.Length - 1].IsDefined(JVM.Import(typeof(ParamArrayAttribute)), false))
+			if(parameters.Length > 0 && IsDefined(parameters[parameters.Length - 1], typeof(ParamArrayAttribute)))
 			{
 				modifiers |= Modifiers.VarArgs;
 			}
@@ -638,10 +839,31 @@ namespace IKVM.Internal
 
 		internal static ExModifiers GetModifiers(FieldInfo fi, bool assemblyIsPrivate)
 		{
-			ModifiersAttribute attr = GetModifiersAttribute(fi);
-			if(attr != null)
+#if !STATIC_COMPILER
+			if(!fi.DeclaringType.Assembly.ReflectionOnly)
 			{
-				return new ExModifiers(attr.Modifiers, attr.IsInternal);
+				object[] customAttribute = fi.GetCustomAttributes(typeof(ModifiersAttribute), false);
+				if(customAttribute.Length == 1)
+				{
+					ModifiersAttribute mod = (ModifiersAttribute)customAttribute[0];
+					return new ExModifiers(mod.Modifiers, mod.IsInternal);
+				}
+			}
+			else
+#endif
+			{
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(fi))
+				{
+					if(MatchTypes(cad.Constructor.DeclaringType, typeofModifiersAttribute))
+					{
+						IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
+						if(args.Count == 2)
+						{
+							return new ExModifiers((Modifiers)args[0].Value, (bool)args[1].Value);
+						}
+						return new ExModifiers((Modifiers)args[0].Value, false);
+					}
+				}
 			}
 			Modifiers modifiers = 0;
 			if(fi.IsPublic)
@@ -672,7 +894,7 @@ namespace IKVM.Internal
 			{
 				modifiers |= Modifiers.Static;
 			}
-			if(Array.IndexOf(fi.GetRequiredCustomModifiers(), Types.IsVolatile) != -1)
+			if(Array.IndexOf(fi.GetRequiredCustomModifiers(), typeof(System.Runtime.CompilerServices.IsVolatile)) != -1)
 			{
 				modifiers |= Modifiers.Volatile;
 			}
@@ -685,7 +907,7 @@ namespace IKVM.Internal
 			CustomAttributeBuilder customAttributeBuilder;
 			if (isInternal)
 			{
-				customAttributeBuilder = new CustomAttributeBuilder(typeofModifiersAttribute.GetConstructor(new Type[] { typeofModifiers, Types.Boolean }), new object[] { modifiers, isInternal });
+				customAttributeBuilder = new CustomAttributeBuilder(typeofModifiersAttribute.GetConstructor(new Type[] { typeofModifiers, typeof(bool) }), new object[] { modifiers, isInternal });
 			}
 			else
 			{
@@ -694,12 +916,26 @@ namespace IKVM.Internal
 			mb.SetCustomAttribute(customAttributeBuilder);
 		}
 
+		internal static void SetModifiers(ConstructorBuilder cb, Modifiers modifiers, bool isInternal)
+		{
+			CustomAttributeBuilder customAttributeBuilder;
+			if (isInternal)
+			{
+				customAttributeBuilder = new CustomAttributeBuilder(typeofModifiersAttribute.GetConstructor(new Type[] { typeofModifiers, typeof(bool) }), new object[] { modifiers, isInternal });
+			}
+			else
+			{
+				customAttributeBuilder = new CustomAttributeBuilder(typeofModifiersAttribute.GetConstructor(new Type[] { typeofModifiers }), new object[] { modifiers });
+			}
+			cb.SetCustomAttribute(customAttributeBuilder);
+		}
+
 		internal static void SetModifiers(FieldBuilder fb, Modifiers modifiers, bool isInternal)
 		{
 			CustomAttributeBuilder customAttributeBuilder;
 			if (isInternal)
 			{
-				customAttributeBuilder = new CustomAttributeBuilder(typeofModifiersAttribute.GetConstructor(new Type[] { typeofModifiers, Types.Boolean }), new object[] { modifiers, isInternal });
+				customAttributeBuilder = new CustomAttributeBuilder(typeofModifiersAttribute.GetConstructor(new Type[] { typeofModifiers, typeof(bool) }), new object[] { modifiers, isInternal });
 			}
 			else
 			{
@@ -713,7 +949,7 @@ namespace IKVM.Internal
 			CustomAttributeBuilder customAttributeBuilder;
 			if (isInternal)
 			{
-				customAttributeBuilder = new CustomAttributeBuilder(typeofModifiersAttribute.GetConstructor(new Type[] { typeofModifiers, Types.Boolean }), new object[] { modifiers, isInternal });
+				customAttributeBuilder = new CustomAttributeBuilder(typeofModifiersAttribute.GetConstructor(new Type[] { typeofModifiers, typeof(bool) }), new object[] { modifiers, isInternal });
 			}
 			else
 			{
@@ -727,7 +963,7 @@ namespace IKVM.Internal
 			CustomAttributeBuilder customAttributeBuilder;
 			if (isInternal)
 			{
-				customAttributeBuilder = new CustomAttributeBuilder(typeofModifiersAttribute.GetConstructor(new Type[] { typeofModifiers, Types.Boolean }), new object[] { modifiers, isInternal });
+				customAttributeBuilder = new CustomAttributeBuilder(typeofModifiersAttribute.GetConstructor(new Type[] { typeofModifiers, typeof(bool) }), new object[] { modifiers, isInternal });
 			}
 			else
 			{
@@ -736,10 +972,24 @@ namespace IKVM.Internal
 			tb.SetCustomAttribute(customAttributeBuilder);
 		}
 
-		internal static void SetNameSig(MethodBuilder mb, string name, string sig)
+		internal static void SetNameSig(MethodBase mb, string name, string sig)
 		{
-			CustomAttributeBuilder customAttributeBuilder = new CustomAttributeBuilder(typeofNameSigAttribute.GetConstructor(new Type[] { Types.String, Types.String }), new object[] { name, sig });
-			mb.SetCustomAttribute(customAttributeBuilder);
+			CustomAttributeBuilder customAttributeBuilder = new CustomAttributeBuilder(typeofNameSigAttribute.GetConstructor(new Type[] { typeof(string), typeof(string) }), new object[] { name, sig });
+			MethodBuilder method = mb as MethodBuilder;
+			if(method != null)
+			{
+				method.SetCustomAttribute(customAttributeBuilder);
+			}
+			else
+			{
+				((ConstructorBuilder)mb).SetCustomAttribute(customAttributeBuilder);
+			}
+		}
+
+		internal static void SetNameSig(FieldBuilder fb, string name, string sig)
+		{
+			CustomAttributeBuilder customAttributeBuilder = new CustomAttributeBuilder(typeofNameSigAttribute.GetConstructor(new Type[] { typeof(string), typeof(string) }), new object[] { name, sig });
+			fb.SetCustomAttribute(customAttributeBuilder);
 		}
 
 		internal static byte[] FreezeDryType(Type type)
@@ -754,7 +1004,7 @@ namespace IKVM.Internal
 
 		internal static void SetInnerClass(TypeBuilder typeBuilder, string innerClass, Modifiers modifiers)
 		{
-			Type[] argTypes = new Type[] { Types.String, typeofModifiers };
+			Type[] argTypes = new Type[] { typeof(string), typeofModifiers };
 			object[] args = new object[] { innerClass, modifiers };
 			ConstructorInfo ci = typeofInnerClassAttribute.GetConstructor(argTypes);
 			CustomAttributeBuilder customAttributeBuilder = new CustomAttributeBuilder(ci, args);
@@ -765,7 +1015,7 @@ namespace IKVM.Internal
 		{
 			if(sourceFileAttribute == null)
 			{
-				sourceFileAttribute = typeofSourceFileAttribute.GetConstructor(new Type[] { Types.String });
+				sourceFileAttribute = typeofSourceFileAttribute.GetConstructor(new Type[] { typeof(string) });
 			}
 			typeBuilder.SetCustomAttribute(new CustomAttributeBuilder(sourceFileAttribute, new object[] { filename }));
 		}
@@ -774,12 +1024,12 @@ namespace IKVM.Internal
 		{
 			if(sourceFileAttribute == null)
 			{
-				sourceFileAttribute = typeofSourceFileAttribute.GetConstructor(new Type[] { Types.String });
+				sourceFileAttribute = typeofSourceFileAttribute.GetConstructor(new Type[] { typeof(string) });
 			}
 			moduleBuilder.SetCustomAttribute(new CustomAttributeBuilder(sourceFileAttribute, new object[] { filename }));
 		}
 
-		internal static void SetLineNumberTable(MethodBuilder mb, IKVM.Attributes.LineNumberTableAttribute.LineNumberWriter writer)
+		internal static void SetLineNumberTable(MethodBase mb, IKVM.Attributes.LineNumberTableAttribute.LineNumberWriter writer)
 		{
 			object arg;
 			ConstructorInfo con;
@@ -787,7 +1037,7 @@ namespace IKVM.Internal
 			{
 				if(lineNumberTableAttribute2 == null)
 				{
-					lineNumberTableAttribute2 = typeofLineNumberTableAttribute.GetConstructor(new Type[] { Types.UInt16 });
+					lineNumberTableAttribute2 = typeofLineNumberTableAttribute.GetConstructor(new Type[] { typeof(ushort) });
 				}
 				con = lineNumberTableAttribute2;
 				arg = (ushort)writer.LineNo;
@@ -796,19 +1046,26 @@ namespace IKVM.Internal
 			{
 				if(lineNumberTableAttribute1 == null)
 				{
-					lineNumberTableAttribute1 = typeofLineNumberTableAttribute.GetConstructor(new Type[] { JVM.Import(typeof(byte[])) });
+					lineNumberTableAttribute1 = typeofLineNumberTableAttribute.GetConstructor(new Type[] { typeof(byte[]) });
 				}
 				con = lineNumberTableAttribute1;
 				arg = writer.ToArray();
 			}
-			mb.SetCustomAttribute(new CustomAttributeBuilder(con, new object[] { arg }));
+			if(mb is ConstructorBuilder)
+			{
+				((ConstructorBuilder)mb).SetCustomAttribute(new CustomAttributeBuilder(con, new object[] { arg }));
+			}
+			else
+			{
+				((MethodBuilder)mb).SetCustomAttribute(new CustomAttributeBuilder(con, new object[] { arg }));
+			}
 		}
 
 		internal static void SetEnclosingMethodAttribute(TypeBuilder tb, string className, string methodName, string methodSig)
 		{
 			if(enclosingMethodAttribute == null)
 			{
-				enclosingMethodAttribute = typeofEnclosingMethodAttribute.GetConstructor(new Type[] { Types.String, Types.String, Types.String });
+				enclosingMethodAttribute = typeofEnclosingMethodAttribute.GetConstructor(new Type[] { typeof(string), typeof(string), typeof(string) });
 			}
 			tb.SetCustomAttribute(new CustomAttributeBuilder(enclosingMethodAttribute, new object[] { className, methodName, methodSig }));
 		}
@@ -817,7 +1074,7 @@ namespace IKVM.Internal
 		{
 			if(signatureAttribute == null)
 			{
-				signatureAttribute = typeofSignatureAttribute.GetConstructor(new Type[] { Types.String });
+				signatureAttribute = typeofSignatureAttribute.GetConstructor(new Type[] { typeof(string) });
 			}
 			tb.SetCustomAttribute(new CustomAttributeBuilder(signatureAttribute, new object[] { signature }));
 		}
@@ -826,43 +1083,81 @@ namespace IKVM.Internal
 		{
 			if(signatureAttribute == null)
 			{
-				signatureAttribute = typeofSignatureAttribute.GetConstructor(new Type[] { Types.String });
+				signatureAttribute = typeofSignatureAttribute.GetConstructor(new Type[] { typeof(string) });
 			}
 			fb.SetCustomAttribute(new CustomAttributeBuilder(signatureAttribute, new object[] { signature }));
 		}
 
-		internal static void SetSignatureAttribute(MethodBuilder mb, string signature)
+		internal static void SetSignatureAttribute(MethodBase mb, string signature)
 		{
 			if(signatureAttribute == null)
 			{
-				signatureAttribute = typeofSignatureAttribute.GetConstructor(new Type[] { Types.String });
+				signatureAttribute = typeofSignatureAttribute.GetConstructor(new Type[] { typeof(string) });
 			}
-			mb.SetCustomAttribute(new CustomAttributeBuilder(signatureAttribute, new object[] { signature }));
+			if(mb is ConstructorBuilder)
+			{
+				((ConstructorBuilder)mb).SetCustomAttribute(new CustomAttributeBuilder(signatureAttribute, new object[] { signature }));
+			}
+			else
+			{
+				((MethodBuilder)mb).SetCustomAttribute(new CustomAttributeBuilder(signatureAttribute, new object[] { signature }));
+			}
 		}
 
 		internal static void SetParamArrayAttribute(ParameterBuilder pb)
 		{
 			if(paramArrayAttribute == null)
 			{
-				paramArrayAttribute = new CustomAttributeBuilder(JVM.Import(typeof(ParamArrayAttribute)).GetConstructor(Type.EmptyTypes), new object[0]);
+				paramArrayAttribute = new CustomAttributeBuilder(typeof(ParamArrayAttribute).GetConstructor(Type.EmptyTypes), new object[0]);
 			}
 			pb.SetCustomAttribute(paramArrayAttribute);
 		}
 #endif  // STATIC_COMPILER
 
-		internal static NameSigAttribute GetNameSig(MemberInfo member)
+		internal static NameSigAttribute GetNameSig(FieldInfo field)
 		{
-#if !STATIC_COMPILER && !STUB_GENERATOR
-			object[] attr = member.GetCustomAttributes(typeof(NameSigAttribute), false);
-			return attr.Length == 1 ? (NameSigAttribute)attr[0] : null;
-#else
-			foreach(CustomAttributeData cad in CustomAttributeData.__GetCustomAttributes(member, typeofNameSigAttribute, false))
+#if !STATIC_COMPILER
+			if(!field.DeclaringType.Assembly.ReflectionOnly)
 			{
-				IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
-				return new NameSigAttribute((string)args[0].Value, (string)args[1].Value);
+				object[] attr = field.GetCustomAttributes(typeof(NameSigAttribute), false);
+				return attr.Length == 1 ? (NameSigAttribute)attr[0] : null;
 			}
-			return null;
+			else
 #endif
+			{
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(field))
+				{
+					if(MatchTypes(cad.Constructor.DeclaringType, typeofNameSigAttribute))
+					{
+						IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
+						return new NameSigAttribute((string)args[0].Value, (string)args[1].Value);
+					}
+				}
+				return null;
+			}
+		}
+
+		internal static NameSigAttribute GetNameSig(MethodBase method)
+		{
+#if !STATIC_COMPILER
+			if(!method.DeclaringType.Assembly.ReflectionOnly)
+			{
+				object[] attr = method.GetCustomAttributes(typeof(NameSigAttribute), false);
+				return attr.Length == 1 ? (NameSigAttribute)attr[0] : null;
+			}
+			else
+#endif
+			{
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(method))
+				{
+					if(MatchTypes(cad.Constructor.DeclaringType, typeofNameSigAttribute))
+					{
+						IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
+						return new NameSigAttribute((string)args[0].Value, (string)args[1].Value);
+					}
+				}
+				return null;
+			}
 		}
 
 		internal static T[] DecodeArray<T>(CustomAttributeTypedArgument arg)
@@ -878,178 +1173,293 @@ namespace IKVM.Internal
 
 		internal static ImplementsAttribute GetImplements(Type type)
 		{
-#if !STATIC_COMPILER && !STUB_GENERATOR
-			object[] attribs = type.GetCustomAttributes(typeof(ImplementsAttribute), false);
-			return attribs.Length == 1 ? (ImplementsAttribute)attribs[0] : null;
-#else
-			foreach(CustomAttributeData cad in CustomAttributeData.__GetCustomAttributes(type, typeofImplementsAttribute, false))
+#if !STATIC_COMPILER
+			if(!type.Assembly.ReflectionOnly)
 			{
-				IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
-				return new ImplementsAttribute(DecodeArray<string>(args[0]));
+				object[] attribs = type.GetCustomAttributes(typeof(ImplementsAttribute), false);
+				return attribs.Length == 1 ? (ImplementsAttribute)attribs[0] : null;
 			}
-			return null;
+			else
 #endif
+			{
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(type))
+				{
+					if(MatchTypes(cad.Constructor.DeclaringType, typeofImplementsAttribute))
+					{
+						IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
+						return new ImplementsAttribute(DecodeArray<string>(args[0]));
+					}
+				}
+				return null;
+			}
 		}
 
 		internal static ThrowsAttribute GetThrows(MethodBase mb)
 		{
-#if !STATIC_COMPILER && !STUB_GENERATOR
-			object[] attribs = mb.GetCustomAttributes(typeof(ThrowsAttribute), false);
-			return attribs.Length == 1 ? (ThrowsAttribute)attribs[0] : null;
-#else
-			foreach(CustomAttributeData cad in CustomAttributeData.__GetCustomAttributes(mb, typeofThrowsAttribute, false))
+#if !STATIC_COMPILER
+			if(!mb.DeclaringType.Assembly.ReflectionOnly)
 			{
-				IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
-				if (args[0].ArgumentType == Types.String.MakeArrayType())
-				{
-					return new ThrowsAttribute(DecodeArray<string>(args[0]));
-				}
-				else if (args[0].ArgumentType == Types.Type.MakeArrayType())
-				{
-					return new ThrowsAttribute(DecodeArray<Type>(args[0]));
-				}
-				else
-				{
-					return new ThrowsAttribute((Type)args[0].Value);
-				}
+				object[] attribs = mb.GetCustomAttributes(typeof(ThrowsAttribute), false);
+				return attribs.Length == 1 ? (ThrowsAttribute)attribs[0] : null;
 			}
-			return null;
+			else
 #endif
+			{
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(mb))
+				{
+					if(MatchTypes(cad.Constructor.DeclaringType, typeofThrowsAttribute))
+					{
+						IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
+						return new ThrowsAttribute(DecodeArray<string>(args[0]));
+					}
+				}
+				return null;
+			}
 		}
 
 		internal static string[] GetNonNestedInnerClasses(Type t)
 		{
-#if !STATIC_COMPILER && !STUB_GENERATOR
-			object[] attribs = t.GetCustomAttributes(typeof(NonNestedInnerClassAttribute), false);
-			string[] classes = new string[attribs.Length];
-			for (int i = 0; i < attribs.Length; i++)
+#if !STATIC_COMPILER
+			if(!t.Assembly.ReflectionOnly)
 			{
-				classes[i] = ((NonNestedInnerClassAttribute)attribs[i]).InnerClassName;
+				object[] attribs = t.GetCustomAttributes(typeof(NonNestedInnerClassAttribute), false);
+				string[] classes = new string[attribs.Length];
+				for (int i = 0; i < attribs.Length; i++)
+				{
+					classes[i] = ((NonNestedInnerClassAttribute)attribs[i]).InnerClassName;
+				}
+				return classes;
 			}
-			return classes;
-#else
-			List<string> list = new List<string>();
-			foreach(CustomAttributeData cad in CustomAttributeData.__GetCustomAttributes(t, typeofNonNestedInnerClassAttribute, false))
-			{
-				IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
-				list.Add((string)args[0].Value);
-			}
-			return list.ToArray();
+			else
 #endif
+			{
+				List<string> list = new List<string>();
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(t))
+				{
+					if(MatchTypes(cad.Constructor.DeclaringType, typeofNonNestedInnerClassAttribute))
+					{
+						IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
+						list.Add((string)args[0].Value);
+					}
+				}
+				return list.ToArray();
+			}
 		}
 
 		internal static string GetNonNestedOuterClasses(Type t)
 		{
-#if !STATIC_COMPILER && !STUB_GENERATOR
-			object[] attribs = t.GetCustomAttributes(typeof(NonNestedOuterClassAttribute), false);
-			return attribs.Length == 1 ? ((NonNestedOuterClassAttribute)attribs[0]).OuterClassName : null;
-#else
-			foreach(CustomAttributeData cad in CustomAttributeData.__GetCustomAttributes(t, typeofNonNestedOuterClassAttribute, false))
+#if !STATIC_COMPILER
+			if(!t.Assembly.ReflectionOnly)
 			{
-				IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
-				return (string)args[0].Value;
+				object[] attribs = t.GetCustomAttributes(typeof(NonNestedOuterClassAttribute), false);
+				return attribs.Length == 1 ? ((NonNestedOuterClassAttribute)attribs[0]).OuterClassName : null;
 			}
-			return null;
+			else
 #endif
+			{
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(t))
+				{
+					if(MatchTypes(cad.Constructor.DeclaringType, typeofNonNestedOuterClassAttribute))
+					{
+						IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
+						return (string)args[0].Value;
+					}
+				}
+				return null;
+			}
 		}
 
-		internal static SignatureAttribute GetSignature(MemberInfo member)
+		internal static SignatureAttribute GetSignature(MethodBase mb)
 		{
-#if !STATIC_COMPILER && !STUB_GENERATOR
-			object[] attribs = member.GetCustomAttributes(typeof(SignatureAttribute), false);
-			return attribs.Length == 1 ? (SignatureAttribute)attribs[0] : null;
-#else
-			foreach(CustomAttributeData cad in CustomAttributeData.__GetCustomAttributes(member, typeofSignatureAttribute, false))
+#if !STATIC_COMPILER
+			if(!mb.DeclaringType.Assembly.ReflectionOnly)
 			{
-				IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
-				return new SignatureAttribute((string)args[0].Value);
+				object[] attribs = mb.GetCustomAttributes(typeof(SignatureAttribute), false);
+				return attribs.Length == 1 ? (SignatureAttribute)attribs[0] : null;
 			}
-			return null;
+			else
 #endif
+			{
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(mb))
+				{
+					if(MatchTypes(cad.Constructor.DeclaringType, typeofSignatureAttribute))
+					{
+						IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
+						return new SignatureAttribute((string)args[0].Value);
+					}
+				}
+				return null;
+			}
+		}
+
+		internal static SignatureAttribute GetSignature(Type type)
+		{
+#if !STATIC_COMPILER
+			if(!type.Assembly.ReflectionOnly)
+			{
+				object[] attribs = type.GetCustomAttributes(typeof(SignatureAttribute), false);
+				return attribs.Length == 1 ? (SignatureAttribute)attribs[0] : null;
+			}
+			else
+#endif
+			{
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(type))
+				{
+					if(MatchTypes(cad.Constructor.DeclaringType, typeofSignatureAttribute))
+					{
+						IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
+						return new SignatureAttribute((string)args[0].Value);
+					}
+				}
+				return null;
+			}
+		}
+
+		internal static SignatureAttribute GetSignature(FieldInfo fi)
+		{
+#if !STATIC_COMPILER
+			if(!fi.DeclaringType.Assembly.ReflectionOnly)
+			{
+				object[] attribs = fi.GetCustomAttributes(typeof(SignatureAttribute), false);
+				return attribs.Length == 1 ? (SignatureAttribute)attribs[0] : null;
+			}
+			else
+#endif
+			{
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(fi))
+				{
+					if(MatchTypes(cad.Constructor.DeclaringType, typeofSignatureAttribute))
+					{
+						IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
+						return new SignatureAttribute((string)args[0].Value);
+					}
+				}
+				return null;
+			}
 		}
 
 		internal static InnerClassAttribute GetInnerClass(Type type)
 		{
-#if !STATIC_COMPILER && !STUB_GENERATOR
-			object[] attribs = type.GetCustomAttributes(typeof(InnerClassAttribute), false);
-			return attribs.Length == 1 ? (InnerClassAttribute)attribs[0] : null;
-#else
-			foreach(CustomAttributeData cad in CustomAttributeData.__GetCustomAttributes(type, typeofInnerClassAttribute, false))
+#if !STATIC_COMPILER
+			if(!type.Assembly.ReflectionOnly)
 			{
-				IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
-				return new InnerClassAttribute((string)args[0].Value, (Modifiers)args[1].Value);
+				object[] attribs = type.GetCustomAttributes(typeof(InnerClassAttribute), false);
+				return attribs.Length == 1 ? (InnerClassAttribute)attribs[0] : null;
 			}
-			return null;
+			else
 #endif
+			{
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(type))
+				{
+					if(MatchTypes(cad.Constructor.DeclaringType, typeofInnerClassAttribute))
+					{
+						IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
+						return new InnerClassAttribute((string)args[0].Value, (Modifiers)args[1].Value);
+					}
+				}
+				return null;
+			}
 		}
 
 		internal static RemappedInterfaceMethodAttribute[] GetRemappedInterfaceMethods(Type type)
 		{
-#if !STATIC_COMPILER && !STUB_GENERATOR
-			object[] attr = type.GetCustomAttributes(typeof(RemappedInterfaceMethodAttribute), false);
-			RemappedInterfaceMethodAttribute[] attr1 = new RemappedInterfaceMethodAttribute[attr.Length];
-			Array.Copy(attr, attr1, attr.Length);
-			return attr1;
-#else
-			List<RemappedInterfaceMethodAttribute> attrs = new List<RemappedInterfaceMethodAttribute>();
-			foreach(CustomAttributeData cad in CustomAttributeData.__GetCustomAttributes(type, typeofRemappedInterfaceMethodAttribute, false))
+#if !STATIC_COMPILER
+			if(!type.Assembly.ReflectionOnly)
 			{
-				IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
-				attrs.Add(new RemappedInterfaceMethodAttribute((string)args[0].Value, (string)args[1].Value, DecodeArray<string>(args[2])));
+				object[] attr = type.GetCustomAttributes(typeof(RemappedInterfaceMethodAttribute), false);
+				RemappedInterfaceMethodAttribute[] attr1 = new RemappedInterfaceMethodAttribute[attr.Length];
+				Array.Copy(attr, attr1, attr.Length);
+				return attr1;
 			}
-			return attrs.ToArray();
+			else
 #endif
+			{
+				List<RemappedInterfaceMethodAttribute> attrs = new List<RemappedInterfaceMethodAttribute>();
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(type))
+				{
+					if(MatchTypes(cad.Constructor.DeclaringType, typeofRemappedInterfaceMethodAttribute))
+					{
+						IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
+						attrs.Add(new RemappedInterfaceMethodAttribute((string)args[0].Value, (string)args[1].Value));
+					}
+				}
+				return attrs.ToArray();
+			}
 		}
 
 		internal static RemappedTypeAttribute GetRemappedType(Type type)
 		{
-#if !STATIC_COMPILER && !STUB_GENERATOR
-			object[] attribs = type.GetCustomAttributes(typeof(RemappedTypeAttribute), false);
-			return attribs.Length == 1 ? (RemappedTypeAttribute)attribs[0] : null;
-#else
-			foreach(CustomAttributeData cad in CustomAttributeData.__GetCustomAttributes(type, typeofRemappedTypeAttribute, false))
+#if !STATIC_COMPILER
+			if(!type.Assembly.ReflectionOnly)
 			{
-				IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
-				return new RemappedTypeAttribute((Type)args[0].Value);
+				object[] attribs = type.GetCustomAttributes(typeof(RemappedTypeAttribute), false);
+				return attribs.Length == 1 ? (RemappedTypeAttribute)attribs[0] : null;
 			}
-			return null;
+			else
 #endif
+			{
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(type))
+				{
+					if(MatchTypes(cad.Constructor.DeclaringType, typeofRemappedTypeAttribute))
+					{
+						IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
+						return new RemappedTypeAttribute((Type)args[0].Value);
+					}
+				}
+				return null;
+			}
 		}
 
 		internal static RemappedClassAttribute[] GetRemappedClasses(Assembly coreAssembly)
 		{
-#if !STATIC_COMPILER && !STUB_GENERATOR
-			object[] attr = coreAssembly.GetCustomAttributes(typeof(RemappedClassAttribute), false);
-			RemappedClassAttribute[] attr1 = new RemappedClassAttribute[attr.Length];
-			Array.Copy(attr, attr1, attr.Length);
-			return attr1;
-#else
-			List<RemappedClassAttribute> attrs = new List<RemappedClassAttribute>();
-			foreach(CustomAttributeData cad in CustomAttributeData.__GetCustomAttributes(coreAssembly, typeofRemappedClassAttribute, false))
+#if !STATIC_COMPILER
+			if(!coreAssembly.ReflectionOnly)
 			{
-				IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
-				attrs.Add(new RemappedClassAttribute((string)args[0].Value, (Type)args[1].Value));
+				object[] attr = coreAssembly.GetCustomAttributes(typeof(RemappedClassAttribute), false);
+				RemappedClassAttribute[] attr1 = new RemappedClassAttribute[attr.Length];
+				Array.Copy(attr, attr1, attr.Length);
+				return attr1;
 			}
-			return attrs.ToArray();
+			else
 #endif
+			{
+				List<RemappedClassAttribute> attrs = new List<RemappedClassAttribute>();
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(coreAssembly))
+				{
+					if(MatchTypes(cad.Constructor.DeclaringType, typeofRemappedClassAttribute))
+					{
+						IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
+						attrs.Add(new RemappedClassAttribute((string)args[0].Value, (Type)args[1].Value));
+					}
+				}
+				return attrs.ToArray();
+			}
 		}
 
 		internal static string GetAnnotationAttributeType(Type type)
 		{
-#if !STATIC_COMPILER && !STUB_GENERATOR
-			object[] attr = type.GetCustomAttributes(typeof(AnnotationAttributeAttribute), false);
-			if(attr.Length == 1)
+#if !STATIC_COMPILER
+			if(!type.Assembly.ReflectionOnly)
 			{
-				return ((AnnotationAttributeAttribute)attr[0]).AttributeType;
+				object[] attr = type.GetCustomAttributes(typeof(AnnotationAttributeAttribute), false);
+				if(attr.Length == 1)
+				{
+					return ((AnnotationAttributeAttribute)attr[0]).AttributeType;
+				}
+				return null;
 			}
-			return null;
-#else
-			foreach(CustomAttributeData cad in CustomAttributeData.__GetCustomAttributes(type, typeofAnnotationAttributeAttribute, false))
-			{
-				return (string)cad.ConstructorArguments[0].Value;
-			}
-			return null;
+			else
 #endif
+			{
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(type))
+				{
+					if(MatchTypes(cad.Constructor.DeclaringType, typeofAnnotationAttributeAttribute))
+					{
+						return (string)cad.ConstructorArguments[0].Value;
+					}
+				}
+				return null;
+			}
 		}
 
 		internal static AssemblyName[] GetInternalsVisibleToAttributes(Assembly assembly)
@@ -1057,7 +1467,7 @@ namespace IKVM.Internal
 			List<AssemblyName> list = new List<AssemblyName>();
 			foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(assembly))
 			{
-				if(cad.Constructor.DeclaringType == JVM.Import(typeof(System.Runtime.CompilerServices.InternalsVisibleToAttribute)))
+				if(cad.Constructor.DeclaringType == typeof(System.Runtime.CompilerServices.InternalsVisibleToAttribute))
 				{
 					try
 					{
@@ -1072,77 +1482,194 @@ namespace IKVM.Internal
 			return list.ToArray();
 		}
 
+		internal static bool IsDefined(Module mod, Type attribute)
+		{
+#if !STATIC_COMPILER
+			if(!mod.Assembly.ReflectionOnly)
+			{
+				return mod.IsDefined(attribute, false);
+			}
+			else
+#endif
+			{
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(mod))
+				{
+					// NOTE we don't support subtyping relations!
+					if(MatchTypes(cad.Constructor.DeclaringType, attribute))
+					{
+						return true;
+					}
+				}
+				return false;
+			}
+		}
+
+		internal static bool IsDefined(Assembly asm, Type attribute)
+		{
+#if !STATIC_COMPILER
+			if(!asm.ReflectionOnly)
+			{
+				return asm.IsDefined(attribute, false);
+			}
+			else
+#endif
+			{
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(asm))
+				{
+					if(MatchTypes(cad.Constructor.DeclaringType, attribute))
+					{
+						return true;
+					}
+				}
+				return false;
+			}
+		}
+
+		internal static bool IsDefined(Type type, Type attribute)
+		{
+#if !STATIC_COMPILER
+			if(!type.Assembly.ReflectionOnly)
+			{
+				return type.IsDefined(attribute, false);
+			}
+			else
+#endif
+			{
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(type))
+				{
+					// NOTE we don't support subtyping relations!
+					if(MatchTypes(cad.Constructor.DeclaringType, attribute))
+					{
+						return true;
+					}
+				}
+				return false;
+			}
+		}
+
+		internal static bool IsDefined(ParameterInfo pi, Type attribute)
+		{
+#if !STATIC_COMPILER
+			if(!pi.Member.DeclaringType.Assembly.ReflectionOnly)
+			{
+				return pi.IsDefined(attribute, false);
+			}
+			else
+#endif
+			{
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(pi))
+				{
+					// NOTE we don't support subtyping relations!
+					if(MatchTypes(cad.Constructor.DeclaringType, attribute))
+					{
+						return true;
+					}
+				}
+				return false;
+			}
+		}
+
+		internal static bool IsDefined(MemberInfo member, Type attribute)
+		{
+#if !STATIC_COMPILER
+			if(!member.DeclaringType.Assembly.ReflectionOnly)
+			{
+				return member.IsDefined(attribute, false);
+			}
+			else
+#endif
+			{
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(member))
+				{
+					// NOTE we don't support subtyping relations!
+					if(MatchTypes(cad.Constructor.DeclaringType, attribute))
+					{
+						return true;
+					}
+				}
+				return false;
+			}
+		}
+
 		internal static bool IsJavaModule(Module mod)
 		{
-			return mod.IsDefined(typeofJavaModuleAttribute, false);
+			return IsDefined(mod, typeofJavaModuleAttribute);
 		}
 
 		internal static object[] GetJavaModuleAttributes(Module mod)
 		{
-#if !STATIC_COMPILER && !STUB_GENERATOR
-			return mod.GetCustomAttributes(typeofJavaModuleAttribute, false);
-#else
-			List<JavaModuleAttribute> attrs = new List<JavaModuleAttribute>();
-			foreach(CustomAttributeData cad in CustomAttributeData.__GetCustomAttributes(mod, typeofJavaModuleAttribute, false))
+#if !STATIC_COMPILER
+			if(!mod.Assembly.ReflectionOnly)
 			{
-				IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
-				if(args.Count == 0)
-				{
-					attrs.Add(new JavaModuleAttribute());
-				}
-				else
-				{
-					attrs.Add(new JavaModuleAttribute(DecodeArray<string>(args[0])));
-				}
+				return mod.GetCustomAttributes(typeofJavaModuleAttribute, false);
 			}
-			return attrs.ToArray();
+			else
 #endif
+			{
+				List<JavaModuleAttribute> attrs = new List<JavaModuleAttribute>();
+				foreach(CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(mod))
+				{
+					if(MatchTypes(cad.Constructor.DeclaringType, typeofJavaModuleAttribute))
+					{
+						IList<CustomAttributeTypedArgument> args = cad.ConstructorArguments;
+						if(args.Count == 0)
+						{
+							attrs.Add(new JavaModuleAttribute());
+						}
+						else
+						{
+							attrs.Add(new JavaModuleAttribute(DecodeArray<string>(args[0])));
+						}
+					}
+				}
+				return attrs.ToArray();
+			}
 		}
 
 		internal static bool IsNoPackagePrefix(Type type)
 		{
-			return type.IsDefined(typeofNoPackagePrefixAttribute, false) || type.Assembly.IsDefined(typeofNoPackagePrefixAttribute, false);
-		}
-
-		internal static bool HasEnclosingMethodAttribute(Type type)
-		{
-			return type.IsDefined(typeofEnclosingMethodAttribute, false);
+			return IsDefined(type, typeofNoPackagePrefixAttribute) || IsDefined(type.Assembly, typeofNoPackagePrefixAttribute);
 		}
 
 		internal static EnclosingMethodAttribute GetEnclosingMethodAttribute(Type type)
 		{
-#if !STATIC_COMPILER && !STUB_GENERATOR
-			object[] attr = type.GetCustomAttributes(typeof(EnclosingMethodAttribute), false);
-			if (attr.Length == 1)
+			if (type.Assembly.ReflectionOnly)
 			{
-				return ((EnclosingMethodAttribute)attr[0]).SetClassName(type);
+				foreach (CustomAttributeData cad in CustomAttributeData.GetCustomAttributes(type))
+				{
+					if (MatchTypes(cad.Constructor.DeclaringType, typeofEnclosingMethodAttribute))
+					{
+						return new EnclosingMethodAttribute((string)cad.ConstructorArguments[0].Value, (string)cad.ConstructorArguments[1].Value, (string)cad.ConstructorArguments[2].Value);
+					}
+				}
+			}
+			else
+			{
+				object[] attr = type.GetCustomAttributes(typeof(EnclosingMethodAttribute), false);
+				if (attr.Length == 1)
+				{
+					return (EnclosingMethodAttribute)attr[0];
+				}
 			}
 			return null;
-#else
-			foreach (CustomAttributeData cad in CustomAttributeData.__GetCustomAttributes(type, typeofEnclosingMethodAttribute, false))
-			{
-				return new EnclosingMethodAttribute((string)cad.ConstructorArguments[0].Value, (string)cad.ConstructorArguments[1].Value, (string)cad.ConstructorArguments[2].Value).SetClassName(type);
-			}
-			return null;
-#endif
 		}
 
 #if STATIC_COMPILER
 		internal static void SetRemappedClass(AssemblyBuilder assemblyBuilder, string name, Type shadowType)
 		{
-			ConstructorInfo remappedClassAttribute = typeofRemappedClassAttribute.GetConstructor(new Type[] { Types.String, Types.Type });
+			ConstructorInfo remappedClassAttribute = typeofRemappedClassAttribute.GetConstructor(new Type[] { typeof(string), typeof(Type) });
 			assemblyBuilder.SetCustomAttribute(new CustomAttributeBuilder(remappedClassAttribute, new object[] { name, shadowType }));
 		}
 
 		internal static void SetRemappedType(TypeBuilder typeBuilder, Type shadowType)
 		{
-			ConstructorInfo remappedTypeAttribute = typeofRemappedTypeAttribute.GetConstructor(new Type[] { Types.Type });
+			ConstructorInfo remappedTypeAttribute = typeofRemappedTypeAttribute.GetConstructor(new Type[] { typeof(Type) });
 			typeBuilder.SetCustomAttribute(new CustomAttributeBuilder(remappedTypeAttribute, new object[] { shadowType }));
 		}
 
-		internal static void SetRemappedInterfaceMethod(TypeBuilder typeBuilder, string name, string mappedTo, string[] throws)
+		internal static void SetRemappedInterfaceMethod(TypeBuilder typeBuilder, string name, string mappedTo)
 		{
-			CustomAttributeBuilder cab = new CustomAttributeBuilder(typeofRemappedInterfaceMethodAttribute.GetConstructor(new Type[] { Types.String, Types.String, Types.String.MakeArrayType() }), new object[] { name, mappedTo, throws });
+			CustomAttributeBuilder cab = new CustomAttributeBuilder(typeofRemappedInterfaceMethodAttribute.GetConstructor(new Type[] { typeof(string), typeof(string) }), new object[] { name, mappedTo } );
 			typeBuilder.SetCustomAttribute(cab);
 		}
 
@@ -1151,67 +1678,95 @@ namespace IKVM.Internal
 			CustomAttributeBuilder cab = new CustomAttributeBuilder(typeofExceptionIsUnsafeForMappingAttribute.GetConstructor(Type.EmptyTypes), new object[0]);
 			typeBuilder.SetCustomAttribute(cab);
 		}
+
+		internal static void SetConstantValue(FieldBuilder field, object constantValue)
+		{
+			CustomAttributeBuilder constantValueAttrib;
+			try
+			{
+				constantValueAttrib = new CustomAttributeBuilder(typeofConstantValueAttribute.GetConstructor(new Type[] { constantValue.GetType() }), new object[] { constantValue });
+			}
+			catch (OverflowException)
+			{
+				// FXBUG for char values > 32K .NET (1.1 and 2.0) throws an exception (because it tries to convert to Int16)
+				if (constantValue is char)
+				{
+					// we use the int constant value instead, the stub generator can handle that
+					constantValueAttrib = new CustomAttributeBuilder(typeofConstantValueAttribute.GetConstructor(new Type[] { typeof(int) }), new object[] { (int)(char)constantValue });
+				}
+				else
+				{
+					throw;
+				}
+			}
+			field.SetCustomAttribute(constantValueAttrib);
+		}
 #endif // STATIC_COMPILER
 
 		internal static void SetRuntimeCompatibilityAttribute(AssemblyBuilder assemblyBuilder)
 		{
-			Type runtimeCompatibilityAttribute = JVM.Import(typeof(System.Runtime.CompilerServices.RuntimeCompatibilityAttribute));
+			Type runtimeCompatibilityAttribute = typeof(System.Runtime.CompilerServices.RuntimeCompatibilityAttribute);
 			assemblyBuilder.SetCustomAttribute(new CustomAttributeBuilder(
 				runtimeCompatibilityAttribute.GetConstructor(Type.EmptyTypes), new object[0],
 				new PropertyInfo[] { runtimeCompatibilityAttribute.GetProperty("WrapNonExceptionThrows") }, new object[] { true },
 				new FieldInfo[0], new object[0]));
 		}
-
-		internal static void SetInternalsVisibleToAttribute(AssemblyBuilder assemblyBuilder, string assemblyName)
-		{
-			Type internalsVisibleToAttribute = JVM.Import(typeof(System.Runtime.CompilerServices.InternalsVisibleToAttribute));
-			CustomAttributeBuilder cab = new CustomAttributeBuilder(
-				internalsVisibleToAttribute.GetConstructor(new Type[] { Types.String }), new object[] { assemblyName });
-			assemblyBuilder.SetCustomAttribute(cab);
-		}
 	}
 
-	static class EnumHelper
+	abstract class Annotation
 	{
-		internal static Type GetUnderlyingType(Type enumType)
+		// NOTE this method returns null if the type could not be found
+		// or if the type is not a Custom Attribute and we're not in the static compiler
+		internal static Annotation Load(ClassLoaderWrapper loader, object[] def)
 		{
-#if STATIC_COMPILER || STUB_GENERATOR
-			return enumType.GetEnumUnderlyingType();
-#else
-			return Enum.GetUnderlyingType(enumType);
+			Debug.Assert(def[0].Equals(AnnotationDefaultAttribute.TAG_ANNOTATION));
+			string annotationClass = (string)def[1];
+#if !STATIC_COMPILER
+			if(!annotationClass.EndsWith("$Annotation;")
+				&& !annotationClass.EndsWith("$Annotation$__ReturnValue;")
+				&& !annotationClass.EndsWith("$Annotation$__Multiple;"))
+			{
+				// we don't want to try to load an annotation in dynamic mode,
+				// unless it is a .NET custom attribute (which can affect runtime behavior)
+				return null;
+			}
 #endif
+			try
+			{
+				TypeWrapper annot = loader.RetTypeWrapperFromSig(annotationClass.Replace('/', '.'));
+				return annot.Annotation;
+			}
+#if STATIC_COMPILER
+			catch(ClassNotFoundException x)
+			{
+				StaticCompiler.IssueMessage(Message.ClassNotFound, x.Message);
+				return null;
+			}
+#endif
+			catch (RetargetableJavaException)
+			{
+				Tracer.Warning(Tracer.Compiler, "Unable to load annotation class {0}", annotationClass);
+				return null;
+			}
 		}
 
-#if STATIC_COMPILER
-		internal static object Parse(Type type, string value)
+		private static object LookupEnumValue(Type enumType, string value)
 		{
-			object retval = null;
-			foreach (string str in value.Split(','))
+			FieldInfo field = enumType.GetField(value, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+			if(field != null)
 			{
-				FieldInfo field = type.GetField(str.Trim(), BindingFlags.Public | BindingFlags.Static);
-				if (field == null)
-				{
-					throw new InvalidOperationException("Enum value '" + str + "' not found in " + type.FullName);
-				}
-				if (retval == null)
-				{
-					retval = field.GetRawConstantValue();
-				}
-				else
-				{
-					retval = OrBoxedIntegrals(retval, field.GetRawConstantValue());
-				}
+				return field.GetRawConstantValue();
 			}
-			return retval;
+			// both __unspecified and missing values end up here
+			return Activator.CreateInstance(Enum.GetUnderlyingType(enumType));
 		}
-#endif
 
 		// note that we only support the integer types that C# supports
 		// (the CLI also supports bool, char, IntPtr & UIntPtr)
-		internal static object OrBoxedIntegrals(object v1, object v2)
+		private static object OrBoxedIntegrals(object v1, object v2)
 		{
 			Debug.Assert(v1.GetType() == v2.GetType());
-			if (v1 is ulong)
+			if(v1 is ulong)
 			{
 				ulong l1 = (ulong)v1;
 				ulong l2 = (ulong)v2;
@@ -1220,7 +1775,7 @@ namespace IKVM.Internal
 			else
 			{
 				long v = ((IConvertible)v1).ToInt64(null) | ((IConvertible)v2).ToInt64(null);
-				switch (Type.GetTypeCode(JVM.Import(v1.GetType())))
+				switch(Type.GetTypeCode(v1.GetType()))
 				{
 					case TypeCode.SByte:
 						return (sbyte)v;
@@ -1240,227 +1795,6 @@ namespace IKVM.Internal
 						throw new InvalidOperationException();
 				}
 			}
-		}
-
-		// this method can be used to convert an enum value or its underlying value to a Java primitive
-		internal static object GetPrimitiveValue(Type underlyingType, object obj)
-		{
-			// Note that this method doesn't trust that obj is of the correct type,
-			// because it turns out there exist assemblies (e.g. gtk-sharp.dll) that
-			// have incorrectly typed enum constant values (e.g. int32 instead of uint32).
-			long value;
-			if (obj is ulong || (obj is Enum && underlyingType == Types.UInt64))
-			{
-				value = unchecked((long)((IConvertible)obj).ToUInt64(null));
-			}
-			else
-			{
-				value = ((IConvertible)obj).ToInt64(null);
-			}
-			if (underlyingType == Types.SByte || underlyingType == Types.Byte)
-			{
-				return unchecked((byte)value);
-			}
-			else if (underlyingType == Types.Int16 || underlyingType == Types.UInt16)
-			{
-				return unchecked((short)value);
-			}
-			else if (underlyingType == Types.Int32 || underlyingType == Types.UInt32)
-			{
-				return unchecked((int)value);
-			}
-			else if (underlyingType == Types.Int64 || underlyingType == Types.UInt64)
-			{
-				return value;
-			}
-			else
-			{
-				throw new InvalidOperationException();
-			}
-		}
-	}
-
-	static class TypeNameUtil
-	{
-		// note that MangleNestedTypeName() assumes that there are less than 16 special characters
-		private const string specialCharactersString = "\\+,[]*&\u0000";
-		internal const string ProxiesContainer = "__<Proxies>";
-
-		internal static string ReplaceIllegalCharacters(string name)
-		{
-			// only the NUL character is illegal in CLR type names, so we replace it with a space
-			return name.Replace('\u0000', ' ');
-		}
-
-		internal static string Unescape(string name)
-		{
-			int pos = name.IndexOf('\\');
-			if (pos == -1)
-			{
-				return name;
-			}
-			System.Text.StringBuilder sb = new System.Text.StringBuilder(name.Length);
-			sb.Append(name, 0, pos);
-			for (int i = pos; i < name.Length; i++)
-			{
-				char c = name[i];
-				if (c == '\\')
-				{
-					c = name[++i];
-				}
-				sb.Append(c);
-			}
-			return sb.ToString();
-		}
-
-		internal static string MangleNestedTypeName(string name)
-		{
-			System.Text.StringBuilder sb = new System.Text.StringBuilder();
-			foreach (char c in name)
-			{
-				int index = specialCharactersString.IndexOf(c);
-				if (c == '.')
-				{
-					sb.Append("_");
-				}
-				else if (c == '_')
-				{
-					sb.Append("^-");
-				}
-				else if (index == -1)
-				{
-					sb.Append(c);
-					if (c == '^')
-					{
-						sb.Append(c);
-					}
-				}
-				else
-				{
-					sb.Append('^').AppendFormat("{0:X1}", index);
-				}
-			}
-			return sb.ToString();
-		}
-
-		internal static string UnmangleNestedTypeName(string name)
-		{
-			System.Text.StringBuilder sb = new System.Text.StringBuilder();
-			for (int i = 0; i < name.Length; i++)
-			{
-				char c = name[i];
-				int index = specialCharactersString.IndexOf(c);
-				if (c == '_')
-				{
-					sb.Append('.');
-				}
-				else if (c == '^')
-				{
-					c = name[++i];
-					if (c == '-')
-					{
-						sb.Append('_');
-					}
-					else if (c == '^')
-					{
-						sb.Append('^');
-					}
-					else
-					{
-						sb.Append(specialCharactersString[c - '0']);
-					}
-				}
-				else
-				{
-					sb.Append(c);
-				}
-			}
-			return sb.ToString();
-		}
-
-		internal static string GetProxyNestedName(TypeWrapper[] interfaces)
-		{
-			System.Text.StringBuilder sb = new System.Text.StringBuilder();
-			foreach (TypeWrapper tw in interfaces)
-			{
-				sb.Append(tw.Name.Length).Append('|').Append(tw.Name);
-			}
-			return TypeNameUtil.MangleNestedTypeName(sb.ToString());
-		}
-
-		internal static string GetProxyName(TypeWrapper[] interfaces)
-		{
-			return ProxiesContainer + "+" + GetProxyNestedName(interfaces);
-		}
-	}
-
-	static class ArrayUtil
-	{
-		internal static T[] Concat<T, X>(X obj, T[] arr)
-			where X : T
-		{
-			T[] narr = new T[arr.Length + 1];
-			narr[0] = obj;
-			Array.Copy(arr, 0, narr, 1, arr.Length);
-			return narr;
-		}
-
-		internal static T[] Concat<T, X>(T[] arr, X obj)
-			where X : T
-		{
-			Array.Resize(ref arr, arr.Length + 1);
-			arr[arr.Length - 1] = obj;
-			return arr;
-		}
-	}
-
-	abstract class Annotation
-	{
-#if !STUB_GENERATOR
-		// NOTE this method returns null if the type could not be found
-		// or if the type is not a Custom Attribute and we're not in the static compiler
-		internal static Annotation Load(ClassLoaderWrapper loader, object[] def)
-		{
-			Debug.Assert(def[0].Equals(AnnotationDefaultAttribute.TAG_ANNOTATION));
-			string annotationClass = (string)def[1];
-#if !STATIC_COMPILER
-			if(!annotationClass.EndsWith("$Annotation;")
-				&& !annotationClass.EndsWith("$Annotation$__ReturnValue;")
-				&& !annotationClass.EndsWith("$Annotation$__Multiple;"))
-			{
-				// we don't want to try to load an annotation in dynamic mode,
-				// unless it is a .NET custom attribute (which can affect runtime behavior)
-				return null;
-			}
-#endif
-			if (ClassFile.IsValidFieldSig(annotationClass))
-			{
-				try
-				{
-					return loader.RetTypeWrapperFromSig(annotationClass.Replace('/', '.')).Annotation;
-				}
-				catch (RetargetableJavaException)
-				{
-				}
-			}
-			Tracer.Warning(Tracer.Compiler, "Unable to load annotation class {0}", annotationClass);
-#if STATIC_COMPILER
-			return new CompiledTypeWrapper.CompiledAnnotation(StaticCompiler.GetRuntimeType("IKVM.Attributes.DynamicAnnotationAttribute"));
-#else
-			return null;
-#endif
-		}
-#endif
-
-		private static object LookupEnumValue(Type enumType, string value)
-		{
-			FieldInfo field = enumType.GetField(value, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-			if(field != null)
-			{
-				return field.GetRawConstantValue();
-			}
-			// both __unspecified and missing values end up here
-			return EnumHelper.GetPrimitiveValue(EnumHelper.GetUnderlyingType(enumType), 0);
 		}
 
 		protected static object ConvertValue(ClassLoaderWrapper loader, Type targetType, object obj)
@@ -1483,7 +1817,7 @@ namespace IKVM.Internal
 						}
 						else
 						{
-							value = EnumHelper.OrBoxedIntegrals(value, newval);
+							value = OrBoxedIntegrals(value, newval);
 						}
 					}
 					return value;
@@ -1498,7 +1832,7 @@ namespace IKVM.Internal
 					return LookupEnumValue(targetType, s);
 				}
 			}
-			else if(targetType == Types.Type)
+			else if(targetType == typeof(Type))
 			{
 				// TODO check the obj descriptor matches the type we expect
 				return loader.FieldTypeWrapperFromSig(((string)((object[])obj)[1]).Replace('/', '.')).TypeAsTBD;
@@ -1521,13 +1855,11 @@ namespace IKVM.Internal
 			}
 		}
 
-#if !STATIC_COMPILER && !STUB_GENERATOR
 		internal static bool MakeDeclSecurity(Type type, object annotation, out SecurityAction action, out PermissionSet permSet)
 		{
 			ConstructorInfo ci = type.GetConstructor(new Type[] { typeof(SecurityAction) });
 			if (ci == null)
 			{
-				// TODO should we support HostProtectionAttribute? (which has a no-arg constructor)
 				// TODO issue message?
 				action = 0;
 				permSet = null;
@@ -1564,7 +1896,6 @@ namespace IKVM.Internal
 			permSet.AddPermission(attr.CreatePermission());
 			return true;
 		}
-#endif // !STATIC_COMPILER && !STUB_GENERATOR
 
 		internal static bool HasRetentionPolicyRuntime(object[] annotations)
 		{
@@ -1589,21 +1920,6 @@ namespace IKVM.Internal
 								}
 							}
 						}
-					}
-				}
-			}
-			return false;
-		}
-
-		internal static bool HasObsoleteAttribute(object[] annotations)
-		{
-			if (annotations != null)
-			{
-				foreach (object[] def in annotations)
-				{
-					if (def[1].Equals("Lcli/System/ObsoleteAttribute$Annotation;"))
-					{
-						return true;
 					}
 				}
 			}
@@ -1689,10 +2005,6 @@ namespace IKVM.Internal
 				}
 				return val;
 			}
-			else if(val[0].Equals(AnnotationDefaultAttribute.TAG_ERROR))
-			{
-				return val;
-			}
 			else
 			{
 				throw new InvalidOperationException();
@@ -1701,6 +2013,7 @@ namespace IKVM.Internal
 
 		internal abstract void Apply(ClassLoaderWrapper loader, TypeBuilder tb, object annotation);
 		internal abstract void Apply(ClassLoaderWrapper loader, MethodBuilder mb, object annotation);
+		internal abstract void Apply(ClassLoaderWrapper loader, ConstructorBuilder cb, object annotation);
 		internal abstract void Apply(ClassLoaderWrapper loader, FieldBuilder fb, object annotation);
 		internal abstract void Apply(ClassLoaderWrapper loader, ParameterBuilder pb, object annotation);
 		internal abstract void Apply(ClassLoaderWrapper loader, AssemblyBuilder ab, object annotation);
@@ -1709,14 +2022,11 @@ namespace IKVM.Internal
 		internal virtual void ApplyReturnValue(ClassLoaderWrapper loader, MethodBuilder mb, ref ParameterBuilder pb, object annotation)
 		{
 		}
-
-		internal abstract bool IsCustomAttribute { get; }
 	}
 
 	[Flags]
 	enum TypeFlags : ushort
 	{
-		None = 0,
 		HasIncompleteInterfaceImplementation = 1,
 		InternalAccess = 2,
 		HasStaticInitializer = 4,
@@ -1725,43 +2035,32 @@ namespace IKVM.Internal
 		HasUnsupportedAbstractMethods = 32,
 	}
 
-	static class NamePrefix
-	{
-		internal const string Type2AccessStubBackingField = "__<>";
-		internal const string AccessStub = "<accessstub>";
-		internal const string NonVirtual = "<nonvirtual>";
-		internal const string Bridge = "<bridge>";
-		internal const string Incomplete = "<incomplete>";
-		internal const string DefaultMethod = "<default>";
-	}
-
 	internal abstract class TypeWrapper
 	{
-		private static readonly object flagsLock = new object();
 		private readonly string name;		// java name (e.g. java.lang.Object)
 		private readonly Modifiers modifiers;
 		private TypeFlags flags;
 		private MethodWrapper[] methods;
 		private FieldWrapper[] fields;
-#if !STATIC_COMPILER && !STUB_GENERATOR
-		private java.lang.Class classObject;
+		private readonly TypeWrapper baseWrapper;
+#if !STATIC_COMPILER
+		private object classObject;
 #endif
 		internal static readonly TypeWrapper[] EmptyArray = new TypeWrapper[0];
 		internal const Modifiers UnloadableModifiersHack = Modifiers.Final | Modifiers.Interface | Modifiers.Private;
 		internal const Modifiers VerifierTypeModifiersHack = Modifiers.Final | Modifiers.Interface;
 
-		internal TypeWrapper(TypeFlags flags, Modifiers modifiers, string name)
+		internal TypeWrapper(Modifiers modifiers, string name, TypeWrapper baseWrapper)
 		{
 			Profiler.Count("TypeWrapper");
 			// class name should be dotted or null for primitives
 			Debug.Assert(name == null || name.IndexOf('/') < 0);
 
-			this.flags = flags;
 			this.modifiers = modifiers;
 			this.name = name == null ? null : String.Intern(name);
+			this.baseWrapper = baseWrapper;
 		}
 
-#if EMITTERS
 		internal void EmitClassLiteral(CodeEmitter ilgen)
 		{
 			Debug.Assert(!this.IsPrimitive);
@@ -1771,30 +2070,14 @@ namespace IKVM.Internal
 			// note that this has to be the same check as in LazyInitClass
 			if (!this.IsFastClassLiteralSafe || IsForbiddenTypeParameterType(type))
 			{
-				int rank = 0;
-				while (ReflectUtil.IsVector(type))
-				{
-					rank++;
-					type = type.GetElementType();
-				}
-				if (rank == 0)
-				{
-					ilgen.Emit(OpCodes.Ldtoken, type);
-					Compiler.getClassFromTypeHandle.EmitCall(ilgen);
-				}
-				else
-				{
-					ilgen.Emit(OpCodes.Ldtoken, type);
-					ilgen.EmitLdc_I4(rank);
-					Compiler.getClassFromTypeHandle2.EmitCall(ilgen);
-				}
+				ilgen.Emit(OpCodes.Ldtoken, type);
+				Compiler.getClassFromTypeHandle.EmitCall(ilgen);
 			}
 			else
 			{
 				ilgen.Emit(OpCodes.Ldsfld, RuntimeHelperTypes.GetClassLiteralField(type));
 			}
 		}
-#endif // EMITTERS
 
 		private Type GetClassLiteralType()
 		{
@@ -1819,10 +2102,10 @@ namespace IKVM.Internal
 		private static bool IsForbiddenTypeParameterType(Type type)
 		{
 			// these are the types that may not be used as a type argument when instantiating a generic type
-			return type == Types.Void
-				|| type == JVM.Import(typeof(ArgIterator))
-				|| type == JVM.Import(typeof(RuntimeArgumentHandle))
-				|| type == JVM.Import(typeof(TypedReference))
+			return type == typeof(void)
+				|| type == typeof(ArgIterator)
+				|| type == typeof(RuntimeArgumentHandle)
+				|| type == typeof(TypedReference)
 				|| type.ContainsGenericParameters
 				|| type.IsByRef;
 		}
@@ -1832,13 +2115,13 @@ namespace IKVM.Internal
 			get { return false; }
 		}
 
-#if !STATIC_COMPILER && !STUB_GENERATOR
-		internal void SetClassObject(java.lang.Class classObject)
+#if !STATIC_COMPILER
+		internal void SetClassObject(object classObject)
 		{
 			this.classObject = classObject;
 		}
 
-		internal java.lang.Class ClassObject
+		internal object ClassObject
 		{
 			get
 			{
@@ -1849,6 +2132,28 @@ namespace IKVM.Internal
 				}
 				return classObject;
 			}
+		}
+
+		private static bool IsReflectionOnly(Type type)
+		{
+			Assembly asm = type.Assembly;
+			if (asm.ReflectionOnly)
+			{
+				return true;
+			}
+			if (!type.IsGenericType || type.IsGenericTypeDefinition)
+			{
+				return false;
+			}
+			// we have a generic type instantiation, it might have ReflectionOnly type arguments
+			foreach (Type arg in type.GetGenericArguments())
+			{
+				if (IsReflectionOnly(arg))
+				{
+					return true;
+				}
+			}
+			return false;
 		}
 
 #if !FIRST_PASS
@@ -1904,7 +2209,7 @@ namespace IKVM.Internal
 				if (classObject == null)
 				{
 					// DynamicTypeWrapper should haved already had SetClassObject explicitly
-					Debug.Assert(!IsDynamic);
+					Debug.Assert(!(this is DynamicTypeWrapper));
 #if !FIRST_PASS
 					java.lang.Class clazz;
 					// note that this has to be the same check as in EmitClassLiteral
@@ -1922,7 +2227,7 @@ namespace IKVM.Internal
 					else
 					{
 						Type type = GetClassLiteralType();
-						if (IsForbiddenTypeParameterType(type))
+						if (IsForbiddenTypeParameterType(type) || IsReflectionOnly(type))
 						{
 							clazz = new java.lang.Class(type);
 						}
@@ -1932,7 +2237,7 @@ namespace IKVM.Internal
 						}
 					}
 #if __MonoCS__
-					SetTypeWrapperHack(clazz, this);
+					SetTypeWrapperHack(ref clazz.typeWrapper, this);
 #else
 					clazz.typeWrapper = this;
 #endif
@@ -1945,11 +2250,9 @@ namespace IKVM.Internal
 
 #if __MonoCS__
 		// MONOBUG this method is to work around an mcs bug
-		internal static void SetTypeWrapperHack(object clazz, TypeWrapper type)
+		internal static void SetTypeWrapperHack<T>(ref T field, TypeWrapper type)
 		{
-#if !FIRST_PASS
-			typeof(java.lang.Class).GetField("typeWrapper", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(clazz, type);
-#endif
+			field = (T)(object)type;
 		}
 #endif
 
@@ -1973,11 +2276,12 @@ namespace IKVM.Internal
 		}
 #endif
 
-		internal static TypeWrapper FromClass(java.lang.Class clazz)
+		internal static TypeWrapper FromClass(object classObject)
 		{
 #if FIRST_PASS
 			return null;
 #else
+			java.lang.Class clazz = (java.lang.Class)classObject;
 			// MONOBUG redundant cast to workaround mcs bug
 			TypeWrapper tw = (TypeWrapper)(object)clazz.typeWrapper;
 			if(tw == null)
@@ -1986,7 +2290,7 @@ namespace IKVM.Internal
 				if (type == null)
 				{
 					ResolvePrimitiveTypeWrapperClasses();
-					return FromClass(clazz);
+					return FromClass(classObject);
 				}
 				if (type == typeof(void) || type.IsPrimitive || ClassLoaderWrapper.IsRemappedType(type))
 				{
@@ -1997,7 +2301,7 @@ namespace IKVM.Internal
 					tw = ClassLoaderWrapper.GetWrapperFromType(type);
 				}
 #if __MonoCS__
-				SetTypeWrapperHack(clazz, tw);
+				SetTypeWrapperHack(ref clazz.typeWrapper, tw);
 #else
 				clazz.typeWrapper = tw;
 #endif
@@ -2005,7 +2309,7 @@ namespace IKVM.Internal
 			return tw;
 #endif
 		}
-#endif // !STATIC_COMPILER && !STUB_GENERATOR
+#endif // !STATIC_COMPILER
 
 		public override string ToString()
 		{
@@ -2020,27 +2324,24 @@ namespace IKVM.Internal
 			return this;
 		}
 
-		private void SetTypeFlag(TypeFlags flag)
-		{
-			// we use a global lock object, since the chance of contention is very small
-			lock (flagsLock)
-			{
-				flags |= flag;
-			}
-		}
-
 		internal bool HasIncompleteInterfaceImplementation
 		{
 			get
 			{
-				TypeWrapper baseWrapper = this.BaseTypeWrapper;
 				return (flags & TypeFlags.HasIncompleteInterfaceImplementation) != 0 || (baseWrapper != null && baseWrapper.HasIncompleteInterfaceImplementation);
 			}
-		}
-
-		internal void SetHasIncompleteInterfaceImplementation()
-		{
-			SetTypeFlag(TypeFlags.HasIncompleteInterfaceImplementation);
+			set
+			{
+				// TODO do we need locking here?
+				if(value)
+				{
+					flags |= TypeFlags.HasIncompleteInterfaceImplementation;
+				}
+				else
+				{
+					flags &= ~TypeFlags.HasIncompleteInterfaceImplementation;
+				}
+			}
 		}
 
 		internal bool HasUnsupportedAbstractMethods
@@ -2054,14 +2355,20 @@ namespace IKVM.Internal
 						return true;
 					}
 				}
-				TypeWrapper baseWrapper = this.BaseTypeWrapper;
 				return (flags & TypeFlags.HasUnsupportedAbstractMethods) != 0 || (baseWrapper != null && baseWrapper.HasUnsupportedAbstractMethods);
 			}
-		}
-
-		internal void SetHasUnsupportedAbstractMethods()
-		{
-			SetTypeFlag(TypeFlags.HasUnsupportedAbstractMethods);
+			set
+			{
+				// TODO do we need locking here?
+				if(value)
+				{
+					flags |= TypeFlags.HasUnsupportedAbstractMethods;
+				}
+				else
+				{
+					flags &= ~TypeFlags.HasUnsupportedAbstractMethods;
+				}
+			}
 		}
 
 		internal virtual bool HasStaticInitializer
@@ -2070,11 +2377,18 @@ namespace IKVM.Internal
 			{
 				return (flags & TypeFlags.HasStaticInitializer) != 0;
 			}
-		}
-
-		internal void SetHasStaticInitializer()
-		{
-			SetTypeFlag(TypeFlags.HasStaticInitializer);
+			set
+			{
+				// TODO do we need locking here?
+				if(value)
+				{
+					flags |= TypeFlags.HasStaticInitializer;
+				}
+				else
+				{
+					flags &= ~TypeFlags.HasStaticInitializer;
+				}
+			}
 		}
 
 		internal bool HasVerifyError
@@ -2083,11 +2397,18 @@ namespace IKVM.Internal
 			{
 				return (flags & TypeFlags.VerifyError) != 0;
 			}
-		}
-
-		internal void SetHasVerifyError()
-		{
-			SetTypeFlag(TypeFlags.VerifyError);
+			set
+			{
+				// TODO do we need locking here?
+				if(value)
+				{
+					flags |= TypeFlags.VerifyError;
+				}
+				else
+				{
+					flags &= ~TypeFlags.VerifyError;
+				}
+			}
 		}
 
 		internal bool HasClassFormatError
@@ -2096,11 +2417,18 @@ namespace IKVM.Internal
 			{
 				return (flags & TypeFlags.ClassFormatError) != 0;
 			}
-		}
-
-		internal void SetHasClassFormatError()
-		{
-			SetTypeFlag(TypeFlags.ClassFormatError);
+			set
+			{
+				// TODO do we need locking here?
+				if(value)
+				{
+					flags |= TypeFlags.ClassFormatError;
+				}
+				else
+				{
+					flags &= ~TypeFlags.ClassFormatError;
+				}
+			}
 		}
 
 		internal virtual bool IsFakeTypeContainer
@@ -2111,11 +2439,12 @@ namespace IKVM.Internal
 			}
 		}
 
-		internal virtual bool IsFakeNestedType
+		internal bool IsFakeNestedType
 		{
 			get
 			{
-				return false;
+				TypeWrapper outer = this.DeclaringTypeWrapper;
+				return outer != null && outer.IsFakeTypeContainer;
 			}
 		}
 
@@ -2178,11 +2507,6 @@ namespace IKVM.Internal
 				}
 				return i;
 			}
-		}
-
-		internal virtual TypeWrapper GetUltimateElementTypeWrapper()
-		{
-			throw new InvalidOperationException();
 		}
 
 		internal bool IsNonPrimitiveValueType
@@ -2302,6 +2626,18 @@ namespace IKVM.Internal
 			{
 				return (flags & TypeFlags.InternalAccess) != 0;
 			}
+			set
+			{
+				// TODO do we need locking here?
+				if(value)
+				{
+					flags |= TypeFlags.InternalAccess;
+				}
+				else
+				{
+					flags &= ~TypeFlags.InternalAccess;
+				}
+			}
 		}
 
 		internal bool IsPublic
@@ -2359,7 +2695,14 @@ namespace IKVM.Internal
 
 		internal FieldWrapper GetFieldWrapper(string fieldName, string fieldSig)
 		{
-			foreach(FieldWrapper fw in GetFields())
+			lock(this)
+			{
+				if(fields == null)
+				{
+					LazyPublishMembers();
+				}
+			}
+			foreach(FieldWrapper fw in fields)
 			{
 				if(fw.Name == fieldName && fw.Signature == fieldSig)
 				{
@@ -2374,7 +2717,6 @@ namespace IKVM.Internal
 					return fw;
 				}
 			}
-			TypeWrapper baseWrapper = this.BaseTypeWrapper;
 			if(baseWrapper != null)
 			{
 				return baseWrapper.GetFieldWrapper(fieldName, fieldSig);
@@ -2394,32 +2736,13 @@ namespace IKVM.Internal
 			}
 		}
 
-		protected virtual void LazyPublishMethods()
-		{
-			LazyPublishMembers();
-		}
-
-		protected virtual void LazyPublishFields()
-		{
-			LazyPublishMembers();
-		}
-
 		internal MethodWrapper[] GetMethods()
 		{
-			if(methods == null)
+			lock(this)
 			{
-				lock(this)
+				if(methods == null)
 				{
-					if(methods == null)
-					{
-#if STATIC_COMPILER
-						if(IsUnloadable || !CheckMissingBaseTypes(TypeAsBaseType))
-						{
-							return methods = MethodWrapper.EmptyArray;
-						}
-#endif
-						LazyPublishMethods();
-					}
+					LazyPublishMembers();
 				}
 			}
 			return methods;
@@ -2427,54 +2750,25 @@ namespace IKVM.Internal
 
 		internal FieldWrapper[] GetFields()
 		{
-			if(fields == null)
+			lock(this)
 			{
-				lock(this)
+				if(fields == null)
 				{
-					if(fields == null)
-					{
-#if STATIC_COMPILER
-						if(IsUnloadable || !CheckMissingBaseTypes(TypeAsBaseType))
-						{
-							return fields = FieldWrapper.EmptyArray;
-						}
-#endif
-						LazyPublishFields();
-					}
+					LazyPublishMembers();
 				}
 			}
 			return fields;
 		}
 
-#if STATIC_COMPILER
-		private static bool CheckMissingBaseTypes(Type type)
-		{
-			while (type != null)
-			{
-				if (type.__ContainsMissingType)
-				{
-					StaticCompiler.IssueMissingTypeMessage(type);
-					return false;
-				}
-				bool ok = true;
-				foreach (Type iface in type.__GetDeclaredInterfaces())
-				{
-					ok &= CheckMissingBaseTypes(iface);
-				}
-				if (!ok)
-				{
-					return false;
-				}
-				type = type.BaseType;
-			}
-			return true;
-		}
-#endif
-
 		internal MethodWrapper GetMethodWrapper(string name, string sig, bool inherit)
 		{
-			// We need to get the methods before calling String.IsInterned, because getting them might cause the strings to be interned
-			MethodWrapper[] methods = GetMethods();
+			lock(this)
+			{
+				if(methods == null)
+				{
+					LazyPublishMembers();
+				}
+			}
 			// MemberWrapper interns the name and sig so we can use ref equality
 			// profiling has shown this to be more efficient
 			string _name = String.IsInterned(name);
@@ -2488,7 +2782,6 @@ namespace IKVM.Internal
 					return mw;
 				}
 			}
-			TypeWrapper baseWrapper = this.BaseTypeWrapper;
 			if(inherit && baseWrapper != null)
 			{
 				return baseWrapper.GetMethodWrapper(name, sig, inherit);
@@ -2499,14 +2792,12 @@ namespace IKVM.Internal
 		internal void SetMethods(MethodWrapper[] methods)
 		{
 			Debug.Assert(methods != null);
-			System.Threading.Thread.MemoryBarrier();
 			this.methods = methods;
 		}
 
 		internal void SetFields(FieldWrapper[] fields)
 		{
 			Debug.Assert(fields != null);
-			System.Threading.Thread.MemoryBarrier();
 			this.fields = fields;
 		}
 
@@ -2540,25 +2831,9 @@ namespace IKVM.Internal
 			return GetClassLoader().InternalsVisibleToImpl(this, wrapper);
 		}
 
-		internal virtual bool IsPackageAccessibleFrom(TypeWrapper wrapper)
+		internal bool IsPackageAccessibleFrom(TypeWrapper wrapper)
 		{
-			if (MatchingPackageNames(name, wrapper.name))
-			{
-#if STATIC_COMPILER
-				CompilerClassLoader ccl = GetClassLoader() as CompilerClassLoader;
-				if (ccl != null)
-				{
-					// this is a hack for multi target -sharedclassloader compilation
-					// (during compilation we have multiple CompilerClassLoader instances to represent the single shared runtime class loader)
-					return ccl.IsEquivalentTo(wrapper.GetClassLoader());
-				}
-#endif
-				return GetClassLoader() == wrapper.GetClassLoader();
-			}
-			else
-			{
-				return false;
-			}
+			return MatchingPackageNames(name, wrapper.name) && InternalsVisibleTo(wrapper);
 		}
 
 		private static bool MatchingPackageNames(string name1, string name2)
@@ -2602,27 +2877,29 @@ namespace IKVM.Internal
 			get;
 		}
 
+		internal virtual TypeBuilder TypeAsBuilder
+		{
+			get
+			{
+				TypeBuilder typeBuilder = TypeAsTBD as TypeBuilder;
+				Debug.Assert(typeBuilder != null);
+				return typeBuilder;
+			}
+		}
+
 		internal Type TypeAsSignatureType
 		{
 			get
 			{
 				if(IsUnloadable)
 				{
-					return ((UnloadableTypeWrapper)this).MissingType ?? Types.Object;
+					return typeof(object);
 				}
 				if(IsGhostArray)
 				{
-					return ArrayTypeWrapper.MakeArrayType(Types.Object, ArrayRank);
+					return ArrayTypeWrapper.MakeArrayType(typeof(object), ArrayRank);
 				}
 				return TypeAsTBD;
-			}
-		}
-
-		internal Type TypeAsPublicSignatureType
-		{
-			get
-			{
-				return (IsPublic ? this : GetPublicBaseTypeWrapper()).TypeAsSignatureType;
 			}
 		}
 
@@ -2640,7 +2917,7 @@ namespace IKVM.Internal
 			{
 				if(IsUnloadable || IsGhost)
 				{
-					return Types.Object;
+					return typeof(object);
 				}
 				if(IsNonPrimitiveValueType)
 				{
@@ -2649,7 +2926,7 @@ namespace IKVM.Internal
 				}
 				if(IsGhostArray)
 				{
-					return ArrayTypeWrapper.MakeArrayType(Types.Object, ArrayRank);
+					return ArrayTypeWrapper.MakeArrayType(typeof(object), ArrayRank);
 				}
 				return TypeAsTBD;
 			}
@@ -2662,11 +2939,11 @@ namespace IKVM.Internal
 			{
 				if(IsUnloadable || IsGhost)
 				{
-					return Types.Object;
+					return typeof(object);
 				}
 				if(IsGhostArray)
 				{
-					return ArrayTypeWrapper.MakeArrayType(Types.Object, ArrayRank);
+					return ArrayTypeWrapper.MakeArrayType(typeof(object), ArrayRank);
 				}
 				return TypeAsTBD;
 			}
@@ -2678,15 +2955,18 @@ namespace IKVM.Internal
 			{
 				if(IsUnloadable)
 				{
-					return Types.Exception;
+					return typeof(Exception);
 				}
 				return TypeAsTBD;
 			}
 		}
 
-		internal abstract TypeWrapper BaseTypeWrapper
+		internal TypeWrapper BaseTypeWrapper
 		{
-			get;
+			get
+			{
+				return baseWrapper;
+			}
 		}
 
 		internal TypeWrapper ElementTypeWrapper
@@ -2830,16 +3110,12 @@ namespace IKVM.Internal
 					rank1--;
 					rank2--;
 				}
-				if(elem1.IsPrimitive || elem2.IsPrimitive)
-				{
-					return false;
-				}
 				return (!elem1.IsNonPrimitiveValueType && elem1.IsSubTypeOf(elem2)) || (rank1 == rank2 && elem2.IsGhost && elem1 == CoreClasses.java.lang.Object.Wrapper);
 			}
 			return this.IsSubTypeOf(wrapper);
 		}
 
-#if !STATIC_COMPILER && !STUB_GENERATOR
+#if !STATIC_COMPILER
 		internal bool IsInstance(object obj)
 		{
 			if(obj != null)
@@ -2871,7 +3147,6 @@ namespace IKVM.Internal
 
 		internal abstract void Finish();
 
-#if !STATIC_COMPILER
 		[Conditional("DEBUG")]
 		internal static void AssertFinished(Type type)
 		{
@@ -2884,9 +3159,7 @@ namespace IKVM.Internal
 				Debug.Assert(!(type is TypeBuilder));
 			}
 		}
-#endif
 
-#if !STATIC_COMPILER && !STUB_GENERATOR
 		internal void RunClassInit()
 		{
 			Type t = IsRemapped ? TypeAsBaseType : TypeAsTBD;
@@ -2895,21 +3168,19 @@ namespace IKVM.Internal
 				System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(t.TypeHandle);
 			}
 		}
-#endif
 
-#if EMITTERS
 		internal void EmitUnbox(CodeEmitter ilgen)
 		{
 			Debug.Assert(this.IsNonPrimitiveValueType);
 
-			ilgen.EmitUnboxSpecial(this.TypeAsTBD);
+			ilgen.LazyEmitUnboxSpecial(this.TypeAsTBD);
 		}
 
 		internal void EmitBox(CodeEmitter ilgen)
 		{
 			Debug.Assert(this.IsNonPrimitiveValueType);
 
-			ilgen.Emit(OpCodes.Box, this.TypeAsTBD);
+			ilgen.LazyEmitBox(this.TypeAsTBD);
 		}
 
 		internal void EmitConvSignatureTypeToStackType(CodeEmitter ilgen)
@@ -2927,7 +3198,7 @@ namespace IKVM.Internal
 			}
 			else if(IsGhost)
 			{
-				CodeEmitterLocal local = ilgen.DeclareLocal(TypeAsSignatureType);
+				LocalBuilder local = ilgen.DeclareLocal(TypeAsSignatureType);
 				ilgen.Emit(OpCodes.Stloc, local);
 				ilgen.Emit(OpCodes.Ldloca, local);
 				ilgen.Emit(OpCodes.Ldfld, GhostRefField);
@@ -2942,9 +3213,9 @@ namespace IKVM.Internal
 			{
 				if(IsGhost)
 				{
-					CodeEmitterLocal local1 = ilgen.DeclareLocal(TypeAsLocalOrStackType);
+					LocalBuilder local1 = ilgen.DeclareLocal(TypeAsLocalOrStackType);
 					ilgen.Emit(OpCodes.Stloc, local1);
-					CodeEmitterLocal local2 = ilgen.DeclareLocal(TypeAsSignatureType);
+					LocalBuilder local2 = ilgen.DeclareLocal(TypeAsSignatureType);
 					ilgen.Emit(OpCodes.Ldloca, local2);
 					ilgen.Emit(OpCodes.Ldloc, local1);
 					ilgen.Emit(OpCodes.Stfld, GhostRefField);
@@ -2969,7 +3240,7 @@ namespace IKVM.Internal
 			}
 		}
 
-		internal virtual void EmitCheckcast(CodeEmitter ilgen)
+		internal virtual void EmitCheckcast(TypeWrapper context, CodeEmitter ilgen)
 		{
 			if(IsGhost)
 			{
@@ -2993,9 +3264,9 @@ namespace IKVM.Internal
 					rank++;
 					tw = tw.ElementTypeWrapper;
 				}
-				ilgen.EmitLdc_I4(rank);
+				ilgen.Emit(OpCodes.Ldc_I4, rank);
 				ilgen.Emit(OpCodes.Call, tw.TypeAsTBD.GetMethod("CastArray"));
-				ilgen.Emit(OpCodes.Castclass, ArrayTypeWrapper.MakeArrayType(Types.Object, rank));
+				ilgen.Emit(OpCodes.Castclass, ArrayTypeWrapper.MakeArrayType(typeof(object), rank));
 			}
 			else
 			{
@@ -3003,7 +3274,7 @@ namespace IKVM.Internal
 			}
 		}
 
-		internal virtual void EmitInstanceOf(CodeEmitter ilgen)
+		internal virtual void EmitInstanceOf(TypeWrapper context, CodeEmitter ilgen)
 		{
 			if(IsGhost)
 			{
@@ -3024,15 +3295,14 @@ namespace IKVM.Internal
 					rank++;
 					tw = tw.ElementTypeWrapper;
 				}
-				ilgen.EmitLdc_I4(rank);
+				ilgen.Emit(OpCodes.Ldc_I4, rank);
 				ilgen.Emit(OpCodes.Call, tw.TypeAsTBD.GetMethod("IsInstanceArray"));
 			}
 			else
 			{
-				ilgen.Emit_instanceof(TypeAsTBD);
+				ilgen.LazyEmit_instanceof(TypeAsTBD);
 			}
 		}
-#endif // EMITTERS
 
 		// NOTE don't call this method, call MethodWrapper.Link instead
 		internal virtual MethodBase LinkMethod(MethodWrapper mw)
@@ -3046,11 +3316,9 @@ namespace IKVM.Internal
 			return fw.GetField();
 		}
 
-#if EMITTERS
 		internal virtual void EmitRunClassConstructor(CodeEmitter ilgen)
 		{
 		}
-#endif // EMITTERS
 
 		internal virtual string GetGenericSignature()
 		{
@@ -3067,7 +3335,6 @@ namespace IKVM.Internal
 			return null;
 		}
 
-#if !STATIC_COMPILER && !STUB_GENERATOR
 		internal virtual string[] GetEnclosingMethod()
 		{
 			return null;
@@ -3103,11 +3370,17 @@ namespace IKVM.Internal
 			return -1;
 		}
 
+#if !STATIC_COMPILER
 		internal virtual object GetAnnotationDefault(MethodWrapper mw)
 		{
 			MethodBase mb = mw.GetMethod();
 			if(mb != null)
 			{
+				if(mb.DeclaringType.Assembly.ReflectionOnly)
+				{
+					// TODO
+					return null;
+				}
 				object[] attr = mb.GetCustomAttributes(typeof(AnnotationDefaultAttribute), false);
 				if(attr.Length == 1)
 				{
@@ -3116,7 +3389,7 @@ namespace IKVM.Internal
 			}
 			return null;
 		}
-#endif // !STATIC_COMPILER && !STUB_GENERATOR
+#endif // !STATIC_COMPILER
 
 		internal virtual Annotation Annotation
 		{
@@ -3134,149 +3407,37 @@ namespace IKVM.Internal
 			}
 		}
 
-		private static Type[] GetInterfaces(Type type)
-		{
-#if STATIC_COMPILER || STUB_GENERATOR
-			List<Type> list = new List<Type>();
-			for (; type != null && !type.__IsMissing; type = type.BaseType)
-			{
-				AddInterfaces(list, type);
-			}
-			return list.ToArray();
-#else
-			return type.GetInterfaces();
-#endif
-		}
-
-#if STATIC_COMPILER || STUB_GENERATOR
-		private static void AddInterfaces(List<Type> list, Type type)
-		{
-			foreach (Type iface in type.__GetDeclaredInterfaces())
-			{
-				if (!list.Contains(iface))
-				{
-					list.Add(iface);
-					if (!iface.__IsMissing)
-					{
-						AddInterfaces(list, iface);
-					}
-				}
-			}
-		}
-#endif
-
-		protected static TypeWrapper[] GetImplementedInterfacesAsTypeWrappers(Type type)
-		{
-			Type[] interfaceTypes = GetInterfaces(type);
-			TypeWrapper[] interfaces = new TypeWrapper[interfaceTypes.Length];
-			for (int i = 0; i < interfaceTypes.Length; i++)
-			{
-				Type decl = interfaceTypes[i].DeclaringType;
-				if (decl != null && AttributeHelper.IsGhostInterface(decl))
-				{
-					// we have to return the declaring type for ghost interfaces
-					interfaces[i] = ClassLoaderWrapper.GetWrapperFromType(decl);
-				}
-				else
-				{
-					interfaces[i] = ClassLoaderWrapper.GetWrapperFromType(interfaceTypes[i]);
-				}
-			}
-			for (int i = 0; i < interfaceTypes.Length; i++)
-			{
-				if (interfaces[i].IsRemapped)
-				{
-					// for remapped interfaces, we also return the original interface (Java types will ignore it, if it isn't listed in the ImplementsAttribute)
-					TypeWrapper twRemapped = interfaces[i];
-					TypeWrapper tw = DotNetTypeWrapper.GetWrapperFromDotNetType(interfaceTypes[i]);
-					interfaces[i] = tw;
-					if (Array.IndexOf(interfaces, twRemapped) == -1)
-					{
-						interfaces = ArrayUtil.Concat(interfaces, twRemapped);
-					}
-				}
-			}
-			return interfaces;
-		}
-
-		internal TypeWrapper GetPublicBaseTypeWrapper()
-		{
-			Debug.Assert(!this.IsPublic);
-			if (this.IsUnloadable || this.IsInterface)
-			{
-				return CoreClasses.java.lang.Object.Wrapper;
-			}
-			for (TypeWrapper tw = this; ; tw = tw.BaseTypeWrapper)
-			{
-				if (tw.IsPublic)
-				{
-					return tw;
-				}
-			}
-		}
-
-#if !STUB_GENERATOR
 		// return the constructor used for automagic .NET serialization
-		internal virtual MethodBase GetSerializationConstructor()
+		internal virtual ConstructorInfo GetSerializationConstructor()
 		{
+			Debug.Assert(!(this is DynamicTypeWrapper));
 			return this.TypeAsBaseType.GetConstructor(BindingFlags.NonPublic | BindingFlags.Instance, null, new Type[] {
-						JVM.Import(typeof(System.Runtime.Serialization.SerializationInfo)), JVM.Import(typeof(System.Runtime.Serialization.StreamingContext)) }, null);
+						typeof(System.Runtime.Serialization.SerializationInfo), typeof(System.Runtime.Serialization.StreamingContext) }, null);
 		}
 
-		internal virtual MethodBase GetBaseSerializationConstructor()
+		internal virtual ConstructorInfo GetBaseSerializationConstructor()
 		{
-			return BaseTypeWrapper.GetSerializationConstructor();
-		}
-#endif
-
-#if !STATIC_COMPILER && !STUB_GENERATOR
-		internal virtual object GhostWrap(object obj)
-		{
-			return obj;
-		}
-
-		internal virtual object GhostUnwrap(object obj)
-		{
-			return obj;
-		}
-#endif
-
-		internal bool IsDynamic
-		{
-#if STUB_GENERATOR
-			get { return false; }
-#else
-			get { return this is DynamicTypeWrapper; }
-#endif
+			return baseWrapper.GetSerializationConstructor();
 		}
 	}
 
 	sealed class UnloadableTypeWrapper : TypeWrapper
 	{
-		internal const string ContainerTypeName = "__<Unloadable>";
-		private readonly Type missingType;
-		private Type customModifier;
-
 		internal UnloadableTypeWrapper(string name)
-			: base(TypeFlags.None, TypeWrapper.UnloadableModifiersHack, name)
+			: base(TypeWrapper.UnloadableModifiersHack, name, null)
 		{
-		}
-
-		internal UnloadableTypeWrapper(Type missingType)
-			: this(missingType.FullName)	// TODO demangle and re-mangle appropriately
-		{
-			this.missingType = missingType;
-		}
-
-		internal UnloadableTypeWrapper(string name, Type customModifier)
-			: this(name)
-		{
-			this.customModifier = customModifier;
-		}
-
-		internal override TypeWrapper BaseTypeWrapper
-		{
-			get { return null; }
+#if STATIC_COMPILER
+			if(name != "<verifier>")
+			{
+				if(name.StartsWith("["))
+				{
+					int skip = 1;
+					while(name[skip++] == '[');
+					name = name.Substring(skip, name.Length - skip - 1);
+				}
+				StaticCompiler.IssueMessage(Message.ClassNotFound, name);
+			}
+#endif
 		}
 
 		internal override ClassLoaderWrapper GetClassLoader()
@@ -3349,65 +3510,41 @@ namespace IKVM.Internal
 			throw new InvalidOperationException("Finish called on UnloadableTypeWrapper: " + Name);
 		}
 
-		internal Type MissingType
+		internal override void EmitCheckcast(TypeWrapper context, CodeEmitter ilgen)
 		{
-			get { return missingType; }
+			ilgen.Emit(OpCodes.Ldtoken, context.TypeAsTBD);
+			ilgen.Emit(OpCodes.Ldstr, Name);
+			ilgen.Emit(OpCodes.Call, ByteCodeHelperMethods.DynamicCast);
 		}
 
-		internal Type CustomModifier
+		internal override void EmitInstanceOf(TypeWrapper context, CodeEmitter ilgen)
 		{
-			get { return customModifier; }
+			ilgen.Emit(OpCodes.Ldtoken, context.TypeAsTBD);
+			ilgen.Emit(OpCodes.Ldstr, Name);
+			ilgen.Emit(OpCodes.Call, ByteCodeHelperMethods.DynamicInstanceOf);
 		}
-
-		internal void SetCustomModifier(Type type)
-		{
-			this.customModifier = type;
-		}
-
-#if EMITTERS
-		internal Type GetCustomModifier(TypeWrapperFactory context)
-		{
-			// we don't need to lock, because we're only supposed to be called while holding the finish lock
-			return customModifier ?? (customModifier = context.DefineUnloadable(this.Name));
-		}
-
-		internal override void EmitCheckcast(CodeEmitter ilgen)
-		{
-			throw new InvalidOperationException("EmitCheckcast called on UnloadableTypeWrapper: " + Name);
-		}
-
-		internal override void EmitInstanceOf(CodeEmitter ilgen)
-		{
-			throw new InvalidOperationException("EmitInstanceOf called on UnloadableTypeWrapper: " + Name);
-		}
-#endif // EMITTERS
 	}
 
 	sealed class PrimitiveTypeWrapper : TypeWrapper
 	{
-		internal static readonly PrimitiveTypeWrapper BYTE = new PrimitiveTypeWrapper(Types.Byte, "B");
-		internal static readonly PrimitiveTypeWrapper CHAR = new PrimitiveTypeWrapper(Types.Char, "C");
-		internal static readonly PrimitiveTypeWrapper DOUBLE = new PrimitiveTypeWrapper(Types.Double, "D");
-		internal static readonly PrimitiveTypeWrapper FLOAT = new PrimitiveTypeWrapper(Types.Single, "F");
-		internal static readonly PrimitiveTypeWrapper INT = new PrimitiveTypeWrapper(Types.Int32, "I");
-		internal static readonly PrimitiveTypeWrapper LONG = new PrimitiveTypeWrapper(Types.Int64, "J");
-		internal static readonly PrimitiveTypeWrapper SHORT = new PrimitiveTypeWrapper(Types.Int16, "S");
-		internal static readonly PrimitiveTypeWrapper BOOLEAN = new PrimitiveTypeWrapper(Types.Boolean, "Z");
-		internal static readonly PrimitiveTypeWrapper VOID = new PrimitiveTypeWrapper(Types.Void, "V");
+		internal static readonly PrimitiveTypeWrapper BYTE = new PrimitiveTypeWrapper(typeof(byte), "B");
+		internal static readonly PrimitiveTypeWrapper CHAR = new PrimitiveTypeWrapper(typeof(char), "C");
+		internal static readonly PrimitiveTypeWrapper DOUBLE = new PrimitiveTypeWrapper(typeof(double), "D");
+		internal static readonly PrimitiveTypeWrapper FLOAT = new PrimitiveTypeWrapper(typeof(float), "F");
+		internal static readonly PrimitiveTypeWrapper INT = new PrimitiveTypeWrapper(typeof(int), "I");
+		internal static readonly PrimitiveTypeWrapper LONG = new PrimitiveTypeWrapper(typeof(long), "J");
+		internal static readonly PrimitiveTypeWrapper SHORT = new PrimitiveTypeWrapper(typeof(short), "S");
+		internal static readonly PrimitiveTypeWrapper BOOLEAN = new PrimitiveTypeWrapper(typeof(bool), "Z");
+		internal static readonly PrimitiveTypeWrapper VOID = new PrimitiveTypeWrapper(typeof(void), "V");
 
 		private readonly Type type;
 		private readonly string sigName;
 
 		private PrimitiveTypeWrapper(Type type, string sigName)
-			: base(TypeFlags.None, Modifiers.Public | Modifiers.Abstract | Modifiers.Final, null)
+			: base(Modifiers.Public | Modifiers.Abstract | Modifiers.Final, null, null)
 		{
 			this.type = type;
 			this.sigName = sigName;
-		}
-
-		internal override TypeWrapper BaseTypeWrapper
-		{
-			get { return null; }
 		}
 
 		internal static bool IsPrimitiveType(Type type)
@@ -3481,10 +3618,9 @@ namespace IKVM.Internal
 	class CompiledTypeWrapper : TypeWrapper
 	{
 		private readonly Type type;
-		private TypeWrapper baseTypeWrapper;
-		private volatile TypeWrapper[] interfaces;
+		private TypeWrapper[] interfaces;
+		private TypeWrapper[] innerclasses;
 		private MethodInfo clinitMethod;
-		private volatile bool clinitMethodSet;
 		private Modifiers reflectiveModifiers;
 
 		internal static CompiledTypeWrapper newInstance(string name, Type type)
@@ -3536,17 +3672,31 @@ namespace IKVM.Internal
 				}
 			}
 
-			protected override void LazyPublishMethods()
+			protected override void LazyPublishMembers()
 			{
-				List<MethodWrapper> list = new List<MethodWrapper>();
-				const BindingFlags bindingFlags = BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
-				foreach(ConstructorInfo ctor in type.GetConstructors(bindingFlags))
+				List<MethodWrapper> methods = new List<MethodWrapper>();
+				List<FieldWrapper> fields = new List<FieldWrapper>();
+				MemberInfo[] members = type.GetMembers(BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance);
+				foreach(MemberInfo m in members)
 				{
-					AddMethod(list, ctor);
-				}
-				foreach(MethodInfo method in type.GetMethods(bindingFlags))
-				{
-					AddMethod(list, method);
+					if(!AttributeHelper.IsHideFromJava(m))
+					{
+						MethodBase method = m as MethodBase;
+						if(method != null &&
+							(remappedType.IsSealed || !m.Name.StartsWith("instancehelper_")) &&
+							(!remappedType.IsSealed || method.IsStatic))
+						{
+							methods.Add(CreateRemappedMethodWrapper(method));
+						}
+						else
+						{
+							FieldInfo field = m as FieldInfo;
+							if(field != null)
+							{
+								fields.Add(CreateFieldWrapper(field));
+							}
+						}
+					}
 				}
 				// if we're a remapped interface, we need to get the methods from the real interface
 				if(remappedType.IsInterface)
@@ -3571,36 +3721,11 @@ namespace IKVM.Internal
 								mbHelper = method;
 							}
 						}
-						MethodWrapper mw = new CompiledRemappedMethodWrapper(this, m.Name, sig, method, retType, paramTypes, modifiers, false, mbHelper, null);
-						mw.SetDeclaredExceptions(m.Throws);
-						list.Add(mw);
+						methods.Add(new CompiledRemappedMethodWrapper(this, m.Name, sig, method, retType, paramTypes, modifiers, false, mbHelper, null));
 					}
 				}
-				SetMethods(list.ToArray());
-			}
-
-			private void AddMethod(List<MethodWrapper> list, MethodBase method)
-			{
-				if(!AttributeHelper.IsHideFromJava(method)
-					&& (remappedType.IsSealed || !method.Name.StartsWith("instancehelper_"))
-					&& (!remappedType.IsSealed || method.IsStatic))
-				{
-					list.Add(CreateRemappedMethodWrapper(method));
-				}
-			}
-
-			protected override void LazyPublishFields()
-			{
-				List<FieldWrapper> list = new List<FieldWrapper>();
-				FieldInfo[] fields = type.GetFields(BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance);
-				foreach(FieldInfo field in fields)
-				{
-					if(!AttributeHelper.IsHideFromJava(field))
-					{
-						list.Add(CreateFieldWrapper(field));
-					}
-				}
-				SetFields(list.ToArray());
+				SetMethods(methods.ToArray());
+				SetFields(fields.ToArray());
 			}
 
 			private MethodWrapper CreateRemappedMethodWrapper(MethodBase mb)
@@ -3637,8 +3762,8 @@ namespace IKVM.Internal
 
 		private sealed class CompiledGhostTypeWrapper : CompiledTypeWrapper
 		{
-			private volatile FieldInfo ghostRefField;
-			private volatile Type typeAsBaseType;
+			private FieldInfo ghostRefField;
+			private Type typeAsBaseType;
 
 			internal CompiledGhostTypeWrapper(string name, Type type)
 				: base(name, type)
@@ -3676,23 +3801,10 @@ namespace IKVM.Internal
 					return true;
 				}
 			}
-
-#if !STATIC_COMPILER && !STUB_GENERATOR && !FIRST_PASS
-			internal override object GhostWrap(object obj)
-			{
-				return type.GetMethod("Cast").Invoke(null, new object[] { obj });
-			}
-
-			internal override object GhostUnwrap(object obj)
-			{
-				return type.GetMethod("ToObject").Invoke(obj, new object[0]);
-			}
-#endif
 		}
 
 		internal static string GetName(Type type)
 		{
-			Debug.Assert(!type.HasElementType);
 			Debug.Assert(!type.IsGenericType);
 			Debug.Assert(AttributeHelper.IsJavaModule(type.Module));
 
@@ -3705,14 +3817,15 @@ namespace IKVM.Internal
 				{
 					return name;
 				}
+				if(type.DeclaringType != null)
+				{
+					return GetName(type.DeclaringType) + "$" + type.Name;
+				}
 			}
-			if(type.DeclaringType != null)
-			{
-				return GetName(type.DeclaringType) + "$" + TypeNameUtil.Unescape(type.Name);
-			}
-			return TypeNameUtil.Unescape(type.FullName);
+			return type.FullName;
 		}
 
+		// TODO consider resolving the baseType lazily
 		private static TypeWrapper GetBaseTypeWrapper(Type type)
 		{
 			if(type.IsInterface || AttributeHelper.IsGhostInterface(type))
@@ -3729,7 +3842,7 @@ namespace IKVM.Internal
 				RemappedTypeAttribute attr = AttributeHelper.GetRemappedType(type);
 				if(attr != null)
 				{
-					if(attr.Type == Types.Object)
+					if(attr.Type == typeof(object))
 					{
 						return null;
 					}
@@ -3737,11 +3850,6 @@ namespace IKVM.Internal
 					{
 						return CoreClasses.java.lang.Object.Wrapper;
 					}
-				}
-				else if(ClassLoaderWrapper.IsRemappedType(type.BaseType))
-				{
-					// if we directly extend System.Object or System.Exception, the base class must be cli.System.Object or cli.System.Exception
-					return DotNetTypeWrapper.GetWrapperFromDotNetType(type.BaseType);
 				}
 				TypeWrapper tw = null;
 				while(tw == null)
@@ -3753,23 +3861,19 @@ namespace IKVM.Internal
 			}
 		}
 
-		private CompiledTypeWrapper(ExModifiers exmod, string name)
-			: base(exmod.IsInternal ? TypeFlags.InternalAccess : TypeFlags.None, exmod.Modifiers, name)
+		private CompiledTypeWrapper(ExModifiers exmod, string name, TypeWrapper baseTypeWrapper)
+			: base(exmod.Modifiers, name, baseTypeWrapper)
 		{
+			this.IsInternal = exmod.IsInternal;
 		}
 
 		private CompiledTypeWrapper(string name, Type type)
-			: this(GetModifiers(type), name)
+			: this(GetModifiers(type), name, GetBaseTypeWrapper(type))
 		{
 			Debug.Assert(!(type is TypeBuilder));
 			Debug.Assert(!type.Name.EndsWith("[]"));
 
 			this.type = type;
-		}
-
-		internal override TypeWrapper BaseTypeWrapper
-		{
-			get { return baseTypeWrapper ?? (baseTypeWrapper = GetBaseTypeWrapper(type)); }
 		}
 
 		internal override ClassLoaderWrapper GetClassLoader()
@@ -3787,10 +3891,28 @@ namespace IKVM.Internal
 			// only returns public, protected, private, final, static, abstract and interface (as per
 			// the documentation of Class.getModifiers())
 			Modifiers modifiers = 0;
-			if(type.IsPublic || type.IsNestedPublic)
+			if(type.IsPublic)
 			{
 				modifiers |= Modifiers.Public;
 			}
+				// TODO do we really need to look for nested attributes? I think all inner classes will have the ModifiersAttribute.
+			else if(type.IsNestedPublic)
+			{
+				modifiers |= Modifiers.Public | Modifiers.Static;
+			}
+			else if(type.IsNestedPrivate)
+			{
+				modifiers |= Modifiers.Private | Modifiers.Static;
+			}
+			else if(type.IsNestedFamily || type.IsNestedFamORAssem)
+			{
+				modifiers |= Modifiers.Protected | Modifiers.Static;
+			}
+			else if(type.IsNestedAssembly || type.IsNestedFamANDAssem)
+			{
+				modifiers |= Modifiers.Static;
+			}
+
 			if(type.IsSealed)
 			{
 				modifiers |= Modifiers.Final;
@@ -3803,10 +3925,6 @@ namespace IKVM.Internal
 			{
 				modifiers |= Modifiers.Interface;
 			}
-			else
-			{
-				modifiers |= Modifiers.Super;
-			}
 			return new ExModifiers(modifiers, false);
 		}
 
@@ -3814,18 +3932,8 @@ namespace IKVM.Internal
 		{
 			get
 			{
-				if(!clinitMethodSet)
-				{
-					try
-					{
-						clinitMethod = type.GetMethod("__<clinit>", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-					}
-#if STATIC_COMPILER
-					catch (IKVM.Reflection.MissingMemberException) { }
-#endif
-					finally { }
-					clinitMethodSet = true;
-				}
+				// trigger LazyPublishMembers
+				GetMethods();
 				return clinitMethod != null;
 			}
 		}
@@ -3836,111 +3944,53 @@ namespace IKVM.Internal
 			{
 				if(interfaces == null)
 				{
-					interfaces = GetInterfaces();
+					// NOTE instead of getting the interfaces list from Type, we use a custom
+					// attribute to list the implemented interfaces, because Java reflection only
+					// reports the interfaces *directly* implemented by the type, not the inherited
+					// interfaces. This is significant for serialVersionUID calculation (for example).
+					ImplementsAttribute attr = AttributeHelper.GetImplements(type);
+					if(attr != null)
+					{
+						string[] interfaceNames = attr.Interfaces;
+						TypeWrapper[] interfaceWrappers = new TypeWrapper[interfaceNames.Length];
+						for(int i = 0; i < interfaceWrappers.Length; i++)
+						{
+							interfaceWrappers[i] = GetClassLoader().LoadClassByDottedName(interfaceNames[i]);
+						}
+						this.interfaces = interfaceWrappers;
+					}
+					else
+					{
+						interfaces = TypeWrapper.EmptyArray;
+					}
 				}
 				return interfaces;
 			}
-		}
-
-		private TypeWrapper[] GetInterfaces()
-		{
-			// NOTE instead of getting the interfaces list from Type, we use a custom
-			// attribute to list the implemented interfaces, because Java reflection only
-			// reports the interfaces *directly* implemented by the type, not the inherited
-			// interfaces. This is significant for serialVersionUID calculation (for example).
-			ImplementsAttribute attr = AttributeHelper.GetImplements(type);
-			if (attr == null)
-			{
-				if (BaseTypeWrapper == CoreClasses.java.lang.Object.Wrapper)
-				{
-					return GetImplementedInterfacesAsTypeWrappers(type);
-				}
-				return TypeWrapper.EmptyArray;
-			}
-			string[] interfaceNames = attr.Interfaces;
-			TypeWrapper[] interfaceWrappers = new TypeWrapper[interfaceNames.Length];
-			if (this.IsRemapped)
-			{
-				for (int i = 0; i < interfaceWrappers.Length; i++)
-				{
-					interfaceWrappers[i] = ClassLoaderWrapper.LoadClassCritical(interfaceNames[i]);
-				}
-			}
-			else
-			{
-				TypeWrapper[] typeWrappers = GetImplementedInterfacesAsTypeWrappers(type);
-				for (int i = 0; i < interfaceWrappers.Length; i++)
-				{
-					for (int j = 0; j < typeWrappers.Length; j++)
-					{
-						if (typeWrappers[j].Name == interfaceNames[i])
-						{
-							interfaceWrappers[i] = typeWrappers[j];
-							break;
-						}
-					}
-					if (interfaceWrappers[i] == null)
-					{
-#if STATIC_COMPILER
-						throw new FatalCompilerErrorException(Message.UnableToResolveInterface, interfaceNames[i], this);
-#else
-						JVM.CriticalFailure("Unable to resolve interface " + interfaceNames[i] + " on type " + this, null);
-#endif
-					}
-				}
-			}
-			return interfaceWrappers;
-		}
-
-		private static bool IsNestedTypeAnonymousOrLocalClass(Type type)
-		{
-			switch (type.Attributes & (TypeAttributes.SpecialName | TypeAttributes.VisibilityMask))
-			{
-				case TypeAttributes.SpecialName | TypeAttributes.NestedPublic:
-				case TypeAttributes.SpecialName | TypeAttributes.NestedAssembly:
-					return AttributeHelper.HasEnclosingMethodAttribute(type);
-				default:
-					return false;
-			}
-		}
-
-		private static bool IsAnnotationAttribute(Type type)
-		{
-			return type.Name.EndsWith("Attribute", StringComparison.Ordinal)
-				&& type.IsClass
-				&& type.BaseType.FullName == "ikvm.internal.AnnotationAttributeBase";
 		}
 
 		internal override TypeWrapper[] InnerClasses
 		{
 			get
 			{
-				List<TypeWrapper> wrappers = new List<TypeWrapper>();
-				foreach(Type nested in type.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+				// TODO why are we caching this?
+				if(innerclasses == null)
 				{
-					if(IsAnnotationAttribute(nested))
+					Type[] nestedTypes = type.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+					List<TypeWrapper> wrappers = new List<TypeWrapper>();
+					for(int i = 0; i < nestedTypes.Length; i++)
 					{
-						// HACK it's the custom attribute we generated for a corresponding annotation, so we shouldn't surface it as an inner classes
-						// (we can't put a HideFromJavaAttribute on it, because we do want the class to be visible as a $Proxy)
+						if(!AttributeHelper.IsHideFromJava(nestedTypes[i]) && !nestedTypes[i].Name.StartsWith("__<"))
+						{
+							wrappers.Add(ClassLoaderWrapper.GetWrapperFromType(nestedTypes[i]));
+						}
 					}
-					else if(IsNestedTypeAnonymousOrLocalClass(nested))
+					foreach(string s in AttributeHelper.GetNonNestedInnerClasses(type))
 					{
-						// anonymous and local classes are not reported as inner classes
+						wrappers.Add(GetClassLoader().LoadClassByDottedName(s));
 					}
-					else if(AttributeHelper.IsHideFromJava(nested))
-					{
-						// ignore
-					}
-					else
-					{
-						wrappers.Add(ClassLoaderWrapper.GetWrapperFromType(nested));
-					}
+					innerclasses = wrappers.ToArray();
 				}
-				foreach(string s in AttributeHelper.GetNonNestedInnerClasses(type))
-				{
-					wrappers.Add(GetClassLoader().LoadClassByDottedName(s));
-				}
-				return wrappers.ToArray();
+				return innerclasses;
 			}
 		}
 
@@ -3948,10 +3998,6 @@ namespace IKVM.Internal
 		{
 			get
 			{
-				if(IsNestedTypeAnonymousOrLocalClass(type))
-				{
-					return null;
-				}
 				Type declaringType = type.DeclaringType;
 				if(declaringType != null)
 				{
@@ -3966,76 +4012,21 @@ namespace IKVM.Internal
 			}
 		}
 
-		// returns true iff name is of the form "...$<n>"
-		private static bool IsAnonymousClassName(string name)
-		{
-			int index = name.LastIndexOf('$') + 1;
-			if (index > 1 && index < name.Length)
-			{
-				while (index < name.Length)
-				{
-					if ("0123456789".IndexOf(name[index++]) == -1)
-					{
-						return false;
-					}
-				}
-				return true;
-			}
-			return false;
-		}
-
-		// This method uses some heuristics to predict the reflective modifiers and if the prediction matches
-		// we can avoid storing the InnerClassesAttribute to record the modifiers.
-		// The heuristics are based on javac from Java 7.
-		internal static Modifiers PredictReflectiveModifiers(TypeWrapper tw)
-		{
-			Modifiers modifiers = Modifiers.Static | (tw.Modifiers & (Modifiers.Public | Modifiers.Abstract | Modifiers.Interface));
-			// javac marks anonymous classes as final, but the InnerClasses attribute access_flags does not have the ACC_FINAL flag set
-			if (tw.IsFinal && !IsAnonymousClassName(tw.Name))
-			{
-				modifiers |= Modifiers.Final;
-			}
-			// javac uses the this$0 field to store the outer instance reference for non-static inner classes
-			foreach (FieldWrapper fw in tw.GetFields())
-			{
-				if (fw.Name == "this$0")
-				{
-					modifiers &= ~Modifiers.Static;
-					break;
-				}
-			}
-			return modifiers;
-		}
-
 		internal override Modifiers ReflectiveModifiers
 		{
 			get
 			{
 				if (reflectiveModifiers == 0)
 				{
-					Modifiers mods;
 					InnerClassAttribute attr = AttributeHelper.GetInnerClass(type);
 					if (attr != null)
 					{
-						// the mask comes from RECOGNIZED_INNER_CLASS_MODIFIERS in src/hotspot/share/vm/classfile/classFileParser.cpp
-						// (minus ACC_SUPER)
-						mods = attr.Modifiers & (Modifiers)0x761F;
-					}
-					else if (type.DeclaringType != null)
-					{
-						mods = PredictReflectiveModifiers(this);
+						reflectiveModifiers = attr.Modifiers;
 					}
 					else
 					{
-						// the mask comes from JVM_RECOGNIZED_CLASS_MODIFIERS in src/hotspot/share/vm/prims/jvm.h
-						// (minus ACC_SUPER)
-						mods = Modifiers & (Modifiers)0x7611;
+						reflectiveModifiers = Modifiers;
 					}
-					if (IsInterface)
-					{
-						mods |= Modifiers.Abstract;
-					}
-					reflectiveModifiers = mods;
 				}
 				return reflectiveModifiers;
 			}
@@ -4142,24 +4133,15 @@ namespace IKVM.Internal
 			}
 		}
 
-		private bool IsCallerID(Type type)
-		{
-#if STUB_GENERATOR
-			return type.FullName == "ikvm.internal.CallerID";
-#else
-			return type == CoreClasses.ikvm.@internal.CallerID.Wrapper.TypeAsSignatureType
-				&& GetClassLoader() == ClassLoaderWrapper.GetBootstrapClassLoader();
-#endif
-		}
-
 		private void GetNameSigFromMethodBase(MethodBase method, out string name, out string sig, out TypeWrapper retType, out TypeWrapper[] paramTypes, ref MemberFlags flags)
 		{
-			retType = method is ConstructorInfo ? PrimitiveTypeWrapper.VOID : GetParameterTypeWrapper(((MethodInfo)method).ReturnParameter);
+			retType = method is ConstructorInfo ? PrimitiveTypeWrapper.VOID : ClassLoaderWrapper.GetWrapperFromType(((MethodInfo)method).ReturnType);
 			ParameterInfo[] parameters = method.GetParameters();
 			int len = parameters.Length;
 			if(len > 0
-				&& IsCallerID(parameters[len - 1].ParameterType)
-				&& !method.DeclaringType.IsInterface)
+				&& parameters[len - 1].ParameterType == CoreClasses.ikvm.@internal.CallerID.Wrapper.TypeAsSignatureType
+				&& !method.DeclaringType.IsInterface
+				&& GetClassLoader() == ClassLoaderWrapper.GetBootstrapClassLoader())
 			{
 				len--;
 				flags |= MemberFlags.CallerID;
@@ -4167,7 +4149,7 @@ namespace IKVM.Internal
 			paramTypes = new TypeWrapper[len];
 			for(int i = 0; i < len; i++)
 			{
-				paramTypes[i] = GetParameterTypeWrapper(parameters[i]);
+				paramTypes[i] = ClassLoaderWrapper.GetWrapperFromType(parameters[i].ParameterType);
 			}
 			NameSigAttribute attr = AttributeHelper.GetNameSig(method);
 			if(attr != null)
@@ -4206,10 +4188,6 @@ namespace IKVM.Internal
 				else
 				{
 					name = method.Name;
-					if(name.StartsWith(NamePrefix.Bridge, StringComparison.Ordinal))
-					{
-						name = name.Substring(NamePrefix.Bridge.Length);
-					}
 				}
 				System.Text.StringBuilder sb = new System.Text.StringBuilder("(");
 				foreach(TypeWrapper tw in paramTypes)
@@ -4245,250 +4223,110 @@ namespace IKVM.Internal
 				invoke = (MethodInfo)mw.GetMethod();
 			}
 
-#if EMITTERS
-			internal override void EmitNewobj(CodeEmitter ilgen)
+			internal override void EmitNewobj(CodeEmitter ilgen, MethodAnalyzer ma, int opcodeIndex)
 			{
 				ilgen.Emit(OpCodes.Dup);
 				ilgen.Emit(OpCodes.Ldvirtftn, invoke);
 				ilgen.Emit(OpCodes.Newobj, constructor);
 			}
-#endif // EMITTERS
 		}
 
-		protected override void LazyPublishMethods()
+		protected override void LazyPublishMembers()
 		{
-			bool isDelegate = type.BaseType == Types.MulticastDelegate;
+			bool isDelegate = type.BaseType == typeof(MulticastDelegate);
+			clinitMethod = type.GetMethod("__<clinit>", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
 			List<MethodWrapper> methods = new List<MethodWrapper>();
-			const BindingFlags flags = BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
-			foreach(ConstructorInfo ctor in type.GetConstructors(flags))
+			List<FieldWrapper> fields = new List<FieldWrapper>();
+			MemberInfo[] members = type.GetMembers(BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance);
+			foreach(MemberInfo m in members)
 			{
-				if(isDelegate && !ctor.IsStatic && !AttributeHelper.IsHideFromJava(ctor))
+				if(!AttributeHelper.IsHideFromJava(m))
 				{
-					methods.Add(new DelegateConstructorMethodWrapper(this, ctor));
+					MethodBase method = m as MethodBase;
+					if(method != null)
+					{
+						if(method.IsSpecialName && 
+							(method.Name == "op_Implicit" || method.Name.StartsWith("__<")))
+						{
+							// skip
+						}
+						else if(isDelegate && method.IsConstructor && !method.IsStatic)
+						{
+							methods.Add(new DelegateConstructorMethodWrapper(this, method));
+						}
+						else
+						{
+							string name;
+							string sig;
+							TypeWrapper retType;
+							TypeWrapper[] paramTypes;
+							MethodInfo mi = method as MethodInfo;
+							bool hideFromReflection = mi != null ? AttributeHelper.IsHideFromReflection(mi) : false;
+							MemberFlags flags = hideFromReflection ? MemberFlags.HideFromReflection : MemberFlags.None;
+							GetNameSigFromMethodBase(method, out name, out sig, out retType, out paramTypes, ref flags);
+							ExModifiers mods = AttributeHelper.GetModifiers(method, false);
+							if(mods.IsInternal)
+							{
+								flags |= MemberFlags.InternalAccess;
+							}
+							methods.Add(MethodWrapper.Create(this, name, sig, method, retType, paramTypes, mods.Modifiers, flags));
+						}
+					}
+					else
+					{
+						FieldInfo field = m as FieldInfo;
+						if(field != null)
+						{
+							if(field.IsSpecialName && field.Name.StartsWith("__<"))
+							{
+								// skip
+							}
+							else
+							{
+								fields.Add(CreateFieldWrapper(field));
+							}
+						}
+						else
+						{
+							// NOTE explictly defined properties (in map.xml) are decorated with HideFromJava,
+							// so we don't need to worry about them here
+							PropertyInfo property = m as PropertyInfo;
+							if(property != null)
+							{
+								// Only AccessStub properties (marked by HideFromReflectionAttribute)
+								// are considered here
+								if(AttributeHelper.IsHideFromReflection(property))
+								{
+									fields.Add(new CompiledAccessStubFieldWrapper(this, property));
+								}
+								else
+								{
+									// If the property has a ModifiersAttribute, we know that it is an explicit property
+									// (defined in Java source by an @ikvm.lang.Property annotation)
+									ModifiersAttribute mods = AttributeHelper.GetModifiersAttribute(property);
+									if(mods != null)
+									{
+										fields.Add(new CompiledPropertyFieldWrapper(this, property, new ExModifiers(mods.Modifiers, mods.IsInternal)));
+									}
+									else
+									{
+										fields.Add(CreateFieldWrapper(property));
+									}
+								}
+							}
+						}
+					}
 				}
-				else
-				{
-					AddMethodOrConstructor(ctor, methods);
-				}
-			}
-			foreach(MethodInfo method in type.GetMethods(flags))
-			{
-				AddMethodOrConstructor(method, methods);
 			}
 			SetMethods(methods.ToArray());
-		}
-
-		private void AddMethodOrConstructor(MethodBase method, List<MethodWrapper> methods)
-		{
-			if(AttributeHelper.IsHideFromJava(method))
-			{
-				if(method.Name.StartsWith(NamePrefix.Incomplete, StringComparison.Ordinal))
-				{
-					SetHasIncompleteInterfaceImplementation();
-				}
-			}
-			else
-			{
-				if(method.IsSpecialName && (method.Name.StartsWith("__<", StringComparison.Ordinal) || method.Name.StartsWith(NamePrefix.DefaultMethod, StringComparison.Ordinal)))
-				{
-					// skip
-				}
-				else
-				{
-					string name;
-					string sig;
-					TypeWrapper retType;
-					TypeWrapper[] paramTypes;
-					MethodInfo mi = method as MethodInfo;
-					bool hideFromReflection = mi != null ? AttributeHelper.IsHideFromReflection(mi) : false;
-					MemberFlags flags = hideFromReflection ? MemberFlags.HideFromReflection : MemberFlags.None;
-					GetNameSigFromMethodBase(method, out name, out sig, out retType, out paramTypes, ref flags);
-					ExModifiers mods = AttributeHelper.GetModifiers(method, false);
-					if(mods.IsInternal)
-					{
-						flags |= MemberFlags.InternalAccess;
-					}
-					if(hideFromReflection && name.StartsWith(NamePrefix.AccessStub, StringComparison.Ordinal))
-					{
-						int id = Int32.Parse(name.Substring(NamePrefix.AccessStub.Length, name.IndexOf('|', NamePrefix.AccessStub.Length) - NamePrefix.AccessStub.Length));
-						name = name.Substring(name.IndexOf('|', NamePrefix.AccessStub.Length) + 1);
-						flags |= MemberFlags.AccessStub;
-						MethodInfo nonvirt = type.GetMethod(NamePrefix.NonVirtual + id, BindingFlags.NonPublic | BindingFlags.DeclaredOnly | BindingFlags.Instance);
-						methods.Add(new AccessStubMethodWrapper(this, name, sig, mi, mi, nonvirt ?? mi, retType, paramTypes, mods.Modifiers & ~Modifiers.Final, flags));
-						return;
-					}
-					MethodWrapper mw;
-					if (IsGhost)
-					{
-						Type[] types = new Type[paramTypes.Length];
-						for (int i = 0; i < types.Length; i++)
-						{
-							types[i] = paramTypes[i].TypeAsSignatureType;
-						}
-						MethodInfo ifmethod = TypeAsBaseType.GetMethod(method.Name, types);
-						mw = new GhostMethodWrapper(this, name, sig, ifmethod, (MethodInfo)method, retType, paramTypes, mods.Modifiers, flags);
-					}
-					else
-					{
-						mw = new TypicalMethodWrapper(this, name, sig, method, retType, paramTypes, mods.Modifiers, flags);
-					}
-					if (mw.HasNonPublicTypeInSignature)
-					{
-						if (mi != null)
-						{
-							MethodInfo stubVirt;
-							MethodInfo stubNonVirt;
-							if (GetType2AccessStubs(name, sig, out stubVirt, out stubNonVirt))
-							{
-								mw = new AccessStubMethodWrapper(this, name, sig, mi, stubVirt, stubNonVirt ?? stubVirt, retType, paramTypes, mw.Modifiers, flags);
-							}
-						}
-						else
-						{
-							ConstructorInfo stub;
-							if (GetType2AccessStub(sig, out stub))
-							{
-								mw = new AccessStubConstructorMethodWrapper(this, sig, (ConstructorInfo)method, stub, paramTypes, mw.Modifiers, flags);
-							}
-						}
-					}
-					methods.Add(mw);
-				}
-			}
-		}
-
-		private bool GetType2AccessStubs(string name, string sig, out MethodInfo stubVirt, out MethodInfo stubNonVirt)
-		{
-			stubVirt = null;
-			stubNonVirt = null;
-			const BindingFlags flags = BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
-			foreach (MethodInfo method in type.GetMethods(flags))
-			{
-				if (AttributeHelper.IsHideFromJava(method))
-				{
-					NameSigAttribute attr = AttributeHelper.GetNameSig(method);
-					if (attr != null && attr.Name == name && attr.Sig == sig)
-					{
-						if (method.Name.StartsWith(NamePrefix.NonVirtual, StringComparison.Ordinal))
-						{
-							stubNonVirt = method;
-						}
-						else
-						{
-							stubVirt = method;
-						}
-					}
-				}
-			}
-			return stubVirt != null;
-		}
-
-		private bool GetType2AccessStub(string sig, out ConstructorInfo stub)
-		{
-			stub = null;
-			const BindingFlags flags = BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
-			foreach (ConstructorInfo ctor in type.GetConstructors(flags))
-			{
-				if (AttributeHelper.IsHideFromJava(ctor))
-				{
-					NameSigAttribute attr = AttributeHelper.GetNameSig(ctor);
-					if (attr != null && attr.Sig == sig)
-					{
-						stub = ctor;
-					}
-				}
-			}
-			return stub != null;
-		}
-
-		private static int SortFieldByToken(FieldInfo field1, FieldInfo field2)
-		{
-			return field1.MetadataToken.CompareTo(field2.MetadataToken);
-		}
-
-		protected override void LazyPublishFields()
-		{
-			List<FieldWrapper> fields = new List<FieldWrapper>();
-			const BindingFlags flags = BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
-			FieldInfo[] rawfields = type.GetFields(flags);
-			Array.Sort(rawfields, SortFieldByToken);
-			// FXBUG on .NET 3.5 and Mono Type.GetProperties() will not return "duplicate" properties (i.e. that have the same name and type, but differ in custom modifiers).
-			// .NET 4.0 works as expected. We don't have a workaround, because that would require name mangling again and this situation is very unlikely anyway.
-			PropertyInfo[] properties = type.GetProperties(flags);
-			foreach(FieldInfo field in rawfields)
-			{
-				if(AttributeHelper.IsHideFromJava(field))
-				{
-					if(field.Name.StartsWith(NamePrefix.Type2AccessStubBackingField, StringComparison.Ordinal))
-					{
-						TypeWrapper tw = GetFieldTypeWrapper(field);
-						string name = field.Name.Substring(NamePrefix.Type2AccessStubBackingField.Length);
-						for(int i = 0; i < properties.Length; i++)
-						{
-							if(properties[i] != null
-								&& name == properties[i].Name
-								&& MatchTypes(tw, GetPropertyTypeWrapper(properties[i])))
-							{
-								fields.Add(new CompiledAccessStubFieldWrapper(this, properties[i], field, tw));
-								properties[i] = null;
-								break;
-							}
-						}
-					}
-				}
-				else
-				{
-					if(field.IsSpecialName && field.Name.StartsWith("__<", StringComparison.Ordinal))
-					{
-						// skip
-					}
-					else
-					{
-						fields.Add(CreateFieldWrapper(field));
-					}
-				}
-			}
-			foreach(PropertyInfo property in properties)
-			{
-				if(property != null)
-				{
-					AddPropertyFieldWrapper(fields, property, null);
-				}
-			}
 			SetFields(fields.ToArray());
 		}
 
-		private static bool MatchTypes(TypeWrapper tw1, TypeWrapper tw2)
+		private class CompiledRemappedMethodWrapper : SmartMethodWrapper
 		{
-			return tw1 == tw2 || (tw1.IsUnloadable && tw2.IsUnloadable && tw1.Name == tw2.Name);
-		}
-
-		private void AddPropertyFieldWrapper(List<FieldWrapper> fields, PropertyInfo property, FieldInfo field)
-		{
-			// NOTE explictly defined properties (in map.xml) are decorated with HideFromJava,
-			// so we don't need to worry about them here
-			if(!AttributeHelper.IsHideFromJava(property))
-			{
-				// is it a type 1 access stub?
-				if(AttributeHelper.IsHideFromReflection(property))
-				{
-					fields.Add(new CompiledAccessStubFieldWrapper(this, property, GetPropertyTypeWrapper(property)));
-				}
-				else
-				{
-					// It must be an explicit property
-					// (defined in Java source by an @ikvm.lang.Property annotation)
-					ModifiersAttribute mods = AttributeHelper.GetModifiersAttribute(property);
-					fields.Add(new CompiledPropertyFieldWrapper(this, property, new ExModifiers(mods.Modifiers, mods.IsInternal)));
-				}
-			}
-		}
-
-		private sealed class CompiledRemappedMethodWrapper : SmartMethodWrapper
-		{
-			private readonly MethodInfo mbHelper;
+			private MethodInfo mbHelper;
 #if !STATIC_COMPILER
-			private readonly MethodInfo mbNonvirtualHelper;
+			private MethodInfo mbNonvirtualHelper;
 #endif
 
 			internal CompiledRemappedMethodWrapper(TypeWrapper declaringType, string name, string sig, MethodBase method, TypeWrapper returnType, TypeWrapper[] parameterTypes, ExModifiers modifiers, bool hideFromReflection, MethodInfo mbHelper, MethodInfo mbNonvirtualHelper)
@@ -4501,28 +4339,17 @@ namespace IKVM.Internal
 #endif
 			}
 
-#if EMITTERS
 			protected override void CallImpl(CodeEmitter ilgen)
 			{
 				MethodBase mb = GetMethod();
 				MethodInfo mi = mb as MethodInfo;
 				if(mi != null)
 				{
-					if(!IsStatic && IsFinal)
-					{
-						// When calling a final instance method on a remapped type from a class derived from a .NET class (i.e. a cli.System.Object or cli.System.Exception derived base class)
-						// then we can't call the java.lang.Object or java.lang.Throwable methods and we have to go through the instancehelper_ method. Note that since the method
-						// is final, this won't affect the semantics.
-						CallvirtImpl(ilgen);
-					}
-					else
-					{
-						ilgen.Emit(OpCodes.Call, mi);
-					}
+					ilgen.Emit(OpCodes.Call, mi);
 				}
 				else
 				{
-					ilgen.Emit(OpCodes.Call, mb);
+					ilgen.Emit(OpCodes.Call, (ConstructorInfo)mb);
 				}
 			}
 
@@ -4536,7 +4363,7 @@ namespace IKVM.Internal
 				else
 				{
 					// HACK the helper is not public, this means that we're dealing with finalize or clone
-					ilgen.Emit(OpCodes.Callvirt, GetMethod());
+					ilgen.Emit(OpCodes.Callvirt, (MethodInfo)GetMethod());
 				}
 			}
 
@@ -4551,54 +4378,35 @@ namespace IKVM.Internal
 				}
 				else
 				{
-					ilgen.Emit(OpCodes.Newobj, mb);
+					ilgen.Emit(OpCodes.Newobj, (ConstructorInfo)mb);
 				}
 			}
-#endif // EMITTERS
 
-#if !STATIC_COMPILER && !FIRST_PASS && !STUB_GENERATOR
+#if !STATIC_COMPILER && !FIRST_PASS
 			[HideFromJava]
-			internal override object Invoke(object obj, object[] args)
+			protected override object InvokeNonvirtualRemapped(object obj, object[] args)
 			{
-				MethodBase mb = mbHelper != null ? mbHelper : GetMethod();
-				if (mb.IsStatic && !IsStatic)
-				{
-					args = ArrayUtil.Concat(obj, args);
-					obj = null;
-				}
-				return InvokeAndUnwrapException(mb, obj, args);
-			}
-
-			[HideFromJava]
-			internal override object CreateInstance(object[] args)
-			{
-				MethodBase mb = mbHelper != null ? mbHelper : GetMethod();
-				if (mb.IsStatic)
-				{
-					return InvokeAndUnwrapException(mb, null, args);
-				}
-				return base.CreateInstance(args);
-			}
-
-			[HideFromJava]
-			internal override object InvokeNonvirtualRemapped(object obj, object[] args)
-			{
+				Type[] p1 = GetParametersForDefineMethod();
+				Type[] argTypes = new Type[p1.Length + 1];
+				p1.CopyTo(argTypes, 1);
+				argTypes[0] = this.DeclaringType.TypeAsSignatureType;
 				MethodInfo mi = mbNonvirtualHelper;
 				if (mi == null)
 				{
 					mi = mbHelper;
 				}
-				return mi.Invoke(null, ArrayUtil.Concat(obj, args));
+				object[] args1 = new object[args.Length + 1];
+				args1[0] = obj;
+				args.CopyTo(args1, 1);
+				return mi.Invoke(null, args1);
 			}
-#endif // !STATIC_COMPILER && !FIRST_PASS && !STUB_GENERATOR
 
-#if EMITTERS
 			internal override void EmitCallvirtReflect(CodeEmitter ilgen)
 			{
 				MethodBase mb = mbHelper != null ? mbHelper : GetMethod();
-				ilgen.Emit(mb.IsStatic ? OpCodes.Call : OpCodes.Callvirt, mb);
+				ilgen.Emit(mb.IsStatic ? OpCodes.Call : OpCodes.Callvirt, (MethodInfo)mb);
 			}
-#endif // EMITTERS
+#endif // !STATIC_COMPILER
 
 			internal string GetGenericSignature()
 			{
@@ -4611,72 +4419,34 @@ namespace IKVM.Internal
 			}
 		}
 
-		private static TypeWrapper TypeWrapperFromModOpt(Type[] modopt)
+		private FieldWrapper CreateFieldWrapper(PropertyInfo prop)
 		{
-			int rank = 0;
-			TypeWrapper tw = null;
-			foreach (Type type in modopt)
+			MethodInfo getter = prop.GetGetMethod(true);
+			ExModifiers modifiers = AttributeHelper.GetModifiers(getter, false);
+			// for static methods AttributeHelper.GetModifiers won't set the Final flag
+			modifiers = new ExModifiers(modifiers.Modifiers | Modifiers.Final, modifiers.IsInternal);
+			string name = prop.Name;
+			TypeWrapper type = ClassLoaderWrapper.GetWrapperFromType(prop.PropertyType);
+			NameSigAttribute attr = AttributeHelper.GetNameSig(getter);
+			if(attr != null)
 			{
-				if (type == JVM.LoadType(typeof(IKVM.Attributes.AccessStub)))
-				{
-					// ignore
-				}
-				else if (type == Types.Array)
-				{
-					rank++;
-				}
-				else if (type == Types.Void || type.IsPrimitive || ClassLoaderWrapper.IsRemappedType(type))
-				{
-					tw = DotNetTypeWrapper.GetWrapperFromDotNetType(type);
-				}
-				else if (type.DeclaringType != null && type.DeclaringType.FullName == UnloadableTypeWrapper.ContainerTypeName)
-				{
-					tw = new UnloadableTypeWrapper(TypeNameUtil.UnmangleNestedTypeName(type.Name), type);
-				}
-				else
-				{
-					tw = ClassLoaderWrapper.GetWrapperFromType(type);
-				}
+				name = attr.Name;
+				SigTypePatchUp(attr.Sig, ref type);
 			}
-			if (rank != 0)
-			{
-				tw = tw.MakeArrayType(rank);
-			}
-			return tw;
-		}
-
-		private static TypeWrapper GetPropertyTypeWrapper(PropertyInfo property)
-		{
-			return TypeWrapperFromModOpt(property.GetOptionalCustomModifiers())
-				?? ClassLoaderWrapper.GetWrapperFromType(property.PropertyType);
-		}
-
-		private static TypeWrapper GetFieldTypeWrapper(FieldInfo field)
-		{
-			return TypeWrapperFromModOpt(field.GetOptionalCustomModifiers())
-				?? ClassLoaderWrapper.GetWrapperFromType(field.FieldType);
-		}
-
-		private static TypeWrapper GetParameterTypeWrapper(ParameterInfo param)
-		{
-			TypeWrapper tw = TypeWrapperFromModOpt(param.GetOptionalCustomModifiers());
-			if (tw != null)
-			{
-				return tw;
-			}
-			Type parameterType = param.ParameterType;
-			if (parameterType.IsByRef)
-			{
-				// we only support ByRef parameters for automatically generated delegate invoke stubs
-				parameterType = parameterType.GetElementType().MakeArrayType();
-			}
-			return ClassLoaderWrapper.GetWrapperFromType(parameterType);
+			return new GetterFieldWrapper(this, type, null, name, type.SigName, modifiers, getter, prop);
 		}
 
 		private FieldWrapper CreateFieldWrapper(FieldInfo field)
 		{
 			ExModifiers modifiers = AttributeHelper.GetModifiers(field, false);
-			TypeWrapper type = GetFieldTypeWrapper(field);
+			string name = field.Name;
+			TypeWrapper type = ClassLoaderWrapper.GetWrapperFromType(field.FieldType);
+			NameSigAttribute attr = AttributeHelper.GetNameSig(field);
+			if(attr != null)
+			{
+				name = attr.Name;
+				SigTypePatchUp(attr.Sig, ref type);
+			}
 
 			if(field.IsLiteral)
 			{
@@ -4689,11 +4459,11 @@ namespace IKVM.Internal
 				{
 					flags |= MemberFlags.InternalAccess;
 				}
-				return new ConstantFieldWrapper(this, type, field.Name, type.SigName, modifiers.Modifiers, field, null, flags);
+				return new ConstantFieldWrapper(this, type, name, type.SigName, modifiers.Modifiers, field, null, flags);
 			}
 			else
 			{
-				return FieldWrapper.Create(this, type, field, field.Name, type.SigName, modifiers);
+				return FieldWrapper.Create(this, type, field, name, type.SigName, modifiers);
 			}
 		}
 
@@ -4725,15 +4495,15 @@ namespace IKVM.Internal
 			}
 		}
 
-#if EMITTERS
 		internal override void EmitRunClassConstructor(CodeEmitter ilgen)
 		{
-			if(HasStaticInitializer)
+			// trigger LazyPublishMembers
+			GetMethods();
+			if(clinitMethod != null)
 			{
 				ilgen.Emit(OpCodes.Call, clinitMethod);
 			}
 		}
-#endif // EMITTERS
 
 		internal override string GetGenericSignature()
 		{
@@ -4774,10 +4544,21 @@ namespace IKVM.Internal
 					return attr.Signature;
 				}
 			}
+			else
+			{
+				GetterFieldWrapper getter = fw as GetterFieldWrapper;
+				if(getter != null)
+				{
+					SignatureAttribute attr = AttributeHelper.GetSignature(getter.GetGetter());
+					if(attr != null)
+					{
+						return attr.Signature;
+					}
+				}
+			}
 			return null;
 		}
 
-#if !STATIC_COMPILER && !STUB_GENERATOR
 		internal override string[] GetEnclosingMethod()
 		{
 			EnclosingMethodAttribute enc = AttributeHelper.GetEnclosingMethodAttribute(type);
@@ -4790,6 +4571,11 @@ namespace IKVM.Internal
 
 		internal override object[] GetDeclaredAnnotations()
 		{
+			if(type.Assembly.ReflectionOnly)
+			{
+				// TODO on Whidbey this must be implemented
+				return null;
+			}
 			return type.GetCustomAttributes(false);
 		}
 
@@ -4801,6 +4587,11 @@ namespace IKVM.Internal
 				// delegate constructor
 				return null;
 			}
+			if(mb.DeclaringType.Assembly.ReflectionOnly)
+			{
+				// TODO on Whidbey this must be implemented
+				return null;
+			}
 			return mb.GetCustomAttributes(false);
 		}
 
@@ -4810,6 +4601,11 @@ namespace IKVM.Internal
 			if(mb == null)
 			{
 				// delegate constructor
+				return null;
+			}
+			if(mb.DeclaringType.Assembly.ReflectionOnly)
+			{
+				// TODO on Whidbey this must be implemented
 				return null;
 			}
 			ParameterInfo[] parameters = mb.GetParameters();
@@ -4836,64 +4632,90 @@ namespace IKVM.Internal
 			FieldInfo field = fw.GetField();
 			if(field != null)
 			{
+				if (field.DeclaringType.Assembly.ReflectionOnly)
+				{
+					// TODO on Whidbey this must be implemented
+					return null;
+				}
 				return field.GetCustomAttributes(false);
+			}
+			GetterFieldWrapper getter = fw as GetterFieldWrapper;
+			if(getter != null)
+			{
+				if (getter.GetGetter().DeclaringType.Assembly.ReflectionOnly)
+				{
+					// TODO on Whidbey this must be implemented
+					return null;
+				}
+				return getter.GetGetter().GetCustomAttributes(false);
 			}
 			CompiledPropertyFieldWrapper prop = fw as CompiledPropertyFieldWrapper;
 			if(prop != null)
 			{
+				if (prop.GetProperty().DeclaringType.Assembly.ReflectionOnly)
+				{
+					// TODO on Whidbey this must be implemented
+					return null;
+				}
 				return prop.GetProperty().GetCustomAttributes(false);
 			}
 			return new object[0];
 		}
-#endif
 
-		internal sealed class CompiledAnnotation : Annotation
+		private class CompiledAnnotation : Annotation
 		{
-			private readonly ConstructorInfo constructor;
+			private Type type;
 
 			internal CompiledAnnotation(Type type)
 			{
-				constructor = type.GetConstructor(new Type[] { JVM.Import(typeof(object[])) });
+				this.type = type;
 			}
 
-			private CustomAttributeBuilder MakeCustomAttributeBuilder(ClassLoaderWrapper loader, object annotation)
+			private CustomAttributeBuilder MakeCustomAttributeBuilder(object annotation)
 			{
-				return new CustomAttributeBuilder(constructor, new object[] { QualifyClassNames(loader, annotation) });
+				return new CustomAttributeBuilder(type.GetConstructor(new Type[] { typeof(object[]) }), new object[] { annotation });
 			}
 
 			internal override void Apply(ClassLoaderWrapper loader, TypeBuilder tb, object annotation)
 			{
-				tb.SetCustomAttribute(MakeCustomAttributeBuilder(loader, annotation));
+				annotation = QualifyClassNames(loader, annotation);
+				tb.SetCustomAttribute(MakeCustomAttributeBuilder(annotation));
+			}
+
+			internal override void Apply(ClassLoaderWrapper loader, ConstructorBuilder cb, object annotation)
+			{
+				annotation = QualifyClassNames(loader, annotation);
+				cb.SetCustomAttribute(MakeCustomAttributeBuilder(annotation));
 			}
 
 			internal override void Apply(ClassLoaderWrapper loader, MethodBuilder mb, object annotation)
 			{
-				mb.SetCustomAttribute(MakeCustomAttributeBuilder(loader, annotation));
+				annotation = QualifyClassNames(loader, annotation);
+				mb.SetCustomAttribute(MakeCustomAttributeBuilder(annotation));
 			}
 
 			internal override void Apply(ClassLoaderWrapper loader, FieldBuilder fb, object annotation)
 			{
-				fb.SetCustomAttribute(MakeCustomAttributeBuilder(loader, annotation));
+				annotation = QualifyClassNames(loader, annotation);
+				fb.SetCustomAttribute(MakeCustomAttributeBuilder(annotation));
 			}
 
 			internal override void Apply(ClassLoaderWrapper loader, ParameterBuilder pb, object annotation)
 			{
-				pb.SetCustomAttribute(MakeCustomAttributeBuilder(loader, annotation));
+				annotation = QualifyClassNames(loader, annotation);
+				pb.SetCustomAttribute(MakeCustomAttributeBuilder(annotation));
 			}
 
 			internal override void Apply(ClassLoaderWrapper loader, AssemblyBuilder ab, object annotation)
 			{
-				ab.SetCustomAttribute(MakeCustomAttributeBuilder(loader, annotation));
+				annotation = QualifyClassNames(loader, annotation);
+				ab.SetCustomAttribute(MakeCustomAttributeBuilder(annotation));
 			}
 
 			internal override void Apply(ClassLoaderWrapper loader, PropertyBuilder pb, object annotation)
 			{
-				pb.SetCustomAttribute(MakeCustomAttributeBuilder(loader, annotation));
-			}
-
-			internal override bool IsCustomAttribute
-			{
-				get { return false; }
+				annotation = QualifyClassNames(loader, annotation);
+				pb.SetCustomAttribute(MakeCustomAttributeBuilder(annotation));
 			}
 		}
 
@@ -4922,21 +4744,12 @@ namespace IKVM.Internal
 			}
 		}
 
-#if !STATIC_COMPILER && !STUB_GENERATOR
 		internal override string GetSourceFileName()
 		{
 			object[] attr = type.GetCustomAttributes(typeof(SourceFileAttribute), false);
 			if(attr.Length == 1)
 			{
 				return ((SourceFileAttribute)attr[0]).SourceFile;
-			}
-			if(DeclaringTypeWrapper != null)
-			{
-				return DeclaringTypeWrapper.GetSourceFileName();
-			}
-			if(IsNestedTypeAnonymousOrLocalClass(type))
-			{
-				return ClassLoaderWrapper.GetWrapperFromType(type.DeclaringType).GetSourceFileName();
 			}
 			if(type.Module.IsDefined(typeof(SourceFileAttribute), false))
 			{
@@ -4954,7 +4767,6 @@ namespace IKVM.Internal
 			}
 			return -1;
 		}
-#endif
 
 		internal override bool IsFastClassLiteralSafe
 		{
@@ -4964,23 +4776,18 @@ namespace IKVM.Internal
 
 	sealed class ArrayTypeWrapper : TypeWrapper
 	{
-		private static volatile TypeWrapper[] interfaces;
-		private static volatile MethodInfo clone;
+		private static TypeWrapper[] interfaces;
+		private static MethodInfo clone;
 		private readonly TypeWrapper ultimateElementTypeWrapper;
 		private Type arrayType;
 		private bool finished;
 
 		internal ArrayTypeWrapper(TypeWrapper ultimateElementTypeWrapper, string name)
-			: base(ultimateElementTypeWrapper.IsInternal ? TypeFlags.InternalAccess : TypeFlags.None,
-				Modifiers.Final | Modifiers.Abstract | (ultimateElementTypeWrapper.Modifiers & Modifiers.Public), name)
+			: base(Modifiers.Final | Modifiers.Abstract | (ultimateElementTypeWrapper.Modifiers & Modifiers.Public), name, CoreClasses.java.lang.Object.Wrapper)
 		{
 			Debug.Assert(!ultimateElementTypeWrapper.IsArray);
 			this.ultimateElementTypeWrapper = ultimateElementTypeWrapper;
-		}
-
-		internal override TypeWrapper BaseTypeWrapper
-		{
-			get { return CoreClasses.java.lang.Object.Wrapper; }
+			this.IsInternal = ultimateElementTypeWrapper.IsInternal;
 		}
 
 		internal override ClassLoaderWrapper GetClassLoader()
@@ -4994,7 +4801,7 @@ namespace IKVM.Internal
 			{
 				if(clone == null)
 				{
-					clone = Types.Array.GetMethod("Clone", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+					clone = typeof(Array).GetMethod("Clone", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
 				}
 				return clone;
 			}
@@ -5032,8 +4839,8 @@ namespace IKVM.Internal
 				if(interfaces == null)
 				{
 					TypeWrapper[] tw = new TypeWrapper[2];
-					tw[0] = CoreClasses.java.lang.Cloneable.Wrapper;
-					tw[1] = CoreClasses.java.io.Serializable.Wrapper;
+					tw[0] = ClassLoaderWrapper.LoadClassCritical("java.lang.Cloneable");
+					tw[1] = ClassLoaderWrapper.LoadClassCritical("java.io.Serializable");
 					interfaces = tw;
 				}
 				return interfaces;
@@ -5118,11 +4925,6 @@ namespace IKVM.Internal
 			get { return ultimateElementTypeWrapper.IsFastClassLiteralSafe || ultimateElementTypeWrapper.IsPrimitive; }
 		}
 
-		internal override TypeWrapper GetUltimateElementTypeWrapper()
-		{
-			return ultimateElementTypeWrapper;
-		}
-
 		internal static Type MakeArrayType(Type type, int dims)
 		{
 			// NOTE this is not just an optimization, but it is also required to
@@ -5134,165 +4936,6 @@ namespace IKVM.Internal
 				type = type.MakeArrayType();
 			}
 			return type;
-		}
-	}
-
-	// this is a container for the special verifier TypeWrappers
-	sealed class VerifierTypeWrapper : TypeWrapper
-	{
-		// the TypeWrapper constructor interns the name, so we have to pre-intern here to make sure we have the same string object
-		// (if it has only been interned previously)
-		private static readonly string This = string.Intern("this");
-		private static readonly string New = string.Intern("new");
-		private static readonly string Fault = string.Intern("<fault>");
-		internal static readonly TypeWrapper Invalid = null;
-		internal static readonly TypeWrapper Null = new VerifierTypeWrapper("null", 0, null, null);
-		internal static readonly TypeWrapper UninitializedThis = new VerifierTypeWrapper("uninitialized-this", 0, null, null);
-		internal static readonly TypeWrapper Unloadable = new UnloadableTypeWrapper("<verifier>");
-		internal static readonly TypeWrapper ExtendedFloat = new VerifierTypeWrapper("<extfloat>", 0, null, null);
-		internal static readonly TypeWrapper ExtendedDouble = new VerifierTypeWrapper("<extdouble>", 0, null, null);
-
-		private readonly int index;
-		private readonly TypeWrapper underlyingType;
-		private readonly MethodAnalyzer methodAnalyzer;
-
-#if STUB_GENERATOR
-		internal class MethodAnalyzer
-		{
-			internal void ClearFaultBlockException(int dummy) { }
-		}
-#endif
-
-		public override string ToString()
-		{
-			return GetType().Name + "[" + Name + "," + index + "," + underlyingType + "]";
-		}
-
-		internal static TypeWrapper MakeNew(TypeWrapper type, int bytecodeIndex)
-		{
-			return new VerifierTypeWrapper(New, bytecodeIndex, type, null);
-		}
-
-		internal static TypeWrapper MakeFaultBlockException(MethodAnalyzer ma, int handlerIndex)
-		{
-			return new VerifierTypeWrapper(Fault, handlerIndex, null, ma);
-		}
-
-		// NOTE the "this" type is special, it can only exist in local[0] and on the stack
-		// as soon as the type on the stack is merged or popped it turns into its underlying type.
-		// It exists to capture the verification rules for non-virtual base class method invocation in .NET 2.0,
-		// which requires that the invocation is done on a "this" reference that was directly loaded onto the
-		// stack (using ldarg_0).
-		internal static TypeWrapper MakeThis(TypeWrapper type)
-		{
-			return new VerifierTypeWrapper(This, 0, type, null);
-		}
-
-		internal static bool IsNotPresentOnStack(TypeWrapper w)
-		{
-			return IsNew(w) || IsFaultBlockException(w);
-		}
-
-		internal static bool IsNew(TypeWrapper w)
-		{
-			return w != null && w.IsVerifierType && ReferenceEquals(w.Name, New);
-		}
-
-		internal static bool IsFaultBlockException(TypeWrapper w)
-		{
-			return w != null && w.IsVerifierType && ReferenceEquals(w.Name, Fault);
-		}
-
-		internal static bool IsNullOrUnloadable(TypeWrapper w)
-		{
-			return w == Null || w.IsUnloadable;
-		}
-
-		internal static bool IsThis(TypeWrapper w)
-		{
-			return w != null && w.IsVerifierType && ReferenceEquals(w.Name, This);
-		}
-
-		internal static void ClearFaultBlockException(TypeWrapper w)
-		{
-			VerifierTypeWrapper vtw = (VerifierTypeWrapper)w;
-			vtw.methodAnalyzer.ClearFaultBlockException(vtw.Index);
-		}
-
-		internal int Index
-		{
-			get
-			{
-				return index;
-			}
-		}
-
-		internal TypeWrapper UnderlyingType
-		{
-			get
-			{
-				return underlyingType;
-			}
-		}
-
-		private VerifierTypeWrapper(string name, int index, TypeWrapper underlyingType, MethodAnalyzer methodAnalyzer)
-			: base(TypeFlags.None, TypeWrapper.VerifierTypeModifiersHack, name)
-		{
-			this.index = index;
-			this.underlyingType = underlyingType;
-			this.methodAnalyzer = methodAnalyzer;
-		}
-
-		internal override TypeWrapper BaseTypeWrapper
-		{
-			get { return null; }
-		}
-
-		internal override ClassLoaderWrapper GetClassLoader()
-		{
-			return null;
-		}
-
-		protected override void LazyPublishMembers()
-		{
-			throw new InvalidOperationException("LazyPublishMembers called on " + this);
-		}
-
-		internal override Type TypeAsTBD
-		{
-			get
-			{
-				throw new InvalidOperationException("get_Type called on " + this);
-			}
-		}
-
-		internal override TypeWrapper[] Interfaces
-		{
-			get
-			{
-				throw new InvalidOperationException("get_Interfaces called on " + this);
-			}
-		}
-
-		internal override TypeWrapper[] InnerClasses
-		{
-			get
-			{
-				throw new InvalidOperationException("get_InnerClasses called on " + this);
-			}
-		}
-
-		internal override TypeWrapper DeclaringTypeWrapper
-		{
-			get
-			{
-				throw new InvalidOperationException("get_DeclaringTypeWrapper called on " + this);
-			}
-		}
-
-		internal override void Finish()
-		{
-			throw new InvalidOperationException("Finish called on " + this);
 		}
 	}
 }
