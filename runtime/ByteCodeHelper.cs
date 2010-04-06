@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2002-2013 Jeroen Frijters
+  Copyright (C) 2002-2008 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -148,22 +148,22 @@ namespace IKVM.Runtime
 
 #if !FIRST_PASS
 		[DebuggerStepThroughAttribute]
-		public static object DynamicMultianewarray(string clazz, int[] lengths, ikvm.@internal.CallerID callerId)
+		public static object DynamicMultianewarray(RuntimeTypeHandle type, string clazz, int[] lengths)
 		{
 			Profiler.Count("DynamicMultianewarray");
-			TypeWrapper wrapper = LoadTypeWrapper(clazz, callerId);
+			TypeWrapper wrapper = LoadTypeWrapper(type, clazz);
 			return multianewarray(wrapper.TypeAsArrayType.TypeHandle, lengths);
 		}
 
 		[DebuggerStepThroughAttribute]
-		public static object DynamicNewarray(int length, string clazz, ikvm.@internal.CallerID callerId)
+		public static object DynamicNewarray(int length, RuntimeTypeHandle type, string clazz)
 		{
 			Profiler.Count("DynamicNewarray");
 			if(length < 0)
 			{
 				throw new java.lang.NegativeArraySizeException();
 			}
-			TypeWrapper wrapper = LoadTypeWrapper(clazz, callerId);
+			TypeWrapper wrapper = LoadTypeWrapper(type, clazz);
 			return Array.CreateInstance(wrapper.TypeAsArrayType, length);
 		}
 
@@ -183,10 +183,10 @@ namespace IKVM.Runtime
 			return ((Array)arrayref).GetValue(index);
 		}
 
-		private static FieldWrapper GetFieldWrapper(object thisObj, string clazz, string name, string sig, bool isStatic, ikvm.@internal.CallerID callerId)
+		private static FieldWrapper GetFieldWrapper(TypeWrapper thisType, RuntimeTypeHandle type, string clazz, string name, string sig, bool isStatic)
 		{
-			TypeWrapper caller = TypeWrapper.FromClass(callerId.getCallerClass());
-			TypeWrapper wrapper = LoadTypeWrapper(clazz, callerId);
+			TypeWrapper caller = ClassLoaderWrapper.GetWrapperFromType(Type.GetTypeFromHandle(type));
+			TypeWrapper wrapper = LoadTypeWrapper(type, clazz);
 			FieldWrapper field = wrapper.GetFieldWrapper(name, sig);
 			if(field == null)
 			{
@@ -197,12 +197,7 @@ namespace IKVM.Runtime
 			{
 				throw new java.lang.IncompatibleClassChangeError(clazz + "." + name);
 			}
-			TypeWrapper objType = null;
-			if(thisObj != null)
-			{
-				objType = ClassLoaderWrapper.GetWrapperFromType(thisObj.GetType());
-			}
-			if(field.IsAccessibleFrom(wrapper, caller, objType))
+			if(field.IsAccessibleFrom(wrapper, caller, thisType))
 			{
 				return field;
 			}
@@ -210,10 +205,10 @@ namespace IKVM.Runtime
 		}
 
 		[DebuggerStepThroughAttribute]
-		public static object DynamicGetfield(object obj, string name, string sig, string clazz, ikvm.@internal.CallerID callerID)
+		public static object DynamicGetfield(object obj, string name, string sig, RuntimeTypeHandle type, string clazz, ikvm.@internal.CallerID callerID)
 		{
 			Profiler.Count("DynamicGetfield");
-			FieldWrapper fw = GetFieldWrapper(obj, clazz, name, sig, false, callerID);
+			FieldWrapper fw = GetFieldWrapper(ClassLoaderWrapper.GetWrapperFromType(obj.GetType()), type, clazz, name, sig, false);
 			java.lang.reflect.Field field = (java.lang.reflect.Field)fw.ToField(false);
 			object val = field.get(obj, callerID);
 			if(fw.FieldTypeWrapper.IsPrimitive)
@@ -224,10 +219,10 @@ namespace IKVM.Runtime
 		}
 
 		[DebuggerStepThroughAttribute]
-		public static object DynamicGetstatic(string name, string sig, string clazz, ikvm.@internal.CallerID callerID)
+		public static object DynamicGetstatic(string name, string sig, RuntimeTypeHandle type, string clazz, ikvm.@internal.CallerID callerID)
 		{
 			Profiler.Count("DynamicGetstatic");
-			FieldWrapper fw = GetFieldWrapper(null, clazz, name, sig, true, callerID);
+			FieldWrapper fw = GetFieldWrapper(null, type, clazz, name, sig, true);
 			java.lang.reflect.Field field = (java.lang.reflect.Field)fw.ToField(false);
 			object val = field.get(null, callerID);
 			if(fw.FieldTypeWrapper.IsPrimitive)
@@ -238,10 +233,10 @@ namespace IKVM.Runtime
 		}
 
 		[DebuggerStepThroughAttribute]
-		public static void DynamicPutfield(object obj, object val, string name, string sig, string clazz, ikvm.@internal.CallerID callerID)
+		public static void DynamicPutfield(object obj, object val, string name, string sig, RuntimeTypeHandle type, string clazz, ikvm.@internal.CallerID callerID)
 		{
 			Profiler.Count("DynamicPutfield");
-			FieldWrapper fw = GetFieldWrapper(obj, clazz, name, sig, false, callerID);
+			FieldWrapper fw = GetFieldWrapper(ClassLoaderWrapper.GetWrapperFromType(obj.GetType()), type, clazz, name, sig, false);
 			if(fw.IsFinal)
 			{
 				throw new java.lang.IllegalAccessError("Field " + fw.DeclaringType.Name + "." + fw.Name + " is final");
@@ -255,10 +250,10 @@ namespace IKVM.Runtime
 		}
 
 		[DebuggerStepThroughAttribute]
-		public static void DynamicPutstatic(object val, string name, string sig, string clazz, ikvm.@internal.CallerID callerID)
+		public static void DynamicPutstatic(object val, string name, string sig, RuntimeTypeHandle type, string clazz, ikvm.@internal.CallerID callerID)
 		{
 			Profiler.Count("DynamicPutstatic");
-			FieldWrapper fw = GetFieldWrapper(null, clazz, name, sig, true, callerID);
+			FieldWrapper fw = GetFieldWrapper(null, type, clazz, name, sig, true);
 			if(fw.IsFinal)
 			{
 				throw new java.lang.IllegalAccessError("Field " + fw.DeclaringType.Name + "." + fw.Name + " is final");
@@ -273,10 +268,10 @@ namespace IKVM.Runtime
 
 		// the sole purpose of this method is to check whether the clazz can be instantiated (but not to actually do it)
 		[DebuggerStepThroughAttribute]
-		public static void DynamicNewCheckOnly(string clazz, ikvm.@internal.CallerID callerId)
+		public static void DynamicNewCheckOnly(RuntimeTypeHandle type, string clazz)
 		{
 			Profiler.Count("DynamicNewCheckOnly");
-			TypeWrapper wrapper = LoadTypeWrapper(clazz, callerId);
+			TypeWrapper wrapper = LoadTypeWrapper(type, clazz);
 			if(wrapper.IsAbstract)
 			{
 				throw new java.lang.InstantiationError(clazz);
@@ -284,16 +279,16 @@ namespace IKVM.Runtime
 			wrapper.RunClassInit();
 		}
 
-		private static TypeWrapper LoadTypeWrapper(string clazz, ikvm.@internal.CallerID callerId)
+		private static TypeWrapper LoadTypeWrapper(RuntimeTypeHandle type, string clazz)
 		{
-#if FIRST_PASS
-			return null;
-#else
 			try
 			{
-				TypeWrapper context = TypeWrapper.FromClass(callerId.getCallerClass());
-				TypeWrapper wrapper = ClassLoaderWrapper.FromCallerID(callerId).LoadClassByDottedName(clazz);
-				callerId.getCallerClassLoader().checkPackageAccess(wrapper.ClassObject, callerId.getCallerClass().pd);
+				TypeWrapper context = ClassLoaderWrapper.GetWrapperFromType(Type.GetTypeFromHandle(type));
+				TypeWrapper wrapper = context.GetClassLoader().LoadClassByDottedNameFast(clazz);
+				if(wrapper == null)
+				{
+					throw new java.lang.NoClassDefFoundError(clazz);
+				}
 				if(!wrapper.IsAccessibleFrom(context))
 				{
 					throw new java.lang.IllegalAccessError("Try to access class " + wrapper.Name + " from class " + context.Name);
@@ -305,23 +300,22 @@ namespace IKVM.Runtime
 			{
 				throw x.ToJava();
 			}
-#endif
 		}
 
 		[DebuggerStepThroughAttribute]
-		public static java.lang.Class DynamicClassLiteral(string clazz, ikvm.@internal.CallerID callerId)
+		public static object DynamicClassLiteral(RuntimeTypeHandle type, string clazz)
 		{
 			Profiler.Count("DynamicClassLiteral");
-			return LoadTypeWrapper(clazz, callerId).ClassObject;
+			return LoadTypeWrapper(type, clazz).ClassObject;
 		}
 
 		[DebuggerStepThroughAttribute]
-		public static object DynamicCast(object obj, string clazz, ikvm.@internal.CallerID callerId)
+		public static object DynamicCast(object obj, RuntimeTypeHandle type, string clazz)
 		{
 			Profiler.Count("DynamicCast");
 			// NOTE it's important that we don't try to load the class if obj == null
 			// (to be compatible with Sun)
-			if(obj != null && !DynamicInstanceOf(obj, clazz, callerId))
+			if(obj != null && !DynamicInstanceOf(obj, type, clazz))
 			{
 				throw new java.lang.ClassCastException(NativeCode.ikvm.runtime.Util.GetTypeWrapperFromObject(obj).Name);
 			}
@@ -329,7 +323,7 @@ namespace IKVM.Runtime
 		}
 
 		[DebuggerStepThroughAttribute]
-		public static bool DynamicInstanceOf(object obj, string clazz, ikvm.@internal.CallerID callerId)
+		public static bool DynamicInstanceOf(object obj, RuntimeTypeHandle type, string clazz)
 		{
 			Profiler.Count("DynamicInstanceOf");
 			// NOTE it's important that we don't try to load the class if obj == null
@@ -338,197 +332,104 @@ namespace IKVM.Runtime
 			{
 				return false;
 			}
-			TypeWrapper wrapper = LoadTypeWrapper(clazz, callerId);
+			TypeWrapper wrapper = LoadTypeWrapper(type, clazz);
 			return wrapper.IsInstance(obj);
 		}
 
-		[DebuggerStepThrough]
-		public static java.lang.invoke.MethodType DynamicLoadMethodType(ref java.lang.invoke.MethodType cache, string sig, ikvm.@internal.CallerID callerID)
+		private static MethodWrapper GetMethodWrapper(TypeWrapper thisType, RuntimeTypeHandle type, string clazz, string name, string sig, bool isStatic)
 		{
-			if (cache == null)
+			TypeWrapper caller = ClassLoaderWrapper.GetWrapperFromType(Type.GetTypeFromHandle(type));
+			TypeWrapper wrapper = LoadTypeWrapper(type, clazz);
+			MethodWrapper mw = wrapper.GetMethodWrapper(name, sig, false);
+			if(mw == null)
 			{
-				DynamicLoadMethodTypeImpl(ref cache, sig, callerID);
+				throw new java.lang.NoSuchMethodError(clazz + "." + name + sig);
 			}
-			return cache;
+			// TODO check loader constraints
+			if(mw.IsStatic != isStatic)
+			{
+				throw new java.lang.IncompatibleClassChangeError(clazz + "." + name);
+			}
+			if(mw.IsAccessibleFrom(wrapper, caller, thisType))
+			{
+				return mw;
+			}
+			throw new java.lang.IllegalAccessError(clazz + "." + name + sig);
 		}
 
-		private static void DynamicLoadMethodTypeImpl(ref java.lang.invoke.MethodType cache, string sig, ikvm.@internal.CallerID callerID)
+		[DebuggerStepThroughAttribute]
+		public static object DynamicInvokeSpecialNew(RuntimeTypeHandle type, string clazz, string name, string sig, object[] args, ikvm.@internal.CallerID callerID)
 		{
-#if !FIRST_PASS
-			try
-			{
-				ClassLoaderWrapper loader = ClassLoaderWrapper.FromCallerID(callerID);
-				TypeWrapper[] args = loader.ArgTypeWrapperListFromSig(sig);
-				java.lang.Class[] ptypes = new java.lang.Class[args.Length];
-				for (int i = 0; i < ptypes.Length; i++)
-				{
-					ptypes[i] = args[i].ClassObject;
-				}
-				Interlocked.CompareExchange(ref cache, java.lang.invoke.MethodType.methodType(loader.RetTypeWrapperFromSig(sig).ClassObject, ptypes), null);
-			}
-			catch (RetargetableJavaException x)
-			{
-				throw x.ToJava();
-			}
-#endif
+			Profiler.Count("DynamicInvokeSpecialNew");
+			MethodWrapper mw = GetMethodWrapper(null, type, clazz, name, sig, false);
+			java.lang.reflect.Constructor cons = (java.lang.reflect.Constructor)mw.ToMethodOrConstructor(false);
+			return cons.newInstance(BoxArgs(mw, args), callerID);
 		}
 
-		[DebuggerStepThrough]
-		public static java.lang.invoke.MethodHandle DynamicLoadMethodHandle(ref java.lang.invoke.MethodHandle cache, int kind, string clazz, string name, string sig, ikvm.@internal.CallerID callerID)
+		[DebuggerStepThroughAttribute]
+		public static object DynamicInvokestatic(RuntimeTypeHandle type, string clazz, string name, string sig, object[] args, ikvm.@internal.CallerID callerID)
 		{
-			if (cache == null)
+			Profiler.Count("DynamicInvokestatic");
+			MethodWrapper mw = GetMethodWrapper(null, type, clazz, name, sig, true);
+			java.lang.reflect.Method m = (java.lang.reflect.Method)mw.ToMethodOrConstructor(false);
+			object val = m.invoke(null, BoxArgs(mw, args), callerID);
+			if (mw.ReturnType.IsPrimitive && mw.ReturnType != PrimitiveTypeWrapper.VOID)
 			{
-				Interlocked.CompareExchange(ref cache, DynamicLoadMethodHandleImpl(kind, clazz, name, sig, callerID), null);
+				val = JVM.Unbox(val);
 			}
-			return cache;
+			return val;
 		}
 
-		private static java.lang.invoke.MethodHandle DynamicLoadMethodHandleImpl(int kind, string clazz, string name, string sig, ikvm.@internal.CallerID callerID)
+		[DebuggerStepThroughAttribute]
+		public static object DynamicInvokevirtual(object obj, RuntimeTypeHandle type, string clazz, string name, string sig, object[] args, ikvm.@internal.CallerID callerID)
 		{
-#if FIRST_PASS
-			return null;
-#else
-			java.lang.invoke.MethodHandles.Lookup lookup = new java.lang.invoke.MethodHandles.Lookup(callerID.getCallerClass(),
-				java.lang.invoke.MethodHandles.Lookup.PUBLIC |
-				java.lang.invoke.MethodHandles.Lookup.PRIVATE |
-				java.lang.invoke.MethodHandles.Lookup.PROTECTED |
-				java.lang.invoke.MethodHandles.Lookup.PACKAGE,
-				true);
-			java.lang.Class refc = LoadTypeWrapper(clazz, callerID).ClassObject;
-			try
+			Profiler.Count("DynamicInvokevirtual");
+			MethodWrapper mw = GetMethodWrapper(ClassLoaderWrapper.GetWrapperFromType(obj.GetType()), type, clazz, name, sig, false);
+			java.lang.reflect.Method m = (java.lang.reflect.Method)mw.ToMethodOrConstructor(false);
+			object val = m.invoke(obj, BoxArgs(mw, args), callerID);
+			if (mw.ReturnType.IsPrimitive && mw.ReturnType != PrimitiveTypeWrapper.VOID)
 			{
-				switch ((ClassFile.RefKind)kind)
-				{
-					case ClassFile.RefKind.getStatic:
-					case ClassFile.RefKind.putStatic:
-					case ClassFile.RefKind.getField:
-					case ClassFile.RefKind.putField:
-						java.lang.Class type = ClassLoaderWrapper.FromCallerID(callerID).FieldTypeWrapperFromSig(sig).ClassObject;
-						switch ((ClassFile.RefKind)kind)
-						{
-							case ClassFile.RefKind.getStatic:
-								return lookup.findStaticGetter(refc, name, type);
-							case ClassFile.RefKind.putStatic:
-								return lookup.findStaticSetter(refc, name, type);
-							case ClassFile.RefKind.getField:
-								return lookup.findGetter(refc, name, type);
-							case ClassFile.RefKind.putField:
-								return lookup.findSetter(refc, name, type);
-							default:
-								throw new InvalidOperationException();
-						}
-					default:
-						java.lang.invoke.MethodType mt = null;
-						DynamicLoadMethodType(ref mt, sig, callerID);
-						switch ((ClassFile.RefKind)kind)
-						{
-							case ClassFile.RefKind.invokeInterface:
-								return lookup.findVirtual(refc, name, mt);
-							case ClassFile.RefKind.invokeSpecial:
-								return lookup.findSpecial(refc, name, mt, callerID.getCallerClass());
-							case ClassFile.RefKind.invokeStatic:
-								return lookup.findStatic(refc, name, mt);
-							case ClassFile.RefKind.invokeVirtual:
-								return lookup.findVirtual(refc, name, mt);
-							case ClassFile.RefKind.newInvokeSpecial:
-								return lookup.findConstructor(refc, mt);
-							default:
-								throw new InvalidOperationException();
-						}
-				}
+				val = JVM.Unbox(val);
 			}
-			catch (RetargetableJavaException x)
-			{
-				throw x.ToJava();
-			}
-			catch (java.lang.ReflectiveOperationException x)
-			{
-				throw new java.lang.IncompatibleClassChangeError().initCause(x);
-			}
-#endif
+			return val;
 		}
 
-		[DebuggerStepThrough]
-		public static T DynamicBinderMemberLookup<T>(int kind, string clazz, string name, string sig, ikvm.@internal.CallerID callerID)
-			where T : class /* delegate */
+		private static object[] BoxArgs(MethodWrapper mw, object[] args)
 		{
-#if FIRST_PASS
-			return null;
-#else
-			try
+			TypeWrapper[] paramTypes = mw.GetParameters();
+			for (int i = 0; i < paramTypes.Length; i++)
 			{
-				java.lang.invoke.MethodHandle mh = DynamicLoadMethodHandleImpl(kind, clazz, name, sig, callerID);
-				return mh.vmtarget as T
-					?? (T)mh.asType(MethodHandleUtil.GetDelegateMethodType(typeof(T))).vmtarget;
+				if (paramTypes[i].IsPrimitive)
+				{
+					args[i] = JVM.Box(args[i]);
+				}
 			}
-			catch (java.lang.IncompatibleClassChangeError x)
-			{
-				if (x.getCause() is java.lang.NoSuchMethodException)
-				{
-					throw new java.lang.NoSuchMethodError(x.getCause().Message);
-				}
-				if (x.getCause() is java.lang.NoSuchFieldException)
-				{
-					throw new java.lang.NoSuchFieldError(x.getCause().Message);
-				}
-				if (x.getCause() is java.lang.IllegalAccessException)
-				{
-					throw new java.lang.IllegalAccessError(x.getCause().Message);
-				}
-				throw;
-			}
-#endif
+			return args;
 		}
 
-		[DebuggerStepThrough]
-		public static Delegate DynamicCreateDelegate(object obj, Type delegateType, string name, string sig)
+		[DebuggerStepThroughAttribute]
+		public static Type DynamicGetTypeAsExceptionType(RuntimeTypeHandle type, string clazz)
 		{
-			TypeWrapper tw = TypeWrapper.FromClass(ikvm.runtime.Util.getClassFromObject(obj));
-			MethodWrapper mw = tw.GetMethodWrapper(name, sig, true);
-			if (mw == null || mw.IsStatic || !mw.IsPublic)
-			{
-				MethodInfo invoke = delegateType.GetMethod("Invoke");
-				ParameterInfo[] parameters = invoke.GetParameters();
-				Type[] parameterTypes = new Type[parameters.Length + 1];
-				parameterTypes[0] = typeof(object);
-				for (int i = 0; i < parameters.Length; i++)
-				{
-					parameterTypes[i + 1] = parameters[i].ParameterType;
-				}
-				System.Reflection.Emit.DynamicMethod dm = new System.Reflection.Emit.DynamicMethod("Invoke", invoke.ReturnType, parameterTypes);
-				CodeEmitter ilgen = CodeEmitter.Create(dm);
-				ilgen.Emit(System.Reflection.Emit.OpCodes.Ldstr, tw.Name + ".Invoke" + sig);
-				ClassLoaderWrapper.GetBootstrapClassLoader()
-					.LoadClassByDottedName(mw == null || mw.IsStatic ? "java.lang.AbstractMethodError" : "java.lang.IllegalAccessError")
-					.GetMethodWrapper("<init>", "(Ljava.lang.String;)V", false)
-					.EmitNewobj(ilgen);
-				ilgen.Emit(System.Reflection.Emit.OpCodes.Throw);
-				ilgen.DoEmit();
-				return dm.CreateDelegate(delegateType, obj);
-			}
-			else
-			{
-				mw.ResolveMethod();
-				return Delegate.CreateDelegate(delegateType, obj, (MethodInfo)mw.GetMethod());
-			}
+			Profiler.Count("DynamicGetTypeAsExceptionType");
+			return LoadTypeWrapper(type, clazz).TypeAsExceptionType;
 		}
 #else
 		[DebuggerStepThroughAttribute]
 		public static object DynamicCast(object obj, RuntimeTypeHandle type, string clazz)
 		{
-			return null;
+			if(obj != null)
+			{
+#if !FIRST_PASS
+				throw new java.lang.ClassCastException();
+#endif
+			}
+			return obj;
 		}
 
 		[DebuggerStepThroughAttribute]
 		public static bool DynamicInstanceOf(object obj, RuntimeTypeHandle type, string clazz)
 		{
 			return false;
-		}
-
-		[DebuggerStepThrough]
-		public static Delegate DynamicCreateDelegate(object obj, Type delegateType)
-		{
-			return null;
 		}
 #endif //!FIRST_PASS
 
@@ -644,7 +545,7 @@ namespace IKVM.Runtime
 				if(src1 != null && dst1 != null)
 				{
 					// for small copies, don't bother comparing the types as this is relatively expensive
-					if(len > 50 && src.GetType() == dest.GetType())
+					if(len > 50 && Type.GetTypeHandle(src).Value == Type.GetTypeHandle(dest).Value)
 					{
 						arraycopy_fast(src1, srcStart, dst1, destStart, len);
 						return;
@@ -660,7 +561,7 @@ namespace IKVM.Runtime
 						return;
 					}
 				}
-				else if(src.GetType() != dest.GetType() &&
+				else if(Type.GetTypeHandle(src).Value != Type.GetTypeHandle(dest).Value &&
 						(IsPrimitiveArrayType(src.GetType()) || IsPrimitiveArrayType(dest.GetType())))
 				{
 					// we don't want to allow copying a primitive into an object array!
@@ -868,213 +769,6 @@ namespace IKVM.Runtime
 		{
 			Interlocked.Exchange(ref v, newValue);
 		}
-
-		[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-		public static void InitializeModule(Module module)
-		{
-			Assembly asm = Assembly.GetCallingAssembly();
-			if (module.Assembly != asm)
-			{
-				throw new ArgumentOutOfRangeException();
-			}
-			object classLoader = AssemblyClassLoader.FromAssembly(asm).GetJavaClassLoader();
-			Action<Module> init = (Action<Module>)Delegate.CreateDelegate(typeof(Action<Module>), classLoader, "InitializeModule", false, false);
-			if (init != null)
-			{
-				init(module);
-			}
-		}
-
-		public static T GetDotNetEnumField<T>(string name)
-#if !FIRST_PASS
-			where T : java.lang.Enum
-#endif
-		{
-#if FIRST_PASS
-			return default(T);
-#else
-			try
-			{
-				return (T)java.lang.Enum.valueOf(ikvm.@internal.ClassLiteral<T>.Value, name);
-			}
-			catch (java.lang.IllegalArgumentException)
-			{
-				throw new java.lang.NoSuchFieldError(ikvm.@internal.ClassLiteral<T>.Value.getName() + "." + name);
-			}
-#endif
-		}
-
-		[Flags]
-		public enum MapFlags
-		{
-			None = 0,
-			NoRemapping = 1,
-			Unused = 2,
-		}
-
-		[HideFromJava]
-		public static T MapException<T>(Exception x, MapFlags mode) where T : Exception
-		{
-			return ExceptionHelper.MapException<T>(x, (mode & MapFlags.NoRemapping) == 0, (mode & MapFlags.Unused) != 0);
-		}
-
-		public static T GetDelegateForInvokeExact<T>(global::java.lang.invoke.MethodHandle h)
-			where T : class
-		{
-#if FIRST_PASS
-			return null;
-#else
-			T del = h.vmtarget as T;
-			if (del == null)
-			{
-				throw new global::java.lang.invoke.WrongMethodTypeException();
-			}
-			return del;
-#endif
-		}
-
-		public static T GetDelegateForInvoke<T>(global::java.lang.invoke.MethodHandle h, ref InvokeCache<T> cache)
-			where T : class
-		{
-#if FIRST_PASS
-			return null;
-#else
-			if (cache.type == h.type() && cache.del != null)
-			{
-				return cache.del;
-			}
-			T del = h.vmtarget as T;
-			if (del == null)
-			{
-				global::java.lang.invoke.MethodHandle adapter = global::java.lang.invoke.MethodHandles.exactInvoker(h.type());
-				if (h.isVarargsCollector())
-				{
-					adapter = adapter.asVarargsCollector(h.type().parameterType(h.type().parameterCount() - 1));
-				}
-				del = (T)adapter.asType(MethodHandleUtil.GetDelegateMethodType(typeof(T))).vmtarget;
-				if (Interlocked.CompareExchange(ref cache.type, h.type(), null) == null)
-				{
-					cache.del = del;
-				}
-			}
-			return del;
-#endif
-		}
-
-		public static java.lang.invoke.MethodType LoadMethodType<T>()
-			where T : class // Delegate
-		{
-#if FIRST_PASS
-			return null;
-#else
-			return MethodHandleUtil.GetDelegateMethodType(typeof(T));
-#endif
-		}
-
-#if !FIRST_PASS
-		sealed class ConstantMethodHandle : java.lang.invoke.MethodHandle
-		{
-			internal ConstantMethodHandle(Delegate del)
-				: base(MethodHandleUtil.GetDelegateMethodType(del.GetType()))
-			{
-				this.vmtarget = del;
-			}
-		}
-#endif
-
-		public static java.lang.invoke.MethodHandle MethodHandleFromDelegate(Delegate del)
-		{
-#if FIRST_PASS
-			return null;
-#else
-			return new ConstantMethodHandle(del);
-#endif
-		}
-
-		[HideFromJava]
-		public static void LinkIndyCallSite<T>(ref IndyCallSite<T> site, java.lang.invoke.CallSite cs, Exception x)
-			where T : class // Delegate
-		{
-#if !FIRST_PASS
-			IndyCallSite<T> ics;
-			if (x != null || cs == null || (ics = cs.ics as IndyCallSite<T>) == null)
-			{
-				x = MapException<Exception>(x ?? (cs == null
-					? (Exception)new java.lang.ClassCastException("bootstrap method failed to produce a CallSite")
-					: new java.lang.invoke.WrongMethodTypeException()), MapFlags.None);
-				java.lang.invoke.MethodType type = LoadMethodType<T>();
-				ics = new IndyCallSite<T>((T)
-					java.lang.invoke.MethodHandles.dropArguments(
-						java.lang.invoke.MethodHandles.foldArguments(
-							java.lang.invoke.MethodHandles.throwException(type.returnType(), typeof(java.lang.BootstrapMethodError)),
-								new ConstantMethodHandle((MH<Exception, java.lang.BootstrapMethodError>)CreateBootstrapException).bindTo(x)),
-						0, type.parameterArray())
-					.vmtarget,
-					false);
-			}
-			IndyCallSite<T> curr = site;
-			if (curr.IsBootstrap)
-			{
-				Interlocked.CompareExchange(ref site, ics, curr);
-			}
-#endif
-		}
-
-#if !FIRST_PASS
-		[HideFromJava]
-		private static java.lang.BootstrapMethodError CreateBootstrapException(Exception x)
-		{
-			if (x is java.lang.BootstrapMethodError)
-			{
-				return (java.lang.BootstrapMethodError)x;
-			}
-			return new java.lang.BootstrapMethodError("call site initialization exception", x);
-		}
-#endif
-	}
-
-	public sealed class IndyCallSite<T>
-#if !FIRST_PASS
-		: java.lang.invoke.CallSite.IndyCallSite
-#endif
-		where T : class // Delegate
-	{
-		internal readonly bool IsBootstrap;
-		private volatile T target;
-
-		internal IndyCallSite()
-		{
-		}
-
-		internal IndyCallSite(T target, bool bootstrap)
-		{
-			this.IsBootstrap = bootstrap;
-			this.target = target;
-		}
-
-#if !FIRST_PASS
-		void java.lang.invoke.CallSite.IndyCallSite.setTarget(object target)
-		{
-			this.target = (T)target;
-		}
-#endif
-
-		public static IndyCallSite<T> CreateBootstrap(T bootstrap)
-		{
-			return new IndyCallSite<T>(bootstrap, true);
-		}
-
-		public T GetTarget()
-		{
-			return target;
-		}
-	}
-
-	public struct InvokeCache<T>
-		where T : class
-	{
-		internal global::java.lang.invoke.MethodType type;
-		internal T del;
 	}
 
 	[StructLayout(LayoutKind.Explicit)]
@@ -1118,48 +812,4 @@ namespace IKVM.Runtime
 			return converter.f;
 		}
 	}
-
-	public struct MHA<T1, T2, T3, T4, T5, T6, T7, T8>
-	{
-		public T1 t1;
-		public T2 t2;
-		public T3 t3;
-		public T4 t4;
-		public T5 t5;
-		public T6 t6;
-		public T7 t7;
-		public T8 t8;
-
-		public MHA(T1 t1, T2 t2, T3 t3, T4 t4, T5 t5, T6 t6, T7 t7, T8 t8)
-		{
-			this.t1 = t1;
-			this.t2 = t2;
-			this.t3 = t3;
-			this.t4 = t4;
-			this.t5 = t5;
-			this.t6 = t6;
-			this.t7 = t7;
-			this.t8 = t8;
-		}
-	}
-
-	public delegate void MHV();
-	public delegate void MHV<T1>(T1 t1);
-	public delegate void MHV<T1, T2>(T1 t1, T2 t2);
-	public delegate void MHV<T1, T2, T3>(T1 t1, T2 t2, T3 t3);
-	public delegate void MHV<T1, T2, T3, T4>(T1 t1, T2 t2, T3 t3, T4 t4);
-	public delegate void MHV<T1, T2, T3, T4, T5>(T1 t1, T2 t2, T3 t3, T4 t4, T5 t5);
-	public delegate void MHV<T1, T2, T3, T4, T5, T6>(T1 t1, T2 t2, T3 t3, T4 t4, T5 t5, T6 t6);
-	public delegate void MHV<T1, T2, T3, T4, T5, T6, T7>(T1 t1, T2 t2, T3 t3, T4 t4, T5 t5, T6 t6, T7 t7);
-	public delegate void MHV<T1, T2, T3, T4, T5, T6, T7, T8>(T1 t1, T2 t2, T3 t3, T4 t4, T5 t5, T6 t6, T7 t7, T8 t8);
-
-	public delegate TResult MH<TResult>();
-	public delegate TResult MH<T1, TResult>(T1 t1);
-	public delegate TResult MH<T1, T2, TResult>(T1 t1, T2 t2);
-	public delegate TResult MH<T1, T2, T3, TResult>(T1 t1, T2 t2, T3 t3);
-	public delegate TResult MH<T1, T2, T3, T4, TResult>(T1 t1, T2 t2, T3 t3, T4 t4);
-	public delegate TResult MH<T1, T2, T3, T4, T5, TResult>(T1 t1, T2 t2, T3 t3, T4 t4, T5 t5);
-	public delegate TResult MH<T1, T2, T3, T4, T5, T6, TResult>(T1 t1, T2 t2, T3 t3, T4 t4, T5 t5, T6 t6);
-	public delegate TResult MH<T1, T2, T3, T4, T5, T6, T7, TResult>(T1 t1, T2 t2, T3 t3, T4 t4, T5 t5, T6 t6, T7 t7);
-	public delegate TResult MH<T1, T2, T3, T4, T5, T6, T7, T8, TResult>(T1 t1, T2 t2, T3 t3, T4 t4, T5 t5, T6 t6, T7 t7, T8 t8);
 }
