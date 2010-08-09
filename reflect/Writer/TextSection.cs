@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2008-2013 Jeroen Frijters
+  Copyright (C) 2008 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -37,20 +37,14 @@ namespace IKVM.Reflection.Writer
 		private readonly PEWriter peWriter;
 		private readonly CliHeader cliHeader;
 		private readonly ModuleBuilder moduleBuilder;
-		private readonly uint strongNameSignatureLength;
-		private readonly ExportTables exportTables;
-		private readonly List<RelocationBlock> relocations = new List<RelocationBlock>();
+		private readonly bool strongName;
 
-		internal TextSection(PEWriter peWriter, CliHeader cliHeader, ModuleBuilder moduleBuilder, int strongNameSignatureLength)
+		internal TextSection(PEWriter peWriter, CliHeader cliHeader, ModuleBuilder moduleBuilder, bool strongName)
 		{
 			this.peWriter = peWriter;
 			this.cliHeader = cliHeader;
 			this.moduleBuilder = moduleBuilder;
-			this.strongNameSignatureLength = (uint)strongNameSignatureLength;
-			if (moduleBuilder.unmanagedExports.Count != 0)
-			{
-				this.exportTables = new ExportTables(this);
-			}
+			this.strongName = strongName;
 		}
 
 		internal uint PointerToRawData
@@ -60,7 +54,7 @@ namespace IKVM.Reflection.Writer
 
 		internal uint BaseRVA
 		{
-			get { return peWriter.Headers.OptionalHeader.SectionAlignment; }
+			get { return 0x2000; }
 		}
 
 		internal uint ImportAddressTableRVA
@@ -70,7 +64,17 @@ namespace IKVM.Reflection.Writer
 
 		internal uint ImportAddressTableLength
 		{
-			get { return peWriter.Is32Bit ? 8u : 16u; }
+			get
+			{
+				if (peWriter.Headers.FileHeader.Machine == IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_I386)
+				{
+					return 8;
+				}
+				else
+				{
+					return 16;
+				}
+			}
 		}
 
 		internal uint ComDescriptorRVA
@@ -97,13 +101,13 @@ namespace IKVM.Reflection.Writer
 		{
 			get
 			{
-				switch (peWriter.Headers.FileHeader.Machine)
+				if (peWriter.Headers.FileHeader.Machine == IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_I386)
 				{
-					case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_I386:
-					case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_ARM:
-						return (MethodBodiesRVA + MethodBodiesLength + 3) & ~3U;
-					default:
-						return (MethodBodiesRVA + MethodBodiesLength + 15) & ~15U;
+					return (MethodBodiesRVA + MethodBodiesLength + 3) & ~3U;
+				}
+				else
+				{
+					return (MethodBodiesRVA + MethodBodiesLength + 15) & ~15U;
 				}
 			}
 		}
@@ -125,7 +129,14 @@ namespace IKVM.Reflection.Writer
 		{
 			get
 			{
-				return strongNameSignatureLength;
+				if (strongName)
+				{
+					return 128;
+				}
+				else
+				{
+					return 0;
+				}
 			}
 		}
 
@@ -142,19 +153,9 @@ namespace IKVM.Reflection.Writer
 			get { return (uint)moduleBuilder.MetadataLength; }
 		}
 
-		private uint VTableFixupsRVA
-		{
-			get { return (MetadataRVA + MetadataLength + 7) & ~7U; }
-		}
-
-		private uint VTableFixupsLength
-		{
-			get { return (uint)moduleBuilder.vtablefixups.Count * 8; }
-		}
-
 		internal uint DebugDirectoryRVA
 		{
-			get { return VTableFixupsRVA + VTableFixupsLength; }
+			get { return MetadataRVA + MetadataLength; }
 		}
 
 		internal uint DebugDirectoryLength
@@ -182,30 +183,10 @@ namespace IKVM.Reflection.Writer
 			}
 		}
 
-		internal uint ExportDirectoryRVA
-		{
-			get { return (DebugDirectoryRVA + DebugDirectoryLength + DebugDirectoryContentsLength + 15) & ~15U; }
-		}
-
-		internal uint ExportDirectoryLength
-		{
-			get { return moduleBuilder.unmanagedExports.Count == 0 ? 0U : 40U; }
-		}
-
-		private uint ExportTablesRVA
-		{
-			get { return ExportDirectoryRVA + ExportDirectoryLength; }
-		}
-
-		private uint ExportTablesLength
-		{
-			get { return exportTables == null ? 0U : exportTables.Length; }
-		}
-
 		internal uint ImportDirectoryRVA
 		{
 			// on AMD64 (and probably IA64) the import directory needs to be 16 byte aligned (on I386 4 byte alignment is sufficient)
-			get { return (ExportTablesRVA + ExportTablesLength + 15) & ~15U; }
+			get { return (DebugDirectoryRVA + DebugDirectoryLength + DebugDirectoryContentsLength + 15) & ~15U; }
 		}
 
 		internal uint ImportDirectoryLength
@@ -217,9 +198,14 @@ namespace IKVM.Reflection.Writer
 		{
 			get
 			{
-				return peWriter.Is32Bit
-					? (ImportDirectoryRVA + 48 + 15) & ~15U
-					: (ImportDirectoryRVA + 52 + 15) & ~15U;
+				if (peWriter.Headers.FileHeader.Machine == IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_I386)
+				{
+					return (ImportDirectoryRVA + 48 + 15) & ~15U;
+				}
+				else
+				{
+					return (ImportDirectoryRVA + 48 + 4 + 15) & ~15U;
+				}
 			}
 		}
 
@@ -244,84 +230,70 @@ namespace IKVM.Reflection.Writer
 		{
 			get
 			{
-				switch (peWriter.Headers.FileHeader.Machine)
+				if (peWriter.Headers.FileHeader.Machine == IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_AMD64)
 				{
-					case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_I386:
-						return 6;
-					case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_AMD64:
-					case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_ARM:
-						return 12;
-					case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_IA64:
-						return 48;
-					default:
-						throw new NotSupportedException();
+					return 12;
+				}
+				else if (peWriter.Headers.FileHeader.Machine == IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_IA64)
+				{
+					return 48;
+				}
+				else
+				{
+					return 6;
 				}
 			}
 		}
 
 		private void WriteRVA(MetadataWriter mw, uint rva)
 		{
-			switch (peWriter.Headers.FileHeader.Machine)
+			if (peWriter.Headers.FileHeader.Machine == IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_I386)
 			{
-				case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_I386:
-				case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_ARM:
-					mw.Write(rva);
-					break;
-				default:
-					mw.Write((ulong)rva);
-					break;
+				mw.Write(rva);
+			}
+			else
+			{
+				mw.Write((ulong)rva);
 			}
 		}
 
-		internal void Write(MetadataWriter mw, uint sdataRVA)
+		internal void Write(MetadataWriter mw, int sdataRVA)
 		{
 			// Now that we're ready to start writing, we need to do some fix ups
-			moduleBuilder.TypeRef.Fixup(moduleBuilder);
 			moduleBuilder.MethodDef.Fixup(this);
 			moduleBuilder.MethodImpl.Fixup(moduleBuilder);
 			moduleBuilder.MethodSemantics.Fixup(moduleBuilder);
 			moduleBuilder.InterfaceImpl.Fixup();
-			moduleBuilder.ResolveInterfaceImplPseudoTokens();
 			moduleBuilder.MemberRef.Fixup(moduleBuilder);
 			moduleBuilder.Constant.Fixup(moduleBuilder);
 			moduleBuilder.FieldMarshal.Fixup(moduleBuilder);
 			moduleBuilder.DeclSecurity.Fixup(moduleBuilder);
-			moduleBuilder.GenericParam.Fixup(moduleBuilder);
 			moduleBuilder.CustomAttribute.Fixup(moduleBuilder);
 			moduleBuilder.FieldLayout.Fixup(moduleBuilder);
-			moduleBuilder.FieldRVA.Fixup(moduleBuilder, (int)sdataRVA, (int)this.MethodBodiesRVA);
+			moduleBuilder.FieldRVA.Fixup(moduleBuilder, sdataRVA);
 			moduleBuilder.ImplMap.Fixup(moduleBuilder);
-			moduleBuilder.ExportedType.Fixup(moduleBuilder);
-			moduleBuilder.ManifestResource.Fixup(moduleBuilder);
+			moduleBuilder.GenericParam.Fixup(moduleBuilder);
 			moduleBuilder.MethodSpec.Fixup(moduleBuilder);
 			moduleBuilder.GenericParamConstraint.Fixup(moduleBuilder);
 
 			// Import Address Table
 			AssertRVA(mw, ImportAddressTableRVA);
-			if (ImportAddressTableLength != 0)
-			{
-				WriteRVA(mw, ImportHintNameTableRVA);
-				WriteRVA(mw, 0);
-			}
+			WriteRVA(mw, ImportHintNameTableRVA);
+			WriteRVA(mw, 0);
 
 			// CLI Header
 			AssertRVA(mw, ComDescriptorRVA);
-			cliHeader.MetaData.VirtualAddress = MetadataRVA;
-			cliHeader.MetaData.Size = MetadataLength;
+			cliHeader.MetaDataRVA = MetadataRVA;
+			cliHeader.MetaDataSize = MetadataLength;
 			if (ResourcesLength != 0)
 			{
-				cliHeader.Resources.VirtualAddress = ResourcesRVA;
-				cliHeader.Resources.Size = ResourcesLength;
+				cliHeader.ResourcesRVA = ResourcesRVA;
+				cliHeader.ResourcesSize = ResourcesLength;
 			}
 			if (StrongNameSignatureLength != 0)
 			{
-				cliHeader.StrongNameSignature.VirtualAddress = StrongNameSignatureRVA;
-				cliHeader.StrongNameSignature.Size = StrongNameSignatureLength;
-			}
-			if (VTableFixupsLength != 0)
-			{
-				cliHeader.VTableFixups.VirtualAddress = VTableFixupsRVA;
-				cliHeader.VTableFixups.Size = VTableFixupsLength;
+				cliHeader.StrongNameSignatureRVA = StrongNameSignatureRVA;
+				cliHeader.StrongNameSignatureSize = StrongNameSignatureLength;
 			}
 			cliHeader.Write(mw);
 
@@ -356,46 +328,19 @@ namespace IKVM.Reflection.Writer
 			AssertRVA(mw, MetadataRVA);
 			moduleBuilder.WriteMetadata(mw);
 
-			// alignment padding
-			for (int i = (int)(VTableFixupsRVA - (MetadataRVA + MetadataLength)); i > 0; i--)
-			{
-				mw.Write((byte)0);
-			}
-
-			// VTableFixups
-			AssertRVA(mw, VTableFixupsRVA);
-			WriteVTableFixups(mw, sdataRVA);
-
 			// Debug Directory
 			AssertRVA(mw, DebugDirectoryRVA);
 			WriteDebugDirectory(mw);
 
 			// alignment padding
-			for (int i = (int)(ExportDirectoryRVA - (DebugDirectoryRVA + DebugDirectoryLength + DebugDirectoryContentsLength)); i > 0; i--)
-			{
-				mw.Write((byte)0);
-			}
-
-			// Export Directory
-			AssertRVA(mw, ExportDirectoryRVA);
-			WriteExportDirectory(mw);
-
-			// Export Tables
-			AssertRVA(mw, ExportTablesRVA);
-			WriteExportTables(mw, sdataRVA);
-	
-			// alignment padding
-			for (int i = (int)(ImportDirectoryRVA - (ExportTablesRVA + ExportTablesLength)); i > 0; i--)
+			for (int i = (int)(ImportDirectoryRVA - (DebugDirectoryRVA + DebugDirectoryLength + DebugDirectoryContentsLength)); i > 0; i--)
 			{
 				mw.Write((byte)0);
 			}
 
 			// Import Directory
 			AssertRVA(mw, ImportDirectoryRVA);
-			if (ImportDirectoryLength != 0)
-			{
-				WriteImportDirectory(mw);
-			}
+			WriteImportDirectory(mw);
 
 			// alignment padding
 			for (int i = (int)(StartupStubRVA - (ImportDirectoryRVA + ImportDirectoryLength)); i > 0; i--)
@@ -424,26 +369,10 @@ namespace IKVM.Reflection.Writer
 				mw.Write(peWriter.Headers.OptionalHeader.ImageBase + StartupStubRVA);
 				mw.Write(peWriter.Headers.OptionalHeader.ImageBase + BaseRVA);
 			}
-			else if (peWriter.Headers.FileHeader.Machine == IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_I386)
+			else
 			{
 				mw.Write((ushort)0x25FF);
 				mw.Write((uint)peWriter.Headers.OptionalHeader.ImageBase + ImportAddressTableRVA);
-			}
-			else if (peWriter.Headers.FileHeader.Machine == IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_ARM)
-			{
-				uint rva = (uint)peWriter.Headers.OptionalHeader.ImageBase + ImportAddressTableRVA;
-				ushort lo = (ushort)rva;
-				ushort hi = (ushort)(rva >> 16);
-				mw.Write((ushort)(0xF240 + (lo >> 12)));
-				mw.Write((ushort)(0x0C00 + ((lo << 4) & 0xF000) + (lo & 0xFF)));
-				mw.Write((ushort)(0xF2C0 + (hi >> 12)));
-				mw.Write((ushort)(0x0C00 + ((hi << 4) & 0xF000) + (hi & 0xFF)));
-				mw.Write((ushort)0xF8DC);
-				mw.Write((ushort)0xF000);
-			}
-			else
-			{
-				throw new NotSupportedException();
 			}
 		}
 
@@ -451,16 +380,6 @@ namespace IKVM.Reflection.Writer
 		private void AssertRVA(MetadataWriter mw, uint rva)
 		{
 			Debug.Assert(mw.Position - PointerToRawData + BaseRVA == rva);
-		}
-
-		private void WriteVTableFixups(MetadataWriter mw, uint sdataRVA)
-		{
-			foreach (ModuleBuilder.VTableFixups fixups in moduleBuilder.vtablefixups)
-			{
-				mw.Write(fixups.initializedDataOffset + sdataRVA);
-				mw.Write(fixups.count);
-				mw.Write(fixups.type);
-			}
 		}
 
 		private void WriteDebugDirectory(MetadataWriter mw)
@@ -472,7 +391,6 @@ namespace IKVM.Reflection.Writer
 				idd.TimeDateStamp = peWriter.Headers.FileHeader.TimeDateStamp;
 				byte[] buf = SymbolSupport.GetDebugInfo(moduleBuilder.symbolWriter, ref idd);
 				idd.PointerToRawData = (DebugDirectoryRVA - BaseRVA) + DebugDirectoryLength + PointerToRawData;
-				idd.AddressOfRawData = DebugDirectoryRVA + DebugDirectoryLength;
 				mw.Write(idd.Characteristics);
 				mw.Write(idd.TimeDateStamp);
 				mw.Write(idd.MajorVersion);
@@ -482,304 +400,6 @@ namespace IKVM.Reflection.Writer
 				mw.Write(idd.AddressOfRawData);
 				mw.Write(idd.PointerToRawData);
 				mw.Write(buf);
-			}
-		}
-
-		private sealed class ExportTables
-		{
-			private readonly TextSection text;
-			internal readonly uint entries;
-			internal readonly uint ordinalBase;
-			internal readonly uint nameCount;
-			internal readonly uint namesLength;
-			internal readonly uint exportAddressTableRVA;
-			internal readonly uint exportNamePointerTableRVA;
-			internal readonly uint exportOrdinalTableRVA;
-			internal readonly uint namesRVA;
-			internal readonly uint stubsRVA;
-			private readonly uint stubLength;
-
-			internal ExportTables(TextSection text)
-			{
-				this.text = text;
-				ordinalBase = GetOrdinalBase(out entries);
-				namesLength = GetExportNamesLength(out nameCount);
-				exportAddressTableRVA = text.ExportTablesRVA;
-				exportNamePointerTableRVA = exportAddressTableRVA + 4 * entries;
-				exportOrdinalTableRVA = exportNamePointerTableRVA + 4 * nameCount;
-				namesRVA = exportOrdinalTableRVA + 2 * nameCount;
-				stubsRVA = (namesRVA + namesLength + 15) & ~15U;
-				// note that we align the stubs to avoid having to deal with the relocation crossing a page boundary
-				switch (text.peWriter.Headers.FileHeader.Machine)
-				{
-					case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_I386:
-						stubLength = 8;
-						break;
-					case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_AMD64:
-					case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_ARM:
-						stubLength = 16;
-						break;
-					default:
-						throw new NotSupportedException();
-				}
-			}
-
-			internal uint Length
-			{
-				get { return (stubsRVA + stubLength * (uint)text.moduleBuilder.unmanagedExports.Count) - text.ExportTablesRVA; }
-			}
-
-			private uint GetOrdinalBase(out uint entries)
-			{
-				uint min = uint.MaxValue;
-				uint max = uint.MinValue;
-				foreach (UnmanagedExport exp in text.moduleBuilder.unmanagedExports)
-				{
-					uint ordinal = (uint)exp.ordinal;
-					min = Math.Min(min, ordinal);
-					max = Math.Max(max, ordinal);
-				}
-				entries = 1 + (max - min);
-				return min;
-			}
-
-			private uint GetExportNamesLength(out uint nameCount)
-			{
-				nameCount = 0;
-				// the first name in the names list is the module name (the Export Directory contains a name of the current module)
-				uint length = (uint)text.moduleBuilder.fileName.Length + 1;
-				foreach (UnmanagedExport exp in text.moduleBuilder.unmanagedExports)
-				{
-					if (exp.name != null)
-					{
-						nameCount++;
-						length += (uint)exp.name.Length + 1;
-					}
-				}
-				return length;
-			}
-
-			internal void Write(MetadataWriter mw, uint sdataRVA)
-			{
-				// sort the exports by ordinal
-				text.moduleBuilder.unmanagedExports.Sort(CompareUnmanagedExportOrdinals);
-
-				// Now write the Export Address Table
-				text.AssertRVA(mw, exportAddressTableRVA);
-				for (int i = 0, pos = 0; i < entries; i++)
-				{
-					if (text.moduleBuilder.unmanagedExports[pos].ordinal == i + ordinalBase)
-					{
-						mw.Write(text.peWriter.Thumb + stubsRVA + (uint)pos * stubLength);
-						pos++;
-					}
-					else
-					{
-						mw.Write(0);
-					}
-				}
-
-				// sort the exports by name
-				text.moduleBuilder.unmanagedExports.Sort(CompareUnmanagedExportNames);
-
-				// Now write the Export Name Pointer Table
-				text.AssertRVA(mw, exportNamePointerTableRVA);
-				uint nameOffset = (uint)text.moduleBuilder.fileName.Length + 1;
-				foreach (UnmanagedExport exp in text.moduleBuilder.unmanagedExports)
-				{
-					if (exp.name != null)
-					{
-						mw.Write(namesRVA + nameOffset);
-						nameOffset += (uint)exp.name.Length + 1;
-					}
-				}
-
-				// Now write the Export Ordinal Table
-				text.AssertRVA(mw, exportOrdinalTableRVA);
-				foreach (UnmanagedExport exp in text.moduleBuilder.unmanagedExports)
-				{
-					if (exp.name != null)
-					{
-						mw.Write((ushort)(exp.ordinal - ordinalBase));
-					}
-				}
-
-				// Now write the actual names
-				text.AssertRVA(mw, namesRVA);
-				mw.WriteAsciiz(text.moduleBuilder.fileName);
-				foreach (UnmanagedExport exp in text.moduleBuilder.unmanagedExports)
-				{
-					if (exp.name != null)
-					{
-						mw.WriteAsciiz(exp.name);
-					}
-				}
-				text.AssertRVA(mw, namesRVA + namesLength);
-
-				// alignment padding
-				for (int i = (int)(stubsRVA - (namesRVA + namesLength)); i > 0; i--)
-				{
-					mw.Write((byte)0);
-				}
-
-				// sort the exports by ordinal
-				text.moduleBuilder.unmanagedExports.Sort(CompareUnmanagedExportOrdinals);
-
-				// Now write the stubs
-				text.AssertRVA(mw, stubsRVA);
-
-				for (int i = 0, pos = 0; i < entries; i++)
-				{
-					if (text.moduleBuilder.unmanagedExports[pos].ordinal == i + ordinalBase)
-					{
-						switch (text.peWriter.Headers.FileHeader.Machine)
-						{
-							case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_I386:
-								mw.Write((byte)0xFF);
-								mw.Write((byte)0x25);
-								mw.Write((uint)text.peWriter.Headers.OptionalHeader.ImageBase + text.moduleBuilder.unmanagedExports[pos].rva.initializedDataOffset + sdataRVA);
-								mw.Write((short)0);	// alignment
-								break;
-							case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_AMD64:
-								mw.Write((byte)0x48);
-								mw.Write((byte)0xA1);
-								mw.Write(text.peWriter.Headers.OptionalHeader.ImageBase + text.moduleBuilder.unmanagedExports[pos].rva.initializedDataOffset + sdataRVA);
-								mw.Write((byte)0xFF);
-								mw.Write((byte)0xE0);
-								mw.Write(0); // alignment
-								break;
-							case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_ARM:
-								mw.Write((ushort)0xF8DF);
-								mw.Write((ushort)0xC008);
-								mw.Write((ushort)0xF8DC);
-								mw.Write((ushort)0xC000);
-								mw.Write((ushort)0x4760);
-								mw.Write((ushort)0xDEFE);
-								mw.Write((uint)text.peWriter.Headers.OptionalHeader.ImageBase + text.moduleBuilder.unmanagedExports[pos].rva.initializedDataOffset + sdataRVA);
-								break;
-							default:
-								throw new NotSupportedException();
-						}
-						pos++;
-					}
-				}
-			}
-
-			private static int CompareUnmanagedExportNames(UnmanagedExport x, UnmanagedExport y)
-			{
-				if (x.name == null)
-				{
-					return y.name == null ? 0 : 1;
-				}
-				if (y.name == null)
-				{
-					return -1;
-				}
-				return String.CompareOrdinal(x.name, y.name);
-			}
-
-			private static int CompareUnmanagedExportOrdinals(UnmanagedExport x, UnmanagedExport y)
-			{
-				return x.ordinal.CompareTo(y.ordinal);
-			}
-
-			internal void GetRelocations(List<Relocation> list)
-			{
-				ushort type;
-				uint rva;
-				switch (text.peWriter.Headers.FileHeader.Machine)
-				{
-					case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_I386:
-						type = 0x3000;
-						rva = stubsRVA + 2;
-						break;
-					case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_AMD64:
-						type = 0xA000;
-						rva = stubsRVA + 2;
-						break;
-					case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_ARM:
-						type = 0x3000;
-						rva = stubsRVA + 12;
-						break;
-					default:
-						throw new NotSupportedException();
-				}
-
-				// we assume that unmanagedExports is still sorted by ordinal
-				for (int i = 0, pos = 0; i < entries; i++)
-				{
-					if (text.moduleBuilder.unmanagedExports[pos].ordinal == i + ordinalBase)
-					{
-						list.Add(new Relocation(type, rva + (uint)pos * stubLength));
-						pos++;
-					}
-				}
-			}
-		}
-
-		private uint GetOrdinalBase(out uint entries)
-		{
-			uint min = uint.MaxValue;
-			uint max = uint.MinValue;
-			foreach (UnmanagedExport exp in moduleBuilder.unmanagedExports)
-			{
-				uint ordinal = (uint)exp.ordinal;
-				min = Math.Min(min, ordinal);
-				max = Math.Max(max, ordinal);
-			}
-			entries = 1 + (max - min);
-			return min;
-		}
-
-		private uint GetExportNamesLength(out uint nameCount)
-		{
-			nameCount = 0;
-			uint length = 0;
-			foreach (UnmanagedExport exp in moduleBuilder.unmanagedExports)
-			{
-				if (exp.name != null)
-				{
-					nameCount++;
-					length += (uint)exp.name.Length + 1;
-				}
-			}
-			return length;
-		}
-
-		private void WriteExportDirectory(MetadataWriter mw)
-		{
-			if (ExportDirectoryLength != 0)
-			{
-				// Flags
-				mw.Write(0);
-				// Date/Time Stamp
-				mw.Write(peWriter.Headers.FileHeader.TimeDateStamp);
-				// Major Version
-				mw.Write((short)0);
-				// Minor Version
-				mw.Write((short)0);
-				// Name RVA
-				mw.Write(exportTables.namesRVA);
-				// Ordinal Base
-				mw.Write(exportTables.ordinalBase);
-				// Address Table Entries
-				mw.Write(exportTables.entries);
-				// Number of Name Pointers
-				mw.Write(exportTables.nameCount);
-				// Export Address Table RVA
-				mw.Write(exportTables.exportAddressTableRVA);
-				// Name Pointer RVA
-				mw.Write(exportTables.exportNamePointerTableRVA);
-				// Ordinal Table RVA
-				mw.Write(exportTables.exportOrdinalTableRVA);
-			}
-		}
-
-		private void WriteExportTables(MetadataWriter mw, uint sdataRVA)
-		{
-			if (exportTables != null)
-			{
-				exportTables.Write(mw, sdataRVA);
 			}
 		}
 
@@ -794,7 +414,7 @@ namespace IKVM.Reflection.Writer
 			// Import Lookup Table
 			mw.Write(ImportHintNameTableRVA);		// Hint/Name Table RVA
 			int size = 48;
-			if (!peWriter.Is32Bit)
+			if (peWriter.Headers.FileHeader.Machine != IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_I386)
 			{
 				size += 4;
 				mw.Write(0);
@@ -812,108 +432,21 @@ namespace IKVM.Reflection.Writer
 			mw.Write((ushort)0);		// Hint
 			if ((peWriter.Headers.FileHeader.Characteristics & IMAGE_FILE_HEADER.IMAGE_FILE_DLL) != 0)
 			{
-				mw.WriteAsciiz("_CorDllMain");
+				mw.Write(System.Text.Encoding.ASCII.GetBytes("_CorDllMain"));
 			}
 			else
 			{
-				mw.WriteAsciiz("_CorExeMain");
+				mw.Write(System.Text.Encoding.ASCII.GetBytes("_CorExeMain"));
 			}
-			// Name
-			mw.WriteAsciiz("mscoree.dll");
 			mw.Write((byte)0);
+			// Name
+			mw.Write(System.Text.Encoding.ASCII.GetBytes("mscoree.dll"));
+			mw.Write((ushort)0);
 		}
 
 		internal int Length
 		{
 			get { return (int)(StartupStubRVA - BaseRVA + StartupStubLength); }
-		}
-
-		struct Relocation : IComparable<Relocation>
-		{
-			internal readonly uint rva;
-			internal readonly ushort type;
-
-			internal Relocation(ushort type, uint rva)
-			{
-				this.type = type;
-				this.rva = rva;
-			}
-
-			int IComparable<Relocation>.CompareTo(Relocation other)
-			{
-				return rva.CompareTo(other.rva);
-			}
-		}
-
-		struct RelocationBlock
-		{
-			internal readonly uint PageRVA;
-			internal readonly ushort[] TypeOffset;
-
-			internal RelocationBlock(uint pageRva, ushort[] typeOffset)
-			{
-				this.PageRVA = pageRva;
-				this.TypeOffset = typeOffset;
-			}
-		}
-
-		internal void WriteRelocations(MetadataWriter mw)
-		{
-			foreach (RelocationBlock block in relocations)
-			{
-				mw.Write(block.PageRVA);
-				mw.Write(8 + block.TypeOffset.Length * 2);
-				foreach (ushort typeOffset in block.TypeOffset)
-				{
-					mw.Write(typeOffset);
-				}
-			}
-		}
-
-		internal uint PackRelocations()
-		{
-			List<Relocation> list = new List<Relocation>();
-			switch (peWriter.Headers.FileHeader.Machine)
-			{
-				case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_I386:
-					list.Add(new Relocation(0x3000, this.StartupStubRVA + 2));
-					break;
-				case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_AMD64:
-					list.Add(new Relocation(0xA000, this.StartupStubRVA + 2));
-					break;
-				case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_IA64:
-					list.Add(new Relocation(0xA000, this.StartupStubRVA + 0x20));
-					list.Add(new Relocation(0xA000, this.StartupStubRVA + 0x28));
-					break;
-				case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_ARM:
-					list.Add(new Relocation(0x7000, this.StartupStubRVA));
-					break;
-				default:
-					throw new NotSupportedException();
-			}
-			if (exportTables != null)
-			{
-				exportTables.GetRelocations(list);
-			}
-			list.Sort();
-			uint size = 0;
-			for (int i = 0; i < list.Count; )
-			{
-				uint pageRVA = list[i].rva & ~0xFFFU;
-				int count = 1;
-				while (i + count < list.Count && (list[i + count].rva & ~0xFFFU) == pageRVA)
-				{
-					count++;
-				}
-				ushort[] typeOffset = new ushort[(count + 1) & ~1];
-				for (int j = 0; j < count; j++, i++)
-				{
-					typeOffset[j] = (ushort)(list[i].type + (list[i].rva - pageRVA));
-				}
-				relocations.Add(new RelocationBlock(pageRVA, typeOffset));
-				size += (uint)(8 + typeOffset.Length * 2);
-			}
-			return size;
 		}
 	}
 }
