@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2002-2013 Jeroen Frijters
+  Copyright (C) 2002-2010 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -26,11 +26,9 @@ using System;
 using IKVM.Reflection;
 using IKVM.Reflection.Emit;
 using Type = IKVM.Reflection.Type;
-using ProtectionDomain = System.Object;
 #else
 using System.Reflection;
 using System.Reflection.Emit;
-using ProtectionDomain = java.security.ProtectionDomain;
 #endif
 using System.IO;
 using System.Collections.Generic;
@@ -51,21 +49,15 @@ namespace IKVM.Internal
 		NoJNI = 8,
 		RemoveAsserts = 16,
 		NoAutomagicSerialization = 32,
-		DisableDynamicBinding = 64,
 	}
 
 #if !STUB_GENERATOR
 	abstract class TypeWrapperFactory
 	{
 		internal abstract ModuleBuilder ModuleBuilder { get; }
-		internal abstract TypeWrapper DefineClassImpl(Dictionary<string, TypeWrapper> types, ClassFile f, ClassLoaderWrapper classLoader, ProtectionDomain protectionDomain);
+		internal abstract TypeWrapper DefineClassImpl(Dictionary<string, TypeWrapper> types, ClassFile f, ClassLoaderWrapper classLoader, object protectionDomain);
 		internal abstract bool ReserveName(string name);
-		internal abstract string AllocMangledName(DynamicTypeWrapper tw);
 		internal abstract Type DefineUnloadable(string name);
-		internal abstract bool HasInternalAccess { get; }
-#if CLASSGC
-		internal abstract void AddInternalsVisibleTo(Assembly friend);
-#endif
 	}
 #endif // !STUB_GENERATOR
 
@@ -73,27 +65,30 @@ namespace IKVM.Internal
 	{
 		private static readonly object wrapperLock = new object();
 		private static readonly Dictionary<Type, TypeWrapper> globalTypeToTypeWrapper = new Dictionary<Type, TypeWrapper>();
+#if STATIC_COMPILER
+		private TypeWrapper circularDependencyHack;
+#endif
 #if STATIC_COMPILER || STUB_GENERATOR
 		private static ClassLoaderWrapper bootstrapClassLoader;
 #else
 		private static AssemblyClassLoader bootstrapClassLoader;
 #endif
-		private static List<GenericClassLoaderWrapper> genericClassLoaders;
+		private static List<GenericClassLoader> genericClassLoaders;
 #if !STATIC_COMPILER && !FIRST_PASS && !STUB_GENERATOR
 		protected java.lang.ClassLoader javaClassLoader;
 #endif
 #if !STUB_GENERATOR
 		private TypeWrapperFactory factory;
 #endif // !STUB_GENERATOR
-		private readonly Dictionary<string, TypeWrapper> types = new Dictionary<string, TypeWrapper>();
+		private Dictionary<string, TypeWrapper> types = new Dictionary<string, TypeWrapper>();
 		private readonly Dictionary<string, Thread> defineClassInProgress = new Dictionary<string, Thread>();
 		private List<IntPtr> nativeLibraries;
-		private readonly CodeGenOptions codegenoptions;
+		private CodeGenOptions codegenoptions;
 #if CLASSGC
 		private Dictionary<Type, TypeWrapper> typeToTypeWrapper;
 		private static ConditionalWeakTable<Assembly, ClassLoaderWrapper> dynamicAssemblies;
 #endif
-		private static readonly Dictionary<Type, string> remappedTypes = new Dictionary<Type, string>();
+		private static Dictionary<Type, string> remappedTypes = new Dictionary<Type, string>();
 
 #if STATIC_COMPILER || STUB_GENERATOR
 		// HACK this is used by the ahead-of-time compiler to overrule the bootstrap classloader
@@ -124,23 +119,27 @@ namespace IKVM.Internal
 		{
 			// if we're compiling the core, coreAssembly will be null
 			Assembly coreAssembly = JVM.CoreAssembly;
-			if(coreAssembly != null && remappedTypes.Count ==0)
+			if(coreAssembly != null)
 			{
+				try
+				{
+					Tracer.Info(Tracer.Runtime, "Core assembly: {0}", coreAssembly.Location);
+				}
+				catch(System.Security.SecurityException)
+				{
+				}
 				RemappedClassAttribute[] remapped = AttributeHelper.GetRemappedClasses(coreAssembly);
 				if(remapped.Length > 0)
 				{
 					foreach(RemappedClassAttribute r in remapped)
 					{
+						Tracer.Info(Tracer.Runtime, "Remapping type {0} to {1}", r.RemappedType, r.Name);
 						remappedTypes.Add(r.RemappedType, r.Name);
 					}
 				}
 				else
 				{
-#if STATIC_COMPILER
-					throw new FatalCompilerErrorException(Message.CoreClassesMissing);
-#else
 					JVM.CriticalFailure("Failed to find core classes in core library", null);
-#endif
 				}
 			}
 		}
@@ -158,7 +157,6 @@ namespace IKVM.Internal
 			return remappedTypes.ContainsKey(type);
 		}
 
-#if STATIC_COMPILER || STUB_GENERATOR
 		internal void SetRemappedType(Type type, TypeWrapper tw)
 		{
 			lock(types)
@@ -171,27 +169,17 @@ namespace IKVM.Internal
 			}
 			remappedTypes.Add(type, tw.Name);
 		}
-#endif
 
 		// return the TypeWrapper if it is already loaded, this exists for DynamicTypeWrapper.SetupGhosts
-		// and implements ClassLoader.findLoadedClass()
-		internal TypeWrapper FindLoadedClass(string name)
+		// and ClassLoader.findLoadedClass()
+		internal virtual TypeWrapper GetLoadedClass(string name)
 		{
-			if (name.Length > 1 && name[0] == '[')
+			lock(types)
 			{
-				return FindOrLoadArrayClass(name, true);
-			}
-			TypeWrapper tw;
-			lock (types)
-			{
+				TypeWrapper tw;
 				types.TryGetValue(name, out tw);
+				return tw;
 			}
-			return tw ?? FindLoadedClassLazy(name);
-		}
-
-		protected virtual TypeWrapper FindLoadedClassLazy(string name)
-		{
-			return null;
 		}
 
 		internal TypeWrapper RegisterInitiatingLoader(TypeWrapper tw)
@@ -200,19 +188,6 @@ namespace IKVM.Internal
 			Debug.Assert(!tw.IsUnloadable);
 			Debug.Assert(!tw.IsPrimitive);
 
-			try
-			{
-				// critical code in the finally block to avoid Thread.Abort interrupting the thread
-			}
-			finally
-			{
-				tw = RegisterInitiatingLoaderCritical(tw);
-			}
-			return tw;
-		}
-
-		private TypeWrapper RegisterInitiatingLoaderCritical(TypeWrapper tw)
-		{
 			lock(types)
 			{
 				TypeWrapper existing;
@@ -285,32 +260,48 @@ namespace IKVM.Internal
 			}
 		}
 
-		internal bool DisableDynamicBinding
+		internal virtual string SourcePath
 		{
 			get
 			{
-				return (codegenoptions & CodeGenOptions.DisableDynamicBinding) != 0;
+				return null;
 			}
 		}
 
-#if !STATIC_COMPILER && !STUB_GENERATOR
-		internal bool RelaxedClassNameValidation
+#if STATIC_COMPILER
+		internal TypeWrapper LoadCircularDependencyHack(TypeWrapper tw, string name)
 		{
-			get
+			if (circularDependencyHack == null)
 			{
-#if FIRST_PASS
-				return true;
-#else
-				return JVM.relaxedVerification && (javaClassLoader == null || java.lang.ClassLoader.isTrustedLoader(javaClassLoader));
-#endif
+				circularDependencyHack = tw;
+				try
+				{
+					return LoadClassByDottedNameFast(name);
+				}
+				finally
+				{
+					circularDependencyHack = null;
+				}
+			}
+			else if (circularDependencyHack.Name == name)
+			{
+				return circularDependencyHack;
+			}
+			else
+			{
+				return LoadClassByDottedNameFast(name);
 			}
 		}
-#endif // !STATIC_COMPILER && !STUB_GENERATOR
+#endif
+
+		protected virtual void CheckDefineClassAllowed(string className)
+		{
+			// this hook exists so that AssemblyClassLoader can prevent DefineClass when the name is already present in the assembly
+		}
 
 #if !STUB_GENERATOR
-		internal TypeWrapper DefineClass(ClassFile f, ProtectionDomain protectionDomain)
+		internal TypeWrapper DefineClass(ClassFile f, object protectionDomain)
 		{
-#if !STATIC_COMPILER
 			string dotnetAssembly = f.IKVMAssemblyAttribute;
 			if(dotnetAssembly != null)
 			{
@@ -333,26 +324,7 @@ namespace IKVM.Internal
 				}
 				return RegisterInitiatingLoader(tw);
 			}
-#endif
-			// check if the class already exists if we're an AssemblyClassLoader
-			if(FindLoadedClassLazy(f.Name) != null)
-			{
-				throw new LinkageError("duplicate class definition: " + f.Name);
-			}
-			TypeWrapper def;
-			try
-			{
-				// critical code in the finally block to avoid Thread.Abort interrupting the thread
-			}
-			finally
-			{
-				def = DefineClassCritical(f, protectionDomain);
-			}
-			return def;
-		}
-
-		private TypeWrapper DefineClassCritical(ClassFile f, ProtectionDomain protectionDomain)
-		{
+			CheckDefineClassAllowed(f.Name);
 			lock(types)
 			{
 				if(types.ContainsKey(f.Name))
@@ -389,27 +361,20 @@ namespace IKVM.Internal
 			{
 				lock(this)
 				{
-					try
+					if(factory == null)
 					{
-						// critical code in the finally block to avoid Thread.Abort interrupting the thread
-					}
-					finally
-					{
-						if(factory == null)
-						{
 #if CLASSGC
-							if(dynamicAssemblies == null)
-							{
-								Interlocked.CompareExchange(ref dynamicAssemblies, new ConditionalWeakTable<Assembly, ClassLoaderWrapper>(), null);
-							}
-							typeToTypeWrapper = new Dictionary<Type, TypeWrapper>();
-							DynamicClassLoader instance = DynamicClassLoader.Get(this);
-							dynamicAssemblies.Add(instance.ModuleBuilder.Assembly.ManifestModule.Assembly, this);
-							this.factory = instance;
-#else
-							factory = DynamicClassLoader.Get(this);
-#endif
+						if(dynamicAssemblies == null)
+						{
+							Interlocked.CompareExchange(ref dynamicAssemblies, new ConditionalWeakTable<Assembly, ClassLoaderWrapper>(), null);
 						}
+						typeToTypeWrapper = new Dictionary<Type, TypeWrapper>();
+						DynamicClassLoader instance = DynamicClassLoader.Get(this);
+						dynamicAssemblies.Add(instance.ModuleBuilder.Assembly.ManifestModule.Assembly, this);
+						this.factory = instance;
+#else
+						factory = DynamicClassLoader.Get(this);
+#endif
 					}
 				}
 			}
@@ -439,17 +404,44 @@ namespace IKVM.Internal
 
 		private TypeWrapper LoadClassByDottedNameFastImpl(string name, bool throwClassNotFoundException)
 		{
+			// .NET 1.1 has a limit of 1024 characters for type names
+			if(name.Length >= 1024 || name.Length == 0)
+			{
+				return null;
+			}
 			Profiler.Enter("LoadClassByDottedName");
 			try
 			{
-				TypeWrapper type = LoadRegisteredOrPendingClass(name);
+				TypeWrapper type;
+				lock(types)
+				{
+					if(types.TryGetValue(name, out type) && type == null)
+					{
+						Thread defineThread;
+						if(defineClassInProgress.TryGetValue(name, out defineThread))
+						{
+							if(Thread.CurrentThread == defineThread)
+							{
+								throw new ClassCircularityError(name);
+							}
+							// the requested class is currently being defined by another thread,
+							// so we have to wait on that
+							while(defineClassInProgress.ContainsKey(name))
+							{
+								Monitor.Wait(types);
+							}
+							// the defineClass may have failed, so we need to use TryGetValue
+							types.TryGetValue(name, out type);
+						}
+					}
+				}
 				if(type != null)
 				{
 					return type;
 				}
 				if(name.Length > 1 && name[0] == '[')
 				{
-					return FindOrLoadArrayClass(name, false);
+					return LoadArrayClass(name);
 				}
 				return LoadClassImpl(name, throwClassNotFoundException);
 			}
@@ -459,40 +451,7 @@ namespace IKVM.Internal
 			}
 		}
 
-		private TypeWrapper LoadRegisteredOrPendingClass(string name)
-		{
-			TypeWrapper tw;
-			lock (types)
-			{
-				if (types.TryGetValue(name, out tw) && tw == null)
-				{
-					Thread defineThread;
-					if (defineClassInProgress.TryGetValue(name, out defineThread))
-					{
-						if (Thread.CurrentThread == defineThread)
-						{
-							throw new ClassCircularityError(name);
-						}
-						// the requested class is currently being defined by another thread,
-						// so we have to wait on that
-						while (defineClassInProgress.ContainsKey(name))
-						{
-							Monitor.Wait(types);
-						}
-						// the defineClass may have failed, so we need to use TryGetValue
-						types.TryGetValue(name, out tw);
-					}
-				}
-			}
-			return tw;
-		}
-
-		private TypeWrapper FindOrLoadClass(string name, bool find)
-		{
-			return find ? FindLoadedClass(name) : LoadClassByDottedNameFast(name);
-		}
-
-		private TypeWrapper FindOrLoadArrayClass(string name, bool find)
+		private TypeWrapper LoadArrayClass(string name)
 		{
 			int dims = 1;
 			while(name[dims] == '[')
@@ -514,7 +473,7 @@ namespace IKVM.Internal
 				string elemClass = name.Substring(dims + 1, name.Length - dims - 2);
 				// NOTE it's important that we're registered as the initiating loader
 				// for the element type here
-				TypeWrapper type = FindOrLoadClass(elemClass, find);
+				TypeWrapper type = LoadClassByDottedNameFast(elemClass);
 				if(type != null)
 				{
 					type = type.GetClassLoader().CreateArrayType(name, type, dims);
@@ -549,24 +508,8 @@ namespace IKVM.Internal
 			}
 		}
 
-		internal TypeWrapper FindOrLoadGenericClass(string name, bool find)
+		internal TypeWrapper LoadGenericClass(string name)
 		{
-			// we need to handle delegate methods here (for generic delegates)
-			// (note that other types with manufactured inner classes such as Attribute and Enum can't be generic)
-			if (name.EndsWith(DotNetTypeWrapper.DelegateInterfaceSuffix))
-			{
-				TypeWrapper outer = FindOrLoadGenericClass(name.Substring(0, name.Length - DotNetTypeWrapper.DelegateInterfaceSuffix.Length), find);
-				if (outer != null && outer.IsFakeTypeContainer)
-				{
-					foreach (TypeWrapper tw in outer.InnerClasses)
-					{
-						if (tw.Name == name)
-						{
-							return tw;
-						}
-					}
-				}
-			}
 			// generic class name grammar:
 			//
 			// mangled(open_generic_type_name) "_$$$_" M(parameter_class_name) ( "_$$_" M(parameter_class_name) )* "_$$$$_"
@@ -579,12 +522,11 @@ namespace IKVM.Internal
 			{
 				return null;
 			}
-			TypeWrapper def = FindOrLoadClass(name.Substring(0, pos), find);
-			if (def == null || !def.TypeAsTBD.IsGenericTypeDefinition)
+			Type type = GetGenericTypeDefinition(DotNetTypeWrapper.DemangleTypeName(name.Substring(0, pos)));
+			if(type == null)
 			{
 				return null;
 			}
-			Type type = def.TypeAsTBD;
 			List<string> typeParamNames = new List<string>();
 			pos += 5;
 			int start = pos;
@@ -649,15 +591,11 @@ namespace IKVM.Internal
 				{
 					return null;
 				}
-				TypeWrapper tw;
+				TypeWrapper tw = null;
 				switch(s[dims])
 				{
 					case 'L':
-						tw = FindOrLoadClass(s.Substring(dims + 1), find);
-						if(tw == null)
-						{
-							return null;
-						}
+						tw = LoadClassByDottedNameFast(s.Substring(dims + 1));
 						tw.Finish();
 						break;
 					case 'Z':
@@ -684,8 +622,10 @@ namespace IKVM.Internal
 					case 'D':
 						tw = PrimitiveTypeWrapper.DOUBLE;
 						break;
-					default:
-						return null;
+				}
+				if(tw == null)
+				{
+					return null;
 				}
 				if(dims > 0)
 				{
@@ -713,7 +653,7 @@ namespace IKVM.Internal
 
 		protected virtual TypeWrapper LoadClassImpl(string name, bool throwClassNotFoundException)
 		{
-			TypeWrapper tw = FindOrLoadGenericClass(name, false);
+			TypeWrapper tw = LoadGenericClass(name);
 			if(tw != null)
 			{
 				return tw;
@@ -722,7 +662,7 @@ namespace IKVM.Internal
 			Profiler.Enter("ClassLoader.loadClass");
 			try
 			{
-				java.lang.Class c = GetJavaClassLoader().loadClassInternal(name);
+				java.lang.Class c = javaClassLoader.loadClassInternal(name);
 				if(c == null)
 				{
 					return null;
@@ -764,16 +704,14 @@ namespace IKVM.Internal
 			return RegisterInitiatingLoader(new ArrayTypeWrapper(elementTypeWrapper, name));
 		}
 
-#if !STATIC_COMPILER && !STUB_GENERATOR
-		internal virtual java.lang.ClassLoader GetJavaClassLoader()
+		internal object GetJavaClassLoader()
 		{
-#if FIRST_PASS
+#if FIRST_PASS || STATIC_COMPILER || STUB_GENERATOR
 			return null;
 #else
 			return javaClassLoader;
 #endif
 		}
-#endif
 
 		internal TypeWrapper ExpressionTypeWrapper(string type)
 		{
@@ -938,7 +876,7 @@ namespace IKVM.Internal
 		}
 
 #if !STATIC_COMPILER && !STUB_GENERATOR
-		internal static ClassLoaderWrapper GetClassLoaderWrapper(java.lang.ClassLoader javaClassLoader)
+		internal static ClassLoaderWrapper GetClassLoaderWrapper(object javaClassLoader)
 		{
 			if(javaClassLoader == null)
 			{
@@ -954,7 +892,7 @@ namespace IKVM.Internal
 					// MONOBUG the redundant cast to ClassLoaderWrapper is to workaround an mcs bug
 					(ClassLoaderWrapper)(object)
 #endif
-					javaClassLoader.wrapper;
+					((java.lang.ClassLoader)javaClassLoader).wrapper;
 #endif
 				if(wrapper == null)
 				{
@@ -988,12 +926,6 @@ namespace IKVM.Internal
 
 		internal static TypeWrapper GetWrapperFromType(Type type)
 		{
-#if STATIC_COMPILER
-			if (type.__ContainsMissingType)
-			{
-				return new UnloadableTypeWrapper(type);
-			}
-#endif
 			//Tracer.Info(Tracer.Runtime, "GetWrapperFromType: {0}", type.AssemblyQualifiedName);
 #if !STATIC_COMPILER
 			TypeWrapper.AssertFinished(type);
@@ -1009,14 +941,6 @@ namespace IKVM.Internal
 			{
 				return wrapper;
 			}
-#if STUB_GENERATOR
-			if(type.__IsMissing || type.__ContainsMissingType)
-			{
-				wrapper = new UnloadableTypeWrapper("Missing/" + type.Assembly.FullName);
-				globalTypeToTypeWrapper.Add(type, wrapper);
-				return wrapper;
-			}
-#endif
 			string remapped;
 			if(remappedTypes.TryGetValue(type, out remapped))
 			{
@@ -1069,16 +993,14 @@ namespace IKVM.Internal
 #endif
 			lock(globalTypeToTypeWrapper)
 			{
-				try
-				{
-					// critical code in the finally block to avoid Thread.Abort interrupting the thread
-				}
-				finally
-				{
-					globalTypeToTypeWrapper[type] = wrapper;
-				}
+				globalTypeToTypeWrapper[type] = wrapper;
 			}
 			return wrapper;
+		}
+
+		internal virtual Type GetGenericTypeDefinition(string name)
+		{
+			return null;
 		}
 
 		internal static ClassLoaderWrapper GetGenericClassLoader(TypeWrapper wrapper)
@@ -1116,39 +1038,37 @@ namespace IKVM.Internal
 			{
 				if(genericClassLoaders == null)
 				{
-					genericClassLoaders = new List<GenericClassLoaderWrapper>();
+					genericClassLoaders = new List<GenericClassLoader>();
 				}
-				foreach(GenericClassLoaderWrapper loader in genericClassLoaders)
+				foreach(GenericClassLoader loader in genericClassLoaders)
 				{
 					if(loader.Matches(key))
 					{
 						return loader;
 					}
 				}
-#if STATIC_COMPILER || STUB_GENERATOR || FIRST_PASS
-				GenericClassLoaderWrapper newLoader = new GenericClassLoaderWrapper(key, null);
-#else
-				java.lang.ClassLoader javaClassLoader = new ikvm.runtime.GenericClassLoader();
-				GenericClassLoaderWrapper newLoader = new GenericClassLoaderWrapper(key, javaClassLoader);
-				SetWrapperForClassLoader(javaClassLoader, newLoader);
+				object javaClassLoader = null;
+#if !STATIC_COMPILER && !FIRST_PASS && !STUB_GENERATOR
+				javaClassLoader = DoPrivileged(new AssemblyClassLoader.CreateAssemblyClassLoader(null));
 #endif
+				GenericClassLoader newLoader = new GenericClassLoader(key, javaClassLoader);
+				SetWrapperForClassLoader(javaClassLoader, newLoader);
 				genericClassLoaders.Add(newLoader);
 				return newLoader;
 			}
 		}
 
-#if !STATIC_COMPILER && !STUB_GENERATOR
-		protected internal static void SetWrapperForClassLoader(java.lang.ClassLoader javaClassLoader, ClassLoaderWrapper wrapper)
+		protected static void SetWrapperForClassLoader(object javaClassLoader, ClassLoaderWrapper wrapper)
 		{
-#if __MonoCS__ || FIRST_PASS
+#if !STATIC_COMPILER && !FIRST_PASS && !STUB_GENERATOR
+#if __MonoCS__
 			typeof(java.lang.ClassLoader).GetField("wrapper", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(javaClassLoader, wrapper);
 #else
-			javaClassLoader.wrapper = wrapper;
+			((java.lang.ClassLoader)javaClassLoader).wrapper = wrapper;
+#endif
 #endif
 		}
-#endif
 
-#if !STATIC_COMPILER && !STUB_GENERATOR
 		internal static ClassLoaderWrapper GetGenericClassLoaderByName(string name)
 		{
 			Debug.Assert(name.StartsWith("[[") && name.EndsWith("]]"));
@@ -1198,15 +1118,18 @@ namespace IKVM.Internal
 			{
 				return GetGenericClassLoaderByName(name);
 			}
+#if STATIC_COMPILER || STUB_GENERATOR
+			return AssemblyClassLoader.FromAssembly(StaticCompiler.Load(name));
+#else
 			return AssemblyClassLoader.FromAssembly(Assembly.Load(name));
-		}
 #endif
+		}
 
 		internal static int GetGenericClassLoaderId(ClassLoaderWrapper wrapper)
 		{
 			lock(wrapperLock)
 			{
-				return genericClassLoaders.IndexOf(wrapper as GenericClassLoaderWrapper);
+				return genericClassLoaders.IndexOf(wrapper as GenericClassLoader);
 			}
 		}
 
@@ -1231,27 +1154,12 @@ namespace IKVM.Internal
 #endif
 			lock (dict)
 			{
-				try
-				{
-					// critical code in the finally block to avoid Thread.Abort interrupting the thread
-				}
-				finally
-				{
-					dict.Add(type, wrapper);
-				}
+				dict.Add(type, wrapper);
 			}
 		}
 
 		internal static TypeWrapper LoadClassCritical(string name)
 		{
-#if STATIC_COMPILER
-			TypeWrapper wrapper = GetBootstrapClassLoader().LoadClassByDottedNameFast(name);
-			if (wrapper == null)
-			{
-				throw new FatalCompilerErrorException(Message.CriticalClassNotFound, name);
-			}
-			return wrapper;
-#else
 			try
 			{
 				return GetBootstrapClassLoader().LoadClassByDottedName(name);
@@ -1261,25 +1169,17 @@ namespace IKVM.Internal
 				JVM.CriticalFailure("Loading of critical class failed", x);
 				return null;
 			}
-#endif
 		}
 
 		internal void RegisterNativeLibrary(IntPtr p)
 		{
 			lock(this)
 			{
-				try
+				if(nativeLibraries == null)
 				{
-					// critical code in the finally block to avoid Thread.Abort interrupting the thread
+					nativeLibraries = new List<IntPtr>();
 				}
-				finally
-				{
-					if(nativeLibraries == null)
-					{
-						nativeLibraries = new List<IntPtr>();
-					}
-					nativeLibraries.Add(p);
-				}
+				nativeLibraries.Add(p);
 			}
 		}
 
@@ -1287,14 +1187,7 @@ namespace IKVM.Internal
 		{
 			lock(this)
 			{
-				try
-				{
-					// critical code in the finally block to avoid Thread.Abort interrupting the thread
-				}
-				finally
-				{
-					nativeLibraries.Remove(p);
-				}
+				nativeLibraries.Remove(p);
 			}
 		}
 
@@ -1313,7 +1206,6 @@ namespace IKVM.Internal
 #if !STATIC_COMPILER && !FIRST_PASS && !STUB_GENERATOR
 		public override string ToString()
 		{
-			object javaClassLoader = GetJavaClassLoader();
 			if(javaClassLoader == null)
 			{
 				return "null";
@@ -1329,13 +1221,12 @@ namespace IKVM.Internal
 		}
 
 #if !STATIC_COMPILER && !STUB_GENERATOR
-		// this method is used by IKVM.Runtime.JNI
-		internal static ClassLoaderWrapper FromCallerID(ikvm.@internal.CallerID callerID)
+		internal static ClassLoaderWrapper FromCallerID(object callerID)
 		{
 #if FIRST_PASS
 			return null;
 #else
-			return GetClassLoaderWrapper(callerID.getCallerClassLoader());
+			return GetClassLoaderWrapper(((ikvm.@internal.CallerID)callerID).getCallerClassLoader());
 #endif
 		}
 #endif
@@ -1347,18 +1238,7 @@ namespace IKVM.Internal
 				TypeWrapper wrapper = classLoader.LoadClassByDottedNameFast(name);
 				if (wrapper == null)
 				{
-					string elementTypeName = name;
-					if (elementTypeName.StartsWith("["))
-					{
-						int skip = 1;
-						while (elementTypeName[skip++] == '[') ;
-						elementTypeName = elementTypeName.Substring(skip, elementTypeName.Length - skip - 1);
-					}
-#if STATIC_COMPILER
-					classLoader.IssueMessage(Message.ClassNotFound, elementTypeName);
-#else
-					Tracer.Error(Tracer.ClassLoading, "Class not found: {0}", elementTypeName);
-#endif
+					Tracer.Error(Tracer.ClassLoading, "Class not found: {0}", name);
 					wrapper = new UnloadableTypeWrapper(name);
 				}
 				return wrapper;
@@ -1368,13 +1248,9 @@ namespace IKVM.Internal
 				// HACK keep the compiler from warning about unused local
 				GC.KeepAlive(x);
 #if !STATIC_COMPILER && !FIRST_PASS && !STUB_GENERATOR
-				if(x.ToJava() is java.lang.ThreadDeath)
-				{
-					throw x.ToJava();
-				}
 				if(Tracer.ClassLoading.TraceError)
 				{
-					java.lang.ClassLoader cl = classLoader.GetJavaClassLoader();
+					java.lang.ClassLoader cl = (java.lang.ClassLoader)classLoader.GetJavaClassLoader();
 					if(cl != null)
 					{
 						System.Text.StringBuilder sb = new System.Text.StringBuilder();
@@ -1394,32 +1270,13 @@ namespace IKVM.Internal
 				return new UnloadableTypeWrapper(name);
 			}
 		}
-
-#if STATIC_COMPILER
-		internal virtual void IssueMessage(Message msgId, params string[] values)
-		{
-			// it's not ideal when we end up here (because it means we're emitting a warning that is not associated with a specific output target),
-			// but it happens when we're decoding something in a referenced assembly that either doesn't make sense or contains an unloadable type
-			StaticCompiler.IssueMessage(msgId, values);
-		}
-#endif
-
-		internal void CheckPackageAccess(TypeWrapper tw, ProtectionDomain pd)
-		{
-#if !STATIC_COMPILER && !FIRST_PASS && !STUB_GENERATOR
-			if (javaClassLoader != null)
-			{
-				javaClassLoader.checkPackageAccess(tw.ClassObject, pd);
-			}
-#endif
-		}
 	}
 
-	sealed class GenericClassLoaderWrapper : ClassLoaderWrapper
+	class GenericClassLoader : ClassLoaderWrapper
 	{
-		private readonly ClassLoaderWrapper[] delegates;
+		private ClassLoaderWrapper[] delegates;
 
-		internal GenericClassLoaderWrapper(ClassLoaderWrapper[] delegates, object javaClassLoader)
+		internal GenericClassLoader(ClassLoaderWrapper[] delegates, object javaClassLoader)
 			: base(CodeGenOptions.None, javaClassLoader)
 		{
 			this.delegates = delegates;
@@ -1441,17 +1298,30 @@ namespace IKVM.Internal
 			return false;
 		}
 
-		protected override TypeWrapper FindLoadedClassLazy(string name)
+		internal override Type GetGenericTypeDefinition(string name)
 		{
-			TypeWrapper tw1 = FindOrLoadGenericClass(name, true);
-			if (tw1 != null)
+			foreach(ClassLoaderWrapper loader in delegates)
 			{
-				return tw1;
+				Type t = loader.GetGenericTypeDefinition(name);
+				if(t != null)
+				{
+					return t;
+				}
 			}
-			foreach (ClassLoaderWrapper loader in delegates)
+			return null;
+		}
+
+		protected override TypeWrapper LoadClassImpl(string name, bool throwClassNotFoundException)
+		{
+			TypeWrapper tw = LoadGenericClass(name);
+			if(tw != null)
 			{
-				TypeWrapper tw = loader.FindLoadedClass(name);
-				if (tw != null && tw.GetClassLoader() == loader)
+				return tw;
+			}
+			foreach(ClassLoaderWrapper loader in delegates)
+			{
+				tw = loader.LoadClassByDottedNameFast(name);
+				if(tw != null)
 				{
 					return tw;
 				}
@@ -1466,7 +1336,7 @@ namespace IKVM.Internal
 			foreach(ClassLoaderWrapper loader in delegates)
 			{
 				sb.Append('[');
-				GenericClassLoaderWrapper gcl = loader as GenericClassLoaderWrapper;
+				GenericClassLoader gcl = loader as GenericClassLoader;
 				if(gcl != null)
 				{
 					sb.Append(gcl.GetName());
@@ -1480,55 +1350,5 @@ namespace IKVM.Internal
 			sb.Append(']');
 			return sb.ToString();
 		}
-
-#if !STATIC_COMPILER && !STUB_GENERATOR
-		internal java.util.Enumeration GetResources(string name)
-		{
-#if FIRST_PASS
-			return null;
-#else
-			java.util.Vector v = new java.util.Vector();
-			foreach (java.net.URL url in GetBootstrapClassLoader().GetResources(name))
-			{
-				v.add(url);
-			}
-			if (name.EndsWith(".class", StringComparison.Ordinal) && name.IndexOf('.') == name.Length - 6)
-			{
-				TypeWrapper tw = FindLoadedClass(name.Substring(0, name.Length - 6).Replace('/', '.'));
-				if (tw != null && !tw.IsArray && !(tw is DynamicTypeWrapper))
-				{
-					ClassLoaderWrapper loader = tw.GetClassLoader();
-					if (loader is GenericClassLoaderWrapper)
-					{
-						v.add(new java.net.URL("ikvmres", "gen", ClassLoaderWrapper.GetGenericClassLoaderId(loader), "/" + name));
-					}
-					else if (loader is AssemblyClassLoader)
-					{
-						foreach (java.net.URL url in ((AssemblyClassLoader)loader).FindResources(name))
-						{
-							v.add(url);
-						}
-					}
-				}
-			}
-			return v.elements();
-#endif
-		}
-
-		internal java.net.URL FindResource(string name)
-		{
-#if !FIRST_PASS
-			if (name.EndsWith(".class", StringComparison.Ordinal) && name.IndexOf('.') == name.Length - 6)
-			{
-				TypeWrapper tw = FindLoadedClass(name.Substring(0, name.Length - 6).Replace('/', '.'));
-				if (tw != null && tw.GetClassLoader() == this && !tw.IsArray && !(tw is DynamicTypeWrapper))
-				{
-					return new java.net.URL("ikvmres", "gen", ClassLoaderWrapper.GetGenericClassLoaderId(this), "/" + name);
-				}
-			}
-#endif
-			return null;
-		}
-#endif
 	}
 }
