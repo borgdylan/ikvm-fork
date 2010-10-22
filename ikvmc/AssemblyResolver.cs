@@ -1,5 +1,5 @@
 ﻿/*
-  Copyright (C) 2010-2013 Jeroen Frijters
+  Copyright (C) 2010 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -32,6 +32,7 @@ namespace IKVM.Internal
 	sealed class AssemblyResolver
 	{
 		private readonly List<string> libpath = new List<string>();
+		private readonly Dictionary<string, string> hintpaths = new Dictionary<string, string>();
 		private Universe universe;
 		private Version mscorlibVersion;
 
@@ -83,11 +84,7 @@ namespace IKVM.Internal
 			{
 				mscorlibVersion = universe.Load("mscorlib").GetName().Version;
 			}
-#if STATIC_COMPILER
-			universe.AssemblyResolve += AssemblyResolve;
-#else
-			universe.AssemblyResolve += LegacyAssemblyResolve;
-#endif
+			universe.AssemblyResolve += new IKVM.Reflection.ResolveEventHandler(universe_AssemblyResolve);
 		}
 
 		internal Assembly LoadFile(string path)
@@ -185,7 +182,7 @@ namespace IKVM.Internal
 			return null;
 		}
 
-		internal bool ResolveReference(Dictionary<string, Assembly> cache, ref Assembly[] references, string reference)
+		internal int ResolveReference(Dictionary<string, Assembly> cache, ref Assembly[] references, string reference)
 		{
 			string[] files = new string[0];
 			try
@@ -214,7 +211,8 @@ namespace IKVM.Internal
 				}
 				if (asm == null)
 				{
-					return false;
+					Console.Error.WriteLine("Error: reference not found: {0}", reference);
+					return 1;
 				}
 				ArrayAppend(ref references, asm);
 			}
@@ -230,7 +228,7 @@ namespace IKVM.Internal
 					ArrayAppend(ref references, asm);
 				}
 			}
-			return true;
+			return 0;
 		}
 
 		private static void ArrayAppend<T>(ref T[] array, T element)
@@ -248,55 +246,9 @@ namespace IKVM.Internal
 			}
 		}
 
-		private Assembly AssemblyResolve(object sender, IKVM.Reflection.ResolveEventArgs args)
+		private Assembly universe_AssemblyResolve(object sender, IKVM.Reflection.ResolveEventArgs args)
 		{
 			AssemblyName name = new AssemblyName(args.Name);
-			AssemblyName previousMatch = null;
-			int previousMatchLevel = 0;
-			foreach (Assembly asm in universe.GetAssemblies())
-			{
-				if (Match(asm.GetName(), name, ref previousMatch, ref previousMatchLevel))
-				{
-					return asm;
-				}
-			}
-			if (previousMatch != null)
-			{
-				if (previousMatchLevel == 2)
-				{
-					EmitWarning(WarningId.HigherVersion, "assuming assembly reference \"{0}\" matches \"{1}\", you may need to supply runtime policy", previousMatch.FullName, name.FullName);
-					return universe.Load(previousMatch.FullName);
-				}
-				else if (args.RequestingAssembly != null)
-				{
-					Console.Error.WriteLine("Error: Assembly '{0}' uses '{1}' which has a higher version than referenced assembly '{2}'", args.RequestingAssembly.FullName, name.FullName, previousMatch.FullName);
-					Environment.Exit(1);
-					return null;
-				}
-				else
-				{
-					Console.Error.WriteLine("Error: Assembly '{0}' was requested which is a higher version than referenced assembly '{1}'", name.FullName, previousMatch.FullName);
-					Environment.Exit(1);
-					return null;
-				}
-			}
-			else if (args.RequestingAssembly != null)
-			{
-				return universe.CreateMissingAssembly(args.Name);
-			}
-			else
-			{
-				return null;
-			}
-		}
-
-		private Assembly LegacyAssemblyResolve(object sender, IKVM.Reflection.ResolveEventArgs args)
-		{
-			return LegacyLoad(new AssemblyName(args.Name), args.RequestingAssembly);
-		}
-	
-		internal Assembly LegacyLoad(AssemblyName name, Assembly requestingAssembly)
-		{
 			AssemblyName previousMatch = null;
 			int previousMatchLevel = 0;
 			foreach (Assembly asm in universe.GetAssemblies())
@@ -313,9 +265,18 @@ namespace IKVM.Internal
 					return LoadFile(file);
 				}
 			}
-			if (requestingAssembly != null)
+			if (args.RequestingAssembly != null)
 			{
-				string path = Path.Combine(Path.GetDirectoryName(requestingAssembly.Location), name.Name + ".dll");
+				string path = Path.Combine(Path.GetDirectoryName(args.RequestingAssembly.Location), name.Name + ".dll");
+				if (File.Exists(path) && Match(AssemblyName.GetAssemblyName(path), name, ref previousMatch, ref previousMatchLevel))
+				{
+					return LoadFile(path);
+				}
+			}
+			string hintpath;
+			if (hintpaths.TryGetValue(name.FullName, out hintpath))
+			{
+				string path = Path.Combine(hintpath, name.Name + ".dll");
 				if (File.Exists(path) && Match(AssemblyName.GetAssemblyName(path), name, ref previousMatch, ref previousMatchLevel))
 				{
 					return LoadFile(path);
@@ -328,9 +289,9 @@ namespace IKVM.Internal
 					EmitWarning(WarningId.HigherVersion, "assuming assembly reference \"{0}\" matches \"{1}\", you may need to supply runtime policy", previousMatch.FullName, name.FullName);
 					return LoadFile(new Uri(previousMatch.CodeBase).LocalPath);
 				}
-				else if (requestingAssembly != null)
+				else if (args.RequestingAssembly != null)
 				{
-					Console.Error.WriteLine("Error: Assembly '{0}' uses '{1}' which has a higher version than referenced assembly '{2}'", requestingAssembly.FullName, name.FullName, previousMatch.FullName);
+					Console.Error.WriteLine("Error: Assembly '{0}' uses '{1}' which has a higher version than referenced assembly '{2}'", args.RequestingAssembly.FullName, name.FullName, previousMatch.FullName);
 				}
 				else
 				{
@@ -339,15 +300,11 @@ namespace IKVM.Internal
 			}
 			else
 			{
-#if STUB_GENERATOR
-				return universe.CreateMissingAssembly(name.FullName);
-#else
-				Console.Error.WriteLine("Error: unable to find assembly '{0}'", name.FullName);
-				if (requestingAssembly != null)
+				Console.Error.WriteLine("Error: unable to find assembly '{0}'", args.Name);
+				if (args.RequestingAssembly != null)
 				{
-					Console.Error.WriteLine("    (a dependency of '{0}')", requestingAssembly.FullName);
+					Console.Error.WriteLine("    (a dependency of '{0}')", args.RequestingAssembly.FullName);
 				}
-#endif
 			}
 			Environment.Exit(1);
 			return null;
@@ -472,6 +429,11 @@ namespace IKVM.Internal
 					}
 				}
 			}
+		}
+
+		internal void AddHintPath(string assemblyName, string path)
+		{
+			hintpaths.Add(assemblyName, path);
 		}
 	}
 }
