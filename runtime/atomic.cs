@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2007-2011 Jeroen Frijters
+  Copyright (C) 2007 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -37,6 +37,8 @@ using InstructionFlags = IKVM.Internal.ClassFile.Method.InstructionFlags;
 
 static class AtomicReferenceFieldUpdaterEmitter
 {
+	private static readonly Dictionary<FieldWrapper, ConstructorBuilder> map = new Dictionary<FieldWrapper, ConstructorBuilder>();
+
 	internal static bool Emit(DynamicTypeWrapper.FinishContext context, TypeWrapper wrapper, CodeEmitter ilgen, ClassFile classFile, int i, ClassFile.Method.Instruction[] code, InstructionFlags[] flags)
 	{
 		if (i >= 3
@@ -44,7 +46,7 @@ static class AtomicReferenceFieldUpdaterEmitter
 			&& (flags[i - 1] & InstructionFlags.BranchTarget) == 0
 			&& (flags[i - 2] & InstructionFlags.BranchTarget) == 0
 			&& (flags[i - 3] & InstructionFlags.BranchTarget) == 0
-			&& code[i - 1].NormalizedOpCode == NormalizedByteCode.__ldc_nothrow
+			&& code[i - 1].NormalizedOpCode == NormalizedByteCode.__ldc
 			&& code[i - 2].NormalizedOpCode == NormalizedByteCode.__ldc
 			&& code[i - 3].NormalizedOpCode == NormalizedByteCode.__ldc)
 		{
@@ -58,10 +60,7 @@ static class AtomicReferenceFieldUpdaterEmitter
 				if (field != null && !field.IsStatic && field.IsVolatile && field.DeclaringType == wrapper && field.FieldTypeWrapper == vclass)
 				{
 					// everything matches up, now call the actual emitter
-					ilgen.Emit(OpCodes.Pop);
-					ilgen.Emit(OpCodes.Pop);
-					ilgen.Emit(OpCodes.Pop);
-					ilgen.Emit(OpCodes.Newobj, context.GetAtomicReferenceFieldUpdater(field));
+					DoEmit(context, wrapper, ilgen, field);
 					return true;
 				}
 			}
@@ -69,11 +68,44 @@ static class AtomicReferenceFieldUpdaterEmitter
 		return false;
 	}
 
-	internal static void EmitImpl(TypeBuilder tb, FieldInfo field)
+	private static void DoEmit(DynamicTypeWrapper.FinishContext context, TypeWrapper wrapper, CodeEmitter ilgen, FieldWrapper field)
 	{
-		EmitCompareAndSet("compareAndSet", tb, field);
-		EmitGet(tb, field);
-		EmitSet("set", tb, field);
+		ConstructorBuilder cb;
+		bool exists;
+		lock (map)
+		{
+			exists = map.TryGetValue(field, out cb);
+		}
+		if (!exists)
+		{
+			// note that we don't need to lock here, because we're running as part of FinishCore, which is already protected by a lock
+			TypeWrapper arfuTypeWrapper = ClassLoaderWrapper.LoadClassCritical("ikvm.internal.IntrinsicAtomicReferenceFieldUpdater");
+			TypeBuilder tb = wrapper.TypeAsBuilder.DefineNestedType("__<ARFU>_" + field.Name + field.Signature.Replace('.', '/'), TypeAttributes.NestedPrivate | TypeAttributes.Sealed, arfuTypeWrapper.TypeAsBaseType);
+			EmitCompareAndSet("compareAndSet", tb, field.GetField());
+			EmitGet(tb, field.GetField());
+			EmitSet("set", tb, field.GetField());
+
+			cb = tb.DefineConstructor(MethodAttributes.Assembly, CallingConventions.Standard, Type.EmptyTypes);
+			lock (map)
+			{
+				map.Add(field, cb);
+			}
+			CodeEmitter ctorilgen = CodeEmitter.Create(cb);
+			ctorilgen.Emit(OpCodes.Ldarg_0);
+			MethodWrapper basector = arfuTypeWrapper.GetMethodWrapper("<init>", "()V", false);
+			basector.Link();
+			basector.EmitCall(ctorilgen);
+			ctorilgen.Emit(OpCodes.Ret);
+			context.RegisterPostFinishProc(delegate
+			{
+				arfuTypeWrapper.Finish();
+				tb.CreateType();
+			});
+		}
+		ilgen.LazyEmitPop();
+		ilgen.LazyEmitPop();
+		ilgen.LazyEmitPop();
+		ilgen.Emit(OpCodes.Newobj, cb);
 	}
 
 	private static void EmitCompareAndSet(string name, TypeBuilder tb, FieldInfo field)
@@ -93,7 +125,7 @@ static class AtomicReferenceFieldUpdaterEmitter
 		ilgen.Emit(OpCodes.Ret);
 	}
 
-	internal static MethodInfo MakeCompareExchange(Type type)
+	private static MethodInfo MakeCompareExchange(Type type)
 	{
 		MethodInfo interlockedCompareExchange = null;
 		foreach (MethodInfo m in JVM.Import(typeof(System.Threading.Interlocked)).GetMethods())
@@ -130,6 +162,5 @@ static class AtomicReferenceFieldUpdaterEmitter
 		ilgen.Emit(OpCodes.Stfld, field);
 		ilgen.EmitMemoryBarrier();
 		ilgen.Emit(OpCodes.Ret);
-		ilgen.DoEmit();
 	}
 }
