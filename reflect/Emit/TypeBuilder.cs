@@ -31,7 +31,7 @@ using IKVM.Reflection.Writer;
 
 namespace IKVM.Reflection.Emit
 {
-	public sealed class GenericTypeParameterBuilder : TypeInfo
+	public sealed class GenericTypeParameterBuilder : Type
 	{
 		private readonly string name;
 		private readonly TypeBuilder type;
@@ -140,20 +140,15 @@ namespace IKVM.Reflection.Emit
 		{
 			get
 			{
-				CheckBaked();
+				if (type != null)
+				{
+					type.CheckBaked();
+				}
+				else
+				{
+					method.CheckBaked();
+				}
 				return attr;
-			}
-		}
-
-		internal override void CheckBaked()
-		{
-			if (type != null)
-			{
-				type.CheckBaked();
-			}
-			else
-			{
-				method.CheckBaked();
 			}
 		}
 
@@ -196,15 +191,6 @@ namespace IKVM.Reflection.Emit
 			SetCustomAttribute(new CustomAttributeBuilder(con, binaryAttribute));
 		}
 
-		public override int MetadataToken
-		{
-			get
-			{
-				CheckBaked();
-				return (GenericParamTable.Index << 24) | paramPseudoIndex;
-			}
-		}
-
 		internal override int GetModuleBuilderToken()
 		{
 			if (typeToken == 0)
@@ -227,26 +213,9 @@ namespace IKVM.Reflection.Emit
 				return binder.BindMethodParameter(this);
 			}
 		}
-
-		internal override int GetCurrentToken()
-		{
-			if (this.ModuleBuilder.IsSaved)
-			{
-				return (GenericParamTable.Index << 24) | this.Module.GenericParam.GetIndexFixup()[paramPseudoIndex - 1] + 1;
-			}
-			else
-			{
-				return (GenericParamTable.Index << 24) | paramPseudoIndex;
-			}
-		}
-
-		internal override bool IsBaked
-		{
-			get { return ((MemberInfo)type ?? method).IsBaked; }
-		}
 	}
 
-	public sealed class TypeBuilder : TypeInfo, ITypeOwner
+	public sealed class TypeBuilder : Type, ITypeOwner
 	{
 		public const int UnspecifiedTypeSize = 0;
 		private readonly ITypeOwner owner;
@@ -262,12 +231,18 @@ namespace IKVM.Reflection.Emit
 		private List<PropertyBuilder> properties;
 		private List<EventBuilder> events;
 		private TypeAttributes attribs;
+		private TypeFlags typeFlags;
 		private GenericTypeParameterBuilder[] gtpb;
 		private List<CustomAttributeBuilder> declarativeSecurity;
 		private List<Type> interfaces;
-		private int size;
-		private short pack;
-		private bool hasLayout;
+
+		[Flags]
+		private enum TypeFlags
+		{
+			IsGenericTypeDefinition = 1,
+			HasNestedTypes = 2,
+			Baked = 4,
+		}
 
 		internal TypeBuilder(ITypeOwner owner, string ns, string name)
 		{
@@ -277,7 +252,6 @@ namespace IKVM.Reflection.Emit
 			this.name = name;
 			this.typeNameSpace = ns == null ? 0 : this.ModuleBuilder.Strings.Add(ns);
 			this.typeName = this.ModuleBuilder.Strings.Add(name);
-			MarkEnumOrValueType(ns, name);
 		}
 
 		public ConstructorBuilder DefineDefaultConstructor(MethodAttributes attributes)
@@ -371,7 +345,7 @@ namespace IKVM.Reflection.Emit
 			MethodImplTable.Record rec = new MethodImplTable.Record();
 			rec.Class = token;
 			rec.MethodBody = this.ModuleBuilder.GetMethodToken(methodInfoBody).Token;
-			rec.MethodDeclaration = this.ModuleBuilder.GetMethodTokenWinRT(methodInfoDeclaration);
+			rec.MethodDeclaration = this.ModuleBuilder.GetMethodToken(methodInfoDeclaration).Token;
 			this.ModuleBuilder.MethodImpl.AddRecord(rec);
 		}
 
@@ -382,12 +356,7 @@ namespace IKVM.Reflection.Emit
 
 		public FieldBuilder DefineField(string fieldName, Type type, Type[] requiredCustomModifiers, Type[] optionalCustomModifiers, FieldAttributes attributes)
 		{
-			return __DefineField(fieldName, type, CustomModifiers.FromReqOpt(requiredCustomModifiers, optionalCustomModifiers), attributes);
-		}
-
-		public FieldBuilder __DefineField(string fieldName, Type type, CustomModifiers customModifiers, FieldAttributes attributes)
-		{
-			FieldBuilder fb = new FieldBuilder(this, fieldName, type, customModifiers, attributes);
+			FieldBuilder fb = new FieldBuilder(this, fieldName, type, requiredCustomModifiers, optionalCustomModifiers, attributes);
 			fields.Add(fb);
 			return fb;
 		}
@@ -397,41 +366,31 @@ namespace IKVM.Reflection.Emit
 			return DefineProperty(name, attributes, returnType, null, null, parameterTypes, null, null);
 		}
 
-		public PropertyBuilder DefineProperty(string name, PropertyAttributes attributes, CallingConventions callingConvention, Type returnType, Type[] parameterTypes)
-		{
-			return DefineProperty(name, attributes, callingConvention, returnType, null, null, parameterTypes, null, null);
-		}
-
 		public PropertyBuilder DefineProperty(string name, PropertyAttributes attributes, Type returnType, Type[] returnTypeRequiredCustomModifiers, Type[] returnTypeOptionalCustomModifiers,
 			Type[] parameterTypes, Type[][] parameterTypeRequiredCustomModifiers, Type[][] parameterTypeOptionalCustomModifiers)
 		{
-			return DefinePropertyImpl(name, attributes, CallingConventions.Standard, true, returnType, parameterTypes,
-				PackedCustomModifiers.CreateFromExternal(returnTypeOptionalCustomModifiers, returnTypeRequiredCustomModifiers, parameterTypeOptionalCustomModifiers, parameterTypeRequiredCustomModifiers, Util.NullSafeLength(parameterTypes)));
+			return DefinePropertyImpl(name, attributes, CallingConventions.Standard, true, returnType, returnTypeRequiredCustomModifiers, returnTypeOptionalCustomModifiers,
+				parameterTypes, parameterTypeRequiredCustomModifiers, parameterTypeOptionalCustomModifiers);
 		}
 
 		public PropertyBuilder DefineProperty(string name, PropertyAttributes attributes, CallingConventions callingConvention,
 			Type returnType, Type[] returnTypeRequiredCustomModifiers, Type[] returnTypeOptionalCustomModifiers,
 			Type[] parameterTypes, Type[][] parameterTypeRequiredCustomModifiers, Type[][] parameterTypeOptionalCustomModifiers)
 		{
-			return DefinePropertyImpl(name, attributes, callingConvention, false, returnType, parameterTypes,
-				PackedCustomModifiers.CreateFromExternal(returnTypeOptionalCustomModifiers, returnTypeRequiredCustomModifiers, parameterTypeOptionalCustomModifiers, parameterTypeRequiredCustomModifiers, Util.NullSafeLength(parameterTypes)));
-		}
-
-		public PropertyBuilder __DefineProperty(string name, PropertyAttributes attributes, CallingConventions callingConvention,
-			Type returnType, CustomModifiers returnTypeCustomModifiers, Type[] parameterTypes, CustomModifiers[] parameterTypeCustomModifiers)
-		{
-			return DefinePropertyImpl(name, attributes, callingConvention, false, returnType, parameterTypes,
-				PackedCustomModifiers.CreateFromExternal(returnTypeCustomModifiers, parameterTypeCustomModifiers, Util.NullSafeLength(parameterTypes)));
+			return DefinePropertyImpl(name, attributes, callingConvention, false, returnType, returnTypeRequiredCustomModifiers, returnTypeOptionalCustomModifiers,
+				parameterTypes, parameterTypeRequiredCustomModifiers, parameterTypeOptionalCustomModifiers);
 		}
 
 		private PropertyBuilder DefinePropertyImpl(string name, PropertyAttributes attributes, CallingConventions callingConvention, bool patchCallingConvention,
-			Type returnType, Type[] parameterTypes, PackedCustomModifiers customModifiers)
+			Type returnType, Type[] returnTypeRequiredCustomModifiers, Type[] returnTypeOptionalCustomModifiers,
+			Type[] parameterTypes, Type[][] parameterTypeRequiredCustomModifiers, Type[][] parameterTypeOptionalCustomModifiers)
 		{
 			if (properties == null)
 			{
 				properties = new List<PropertyBuilder>();
 			}
-			PropertySignature sig = PropertySignature.Create(callingConvention, returnType, parameterTypes, customModifiers);
+			PropertySignature sig = PropertySignature.Create(callingConvention, returnType, returnTypeOptionalCustomModifiers, returnTypeRequiredCustomModifiers,
+				parameterTypes, parameterTypeOptionalCustomModifiers, parameterTypeRequiredCustomModifiers);
 			PropertyBuilder pb = new PropertyBuilder(this, name, attributes, sig, patchCallingConvention);
 			properties.Add(pb);
 			return pb;
@@ -461,12 +420,9 @@ namespace IKVM.Reflection.Emit
 		public TypeBuilder DefineNestedType(string name, TypeAttributes attr, Type parent, Type[] interfaces)
 		{
 			TypeBuilder tb = DefineNestedType(name, attr, parent);
-			if (interfaces != null)
+			foreach (Type iface in interfaces)
 			{
-				foreach (Type iface in interfaces)
-				{
-					tb.AddInterfaceImplementation(iface);
-				}
+				tb.AddInterfaceImplementation(iface);
 			}
 			return tb;
 		}
@@ -486,7 +442,7 @@ namespace IKVM.Reflection.Emit
 			return DefineNestedType(name, attr, parent, packSize, 0);
 		}
 
-		public TypeBuilder DefineNestedType(string name, TypeAttributes attr, Type parent, PackingSize packSize, int typeSize)
+		private TypeBuilder DefineNestedType(string name, TypeAttributes attr, Type parent, PackingSize packSize, int typeSize)
 		{
 			string ns = null;
 			int lastdot = name.LastIndexOf('.');
@@ -498,10 +454,7 @@ namespace IKVM.Reflection.Emit
 			TypeBuilder typeBuilder = __DefineNestedType(ns, name);
 			typeBuilder.__SetAttributes(attr);
 			typeBuilder.SetParent(parent);
-			if (packSize != PackingSize.Unspecified || typeSize != 0)
-			{
-				typeBuilder.__SetLayout((int)packSize, typeSize);
-			}
+			this.ModuleBuilder.SetPackingSizeAndTypeSize(typeBuilder, PackingSize.Unspecified, typeSize);
 			return typeBuilder;
 		}
 
@@ -530,33 +483,34 @@ namespace IKVM.Reflection.Emit
 			interfaces.Add(interfaceType);
 		}
 
-		public void __SetInterfaceImplementationCustomAttribute(Type interfaceType, CustomAttributeBuilder cab)
-		{
-			this.ModuleBuilder.SetInterfaceImplementationCustomAttribute(this, interfaceType, cab);
-		}
-
 		public int Size
 		{
-			get { return size; }
+			get
+			{
+				for (int i = 0; i < this.ModuleBuilder.ClassLayout.records.Length; i++)
+				{
+					if (this.ModuleBuilder.ClassLayout.records[i].Parent == token)
+					{
+						return this.ModuleBuilder.ClassLayout.records[i].ClassSize;
+					}
+				}
+				return 0;
+			}
 		}
 
 		public PackingSize PackingSize
 		{
-			get { return (PackingSize)pack; }
-		}
-
-		public override bool __GetLayout(out int packingSize, out int typeSize)
-		{
-			packingSize = this.pack;
-			typeSize = this.size;
-			return hasLayout;
-		}
-
-		public void __SetLayout(int packingSize, int typesize)
-		{
-			this.pack = (short)packingSize;
-			this.size = typesize;
-			this.hasLayout = true;
+			get
+			{
+				for (int i = 0; i < this.ModuleBuilder.ClassLayout.records.Length; i++)
+				{
+					if (this.ModuleBuilder.ClassLayout.records[i].Parent == token)
+					{
+						return (PackingSize)this.ModuleBuilder.ClassLayout.records[i].PackingSize;
+					}
+				}
+				return PackingSize.Unspecified;
+			}
 		}
 
 		private void SetStructLayoutPseudoCustomAttribute(CustomAttributeBuilder customBuilder)
@@ -571,9 +525,16 @@ namespace IKVM.Reflection.Emit
 			{
 				layout = (LayoutKind)val;
 			}
-			pack = (short)((int?)customBuilder.GetFieldValue("Pack") ?? 0);
-			size = (int?)customBuilder.GetFieldValue("Size") ?? 0;
-			CharSet charSet = customBuilder.GetFieldValue<CharSet>("CharSet") ?? CharSet.None;
+			int? pack = (int?)customBuilder.GetFieldValue("Pack");
+			int? size = (int?)customBuilder.GetFieldValue("Size");
+			if (pack.HasValue || size.HasValue)
+			{
+				ClassLayoutTable.Record rec = new ClassLayoutTable.Record();
+				rec.PackingSize = (short)(pack ?? 0);
+				rec.ClassSize = size ?? 0;
+				rec.Parent = token;
+				this.ModuleBuilder.ClassLayout.AddOrReplaceRecord(rec);
+			}
 			attribs &= ~TypeAttributes.LayoutMask;
 			switch (layout)
 			{
@@ -587,8 +548,9 @@ namespace IKVM.Reflection.Emit
 					attribs |= TypeAttributes.SequentialLayout;
 					break;
 			}
+			CharSet? charSet = customBuilder.GetFieldValue<CharSet>("CharSet");
 			attribs &= ~TypeAttributes.StringFormatMask;
-			switch (charSet)
+			switch (charSet ?? CharSet.None)
 			{
 				case CharSet.None:
 				case CharSet.Ansi:
@@ -601,7 +563,6 @@ namespace IKVM.Reflection.Emit
 					attribs |= TypeAttributes.UnicodeClass;
 					break;
 			}
-			hasLayout = pack != 0 || size != 0;
 		}
 
 		public void SetCustomAttribute(ConstructorInfo con, byte[] binaryAttribute)
@@ -671,9 +632,14 @@ namespace IKVM.Reflection.Emit
 			return Util.Copy(gtpb);
 		}
 
-		public override CustomModifiers[] __GetGenericArgumentsCustomModifiers()
+		public override Type[][] __GetGenericArgumentsOptionalCustomModifiers()
 		{
-			return gtpb == null ? Empty<CustomModifiers>.Array : new CustomModifiers[gtpb.Length];
+			return gtpb == null ? Empty<Type[]>.Array : Util.Copy(new Type[gtpb.Length][]);
+		}
+
+		public override Type[][] __GetGenericArgumentsRequiredCustomModifiers()
+		{
+			return gtpb == null ? Empty<Type[]>.Array : Util.Copy(new Type[gtpb.Length][]);
 		}
 
 		internal override Type GetGenericTypeArgument(int index)
@@ -691,7 +657,7 @@ namespace IKVM.Reflection.Emit
 			return this;
 		}
 
-		public TypeInfo CreateTypeInfo()
+		public Type CreateType()
 		{
 			if ((typeFlags & TypeFlags.Baked) != 0)
 			{
@@ -699,23 +665,9 @@ namespace IKVM.Reflection.Emit
 				throw new NotImplementedException();
 			}
 			typeFlags |= TypeFlags.Baked;
-			if (hasLayout)
-			{
-				ClassLayoutTable.Record rec = new ClassLayoutTable.Record();
-				rec.PackingSize = pack;
-				rec.ClassSize = size;
-				rec.Parent = token;
-				this.ModuleBuilder.ClassLayout.AddRecord(rec);
-			}
-			bool hasConstructor = false;
 			foreach (MethodBuilder mb in methods)
 			{
-				hasConstructor |= mb.IsSpecialName && mb.Name == ConstructorInfo.ConstructorName;
 				mb.Bake();
-			}
-			if (!hasConstructor && !IsModulePseudoType && !IsInterface && !IsValueType && !(IsAbstract && IsSealed) && Universe.AutomaticallyProvideDefaultConstructor)
-			{
-				((MethodBuilder)DefineDefaultConstructor(MethodAttributes.Public).GetMethodInfo()).Bake();
 			}
 			if (declarativeSecurity != null)
 			{
@@ -740,11 +692,6 @@ namespace IKVM.Reflection.Emit
 				}
 			}
 			return new BakedType(this);
-		}
-
-		public Type CreateType()
-		{
-			return CreateTypeInfo();
 		}
 
 		internal void PopulatePropertyAndEventTables()
@@ -865,6 +812,40 @@ namespace IKVM.Reflection.Emit
 				}
 			}
 			return methods;
+		}
+
+		public override StructLayoutAttribute StructLayoutAttribute
+		{
+			get
+			{
+				StructLayoutAttribute attr;
+				if ((attribs & TypeAttributes.ExplicitLayout) != 0)
+				{
+					attr = new StructLayoutAttribute(LayoutKind.Explicit);
+					attr.Pack = 8;
+					attr.Size = 0;
+					this.ModuleBuilder.ClassLayout.GetLayout(token, ref attr.Pack, ref attr.Size);
+				}
+				else
+				{
+					attr = new StructLayoutAttribute((attribs & TypeAttributes.SequentialLayout) != 0 ? LayoutKind.Sequential : LayoutKind.Auto);
+					attr.Pack = 8;
+					attr.Size = 0;
+				}
+				switch (attribs & TypeAttributes.StringFormatMask)
+				{
+					case TypeAttributes.AutoClass:
+						attr.CharSet = CharSet.Auto;
+						break;
+					case TypeAttributes.UnicodeClass:
+						attr.CharSet = CharSet.Unicode;
+						break;
+					case TypeAttributes.AnsiClass:
+						attr.CharSet = CharSet.Ansi;
+						break;
+				}
+				return attr;
+			}
 		}
 
 		public override Type DeclaringType
@@ -1062,14 +1043,9 @@ namespace IKVM.Reflection.Emit
 		{
 			get { return token == 0x02000001; }
 		}
-
-		internal override bool IsBaked
-		{
-			get { return IsCreated(); }
-		}
 	}
 
-	sealed class BakedType : TypeInfo
+	sealed class BakedType : Type
 	{
 		internal BakedType(TypeBuilder typeBuilder)
 			: base(typeBuilder)
@@ -1152,9 +1128,9 @@ namespace IKVM.Reflection.Emit
 			get { return underlyingType.DeclaringType; }
 		}
 
-		public override bool __GetLayout(out int packingSize, out int typeSize)
+		public override StructLayoutAttribute StructLayoutAttribute
 		{
-			return underlyingType.__GetLayout(out packingSize, out typeSize);
+			get { return underlyingType.StructLayoutAttribute; }
 		}
 
 		public override Type[] GetGenericArguments()
@@ -1167,9 +1143,14 @@ namespace IKVM.Reflection.Emit
 			return underlyingType.GetGenericTypeArgument(index);
 		}
 
-		public override CustomModifiers[] __GetGenericArgumentsCustomModifiers()
+		public override Type[][] __GetGenericArgumentsOptionalCustomModifiers()
 		{
-			return underlyingType.__GetGenericArgumentsCustomModifiers();
+			return underlyingType.__GetGenericArgumentsOptionalCustomModifiers();
+		}
+
+		public override Type[][] __GetGenericArgumentsRequiredCustomModifiers()
+		{
+			return underlyingType.__GetGenericArgumentsRequiredCustomModifiers();
 		}
 
 		public override bool IsGenericType
@@ -1200,11 +1181,6 @@ namespace IKVM.Reflection.Emit
 		internal override int GetModuleBuilderToken()
 		{
 			return underlyingType.GetModuleBuilderToken();
-		}
-
-		internal override bool IsBaked
-		{
-			get { return true; }
 		}
 	}
 }

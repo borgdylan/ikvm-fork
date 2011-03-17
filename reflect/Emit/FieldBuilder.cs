@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2008-2012 Jeroen Frijters
+  Copyright (C) 2008 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -22,7 +22,6 @@
   
 */
 using System;
-using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using IKVM.Reflection.Metadata;
 using IKVM.Reflection.Writer;
@@ -39,13 +38,13 @@ namespace IKVM.Reflection.Emit
 		private readonly int signature;
 		private readonly FieldSignature fieldSig;
 
-		internal FieldBuilder(TypeBuilder type, string name, Type fieldType, CustomModifiers customModifiers, FieldAttributes attribs)
+		internal FieldBuilder(TypeBuilder type, string name, Type fieldType, Type[] requiredCustomModifiers, Type[] optionalCustomModifiers, FieldAttributes attribs)
 		{
 			this.typeBuilder = type;
 			this.name = name;
 			this.pseudoToken = type.ModuleBuilder.AllocPseudoToken();
 			this.nameIndex = type.ModuleBuilder.Strings.Add(name);
-			this.fieldSig = FieldSignature.Create(fieldType, customModifiers);
+			this.fieldSig = FieldSignature.Create(fieldType, optionalCustomModifiers, requiredCustomModifiers);
 			ByteBuffer sig = new ByteBuffer(5);
 			fieldSig.WriteSig(this.typeBuilder.ModuleBuilder, sig);
 			this.signature = this.typeBuilder.ModuleBuilder.Blobs.Add(sig);
@@ -61,60 +60,23 @@ namespace IKVM.Reflection.Emit
 
 		public override object GetRawConstantValue()
 		{
-			if (!typeBuilder.IsCreated())
-			{
-				// the .NET FieldBuilder doesn't support this method
-				// (since we dont' have a different FieldInfo object after baking, we will support it once we're baked)
-				throw new NotSupportedException();
-			}
-			return typeBuilder.Module.Constant.GetRawConstantValue(typeBuilder.Module, GetCurrentToken());
+			return typeBuilder.Module.Constant.GetRawConstantValue(typeBuilder.Module, this.MetadataToken);
 		}
 
 		public void __SetDataAndRVA(byte[] data)
 		{
-			SetDataAndRvaImpl(data, typeBuilder.ModuleBuilder.initializedData, 0);
-		}
-
-		public void __SetReadOnlyDataAndRVA(byte[] data)
-		{
-			SetDataAndRvaImpl(data, typeBuilder.ModuleBuilder.methodBodies, unchecked((int)0x80000000));
-		}
-
-		private void SetDataAndRvaImpl(byte[] data, ByteBuffer bb, int readonlyMarker)
-		{
 			attribs |= FieldAttributes.HasFieldRVA;
 			FieldRVATable.Record rec = new FieldRVATable.Record();
-			bb.Align(8);
-			rec.RVA = bb.Position + readonlyMarker;
+			typeBuilder.ModuleBuilder.initializedData.Align(8);
+			rec.RVA = typeBuilder.ModuleBuilder.initializedData.Position;
 			rec.Field = pseudoToken;
 			typeBuilder.ModuleBuilder.FieldRVA.AddRecord(rec);
-			bb.Write(data);
+			typeBuilder.ModuleBuilder.initializedData.Write(data);
 		}
 
 		public override void __GetDataFromRVA(byte[] data, int offset, int length)
 		{
 			throw new NotImplementedException();
-		}
-
-		public override int __FieldRVA
-		{
-			get { throw new NotImplementedException(); }
-		}
-
-		public override bool __TryGetFieldOffset(out int offset)
-		{
-			int pseudoTokenOrIndex = pseudoToken;
-			if (typeBuilder.ModuleBuilder.IsSaved)
-			{
-				pseudoTokenOrIndex = typeBuilder.ModuleBuilder.ResolvePseudoToken(pseudoToken) & 0xFFFFFF;
-			}
-			foreach (int i in this.Module.FieldLayout.Filter(pseudoTokenOrIndex))
-			{
-				offset = this.Module.FieldLayout.records[i].Offset;
-				return true;
-			}
-			offset = 0;
-			return false;
 		}
 
 		public void SetCustomAttribute(ConstructorInfo con, byte[] binaryAttribute)
@@ -132,7 +94,7 @@ namespace IKVM.Reflection.Emit
 			}
 			else if (customBuilder.Constructor.DeclaringType == u.System_Runtime_InteropServices_MarshalAsAttribute)
 			{
-				FieldMarshal.SetMarshalAsAttribute(typeBuilder.ModuleBuilder, pseudoToken, customBuilder);
+				MarshalSpec.SetMarshalAsAttribute(typeBuilder.ModuleBuilder, pseudoToken, customBuilder);
 				attribs |= FieldAttributes.HasFieldMarshal;
 			}
 			else if (customBuilder.Constructor.DeclaringType == u.System_NonSerializedAttribute)
@@ -206,24 +168,18 @@ namespace IKVM.Reflection.Emit
 
 		internal override int ImportTo(ModuleBuilder other)
 		{
-			return other.ImportMethodOrField(typeBuilder, name, fieldSig);
-		}
-
-		internal override int GetCurrentToken()
-		{
-			if (typeBuilder.ModuleBuilder.IsSaved)
+			if (typeBuilder.IsGenericTypeDefinition)
 			{
-				return typeBuilder.ModuleBuilder.ResolvePseudoToken(pseudoToken);
+				return other.ImportMember(TypeBuilder.GetField(typeBuilder, this));
 			}
-			else
+			else if (other == typeBuilder.ModuleBuilder)
 			{
 				return pseudoToken;
 			}
-		}
-
-		internal override bool IsBaked
-		{
-			get { return typeBuilder.IsBaked; }
+			else
+			{
+				return other.ImportMethodOrField(typeBuilder, name, fieldSig);
+			}
 		}
 	}
 }
