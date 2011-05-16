@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <!--
-  Copyright (C) 2002-2012 Jeroen Frijters
+  Copyright (C) 2002-2009 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -47,7 +47,8 @@
                     <ldarg_0 />
                     <ldc_i4_0 />
                     <conv_i8 />
-                    <call class="java.lang.Thread" name="objectWait" sig="(Ljava.lang.Object;J)V" />
+                    <ldc_i4_0 />
+                    <call class="java.lang.Thread" name="objectWait" sig="(Ljava.lang.Object;JI)V" />
                     <ret />
                 </body>
             </method>
@@ -57,7 +58,8 @@
                 <body>
                     <ldarg_0 />
                     <ldarg_1 />
-                    <call class="java.lang.Thread" name="objectWait" sig="(Ljava.lang.Object;J)V" />
+                    <ldc_i4_0 />
+                    <call class="java.lang.Thread" name="objectWait" sig="(Ljava.lang.Object;JI)V" />
                     <ret />
                 </body>
             </method>
@@ -228,9 +230,6 @@
             <attribute type="IKVM.Attributes.SignatureAttribute" sig="(Ljava.lang.String;)V">
                 <parameter>Ljava/lang/Object;Ljava/io/Serializable;Ljava/lang/Comparable&lt;Ljava/lang/String;&gt;;Ljava/lang/CharSequence;</parameter>
             </attribute>
-            <attribute type="IKVM.Attributes.NonNestedInnerClassAttribute" sig="(Ljava.lang.String;)V">
-                <parameter>java.lang.String$CaseInsensitiveComparator</parameter>
-            </attribute>
             <field name="serialVersionUID" sig="J" modifiers="private static final" constant="-6849794470754667710" />
             <constructor sig="()V" modifiers="public">
                 <alternateBody>
@@ -255,14 +254,6 @@
                 <parameter name="value" />
                 <parameter name="offset" />
                 <parameter name="count" />
-            </constructor>
-            <!-- Package private constructor (that OpenJDK uses to avoid copying the array) -->
-            <constructor sig="([CZ)V" modifiers="">
-                <alternateBody>
-                    <ldarg_0 />
-                    <newobj type="System.String" name=".ctor" sig="([C)V" />
-                    <ret />
-                </alternateBody>
             </constructor>
             <!-- Package private constructor, that we redirect to static helper -->
             <constructor sig="(II[C)V" modifiers="">
@@ -367,12 +358,7 @@
             </method>
             <method name="valueOf" sig="(C)Ljava.lang.String;" modifiers="public static">
                 <parameter name="c" />
-                <body>
-                    <ldarg_0 />
-                    <ldc_i4_1 />
-                    <newobj type="System.String" name=".ctor" sig="(CI)V" />
-                    <ret />
-                </body>
+                <redirect class="java.lang.StringHelper" />
             </method>
             <method name="valueOf" sig="(F)Ljava.lang.String;" modifiers="public static">
                 <parameter name="f" />
@@ -677,7 +663,7 @@
                 <parameter name="anotherString" />
                 <redirect class="java.lang.StringHelper" type="static" sig="(Ljava.lang.String;Ljava.lang.String;)I" />
             </method>
-            <method name="compareTo" sig="(Ljava.lang.Object;)I" modifiers="public ACC_BRIDGE ACC_SYNTHETIC">
+            <method name="compareTo" sig="(Ljava.lang.Object;)I" modifiers="public">
                 <parameter name="o" />
                 <body>
                     <ldarg_0 />
@@ -824,7 +810,14 @@
             <method name="split" sig="(Ljava.lang.String;I)[Ljava.lang.String;" modifiers="public">
                 <parameter name="regex" />
                 <parameter name="limit" />
-                <redirect class="java.lang.StringHelper" type="static" sig="(Ljava.lang.String;Ljava.lang.String;I)[Ljava.lang.String;" />
+                <body>
+                    <ldarg_1 />
+                    <call class="java.util.regex.Pattern" name="compile" sig="(Ljava.lang.String;)Ljava.util.regex.Pattern;" />
+                    <ldarg_0 />
+                    <ldarg_2 />
+                    <callvirt class="java.util.regex.Pattern" name="split" sig="(Ljava.lang.CharSequence;I)[Ljava.lang.String;" />
+                    <ret />
+                </body>
             </method>
             <method name="copyValueOf" sig="([C)Ljava.lang.String;" modifiers="public static">
                 <parameter name="data" />
@@ -855,7 +848,14 @@
                 <parameter name="args">
                     <attribute type="System.ParamArrayAttribute" sig="()V" />
                 </parameter>
-                <redirect class="java.lang.StringHelper" />
+                <body>
+                    <newobj class="java.util.Formatter" name="&lt;init&gt;" sig="()V" />
+                    <ldarg_0 />
+                    <ldarg_1 />
+                    <callvirt class="java.util.Formatter" name="format" sig="(Ljava.lang.String;[Ljava.lang.Object;)Ljava.util.Formatter;" />
+                    <callvirt class="java.util.Formatter" name="toString" sig="()Ljava.lang.String;" />
+                    <ret />
+                </body>
             </method>
             <method name="format" sig="(Ljava.util.Locale;Ljava.lang.String;[Ljava.lang.Object;)Ljava.lang.String;" modifiers="public static">
                 <parameter name="l" />
@@ -863,7 +863,15 @@
                 <parameter name="args">
                     <attribute type="System.ParamArrayAttribute" sig="()V" />
                 </parameter>
-                <redirect class="java.lang.StringHelper" />
+                <body>
+                    <ldarg_0 />
+                    <newobj class="java.util.Formatter" name="&lt;init&gt;" sig="(Ljava.util.Locale;)V" />
+                    <ldarg_1 />
+                    <ldarg_2 />
+                    <callvirt class="java.util.Formatter" name="format" sig="(Ljava.lang.String;[Ljava.lang.Object;)Ljava.util.Formatter;" />
+                    <callvirt class="java.util.Formatter" name="toString" sig="()Ljava.lang.String;" />
+                    <ret />
+                </body>
             </method>
             <method name="isEmpty" sig="()Z" modifiers="public">
                 <body>
@@ -895,32 +903,25 @@
         </class>
         <class name="java.lang.Throwable" shadows="System.Exception" modifiers="public">
             <implements class="java.io.Serializable" />
-            <attribute type="System.SerializableAttribute" sig="()V" />
             <field name="serialVersionUID" sig="J" modifiers="private static final" constant="-3042686055658047285" />
             <field name="serialPersistentFields" sig="[Ljava.io.ObjectStreamField;" modifiers="private static final" />
-            <field name="suppressFillInStackTrace" sig="Z" modifiers="static">
+            <field name="suppressFillInStackTrace" sig="Z" modifiers="private static">
                 <attribute type="System.ThreadStaticAttribute" sig="()V" />
             </field>
-            <field name="UNASSIGNED_STACK" sig="[Ljava.lang.StackTraceElement;" modifiers="static final" />
-            <field name="SUPPRESSED_SENTINEL" sig="Ljava.util.List;" modifiers="static final" />
+            <field name="emptyStackTrace" sig="[Ljava.lang.StackTraceElement;" modifiers="private static final" />
             <field name="detailMessage" sig="Ljava.lang.String;" />
             <field name="cause" sig="Ljava.lang.Throwable;" />
             <field name="original" sig="Ljava.lang.Throwable;" />
             <field name="stackTrace" sig="[Ljava.lang.StackTraceElement;" />
             <field name="tracePart1" sig="Lcli.System.Diagnostics.StackTrace;" />
             <field name="tracePart2" sig="Lcli.System.Diagnostics.StackTrace;" />
-            <field name="suppressedExceptions" sig="Ljava.util.List;" />
             <clinit>
                 <body>
-                    <call type="IKVM.Internal.ExceptionHelper" name="getPersistentFields" sig="()[Ljava.io.ObjectStreamField;" />
+                    <call class="java.lang.ExceptionHelper" name="getPersistentFields" sig="()[Ljava.io.ObjectStreamField;" />
                     <stsfld class="java.lang.Throwable" name="serialPersistentFields" sig="[Ljava.io.ObjectStreamField;" />
                     <ldc_i4_0 />
                     <newarr sig="Ljava.lang.StackTraceElement;" />
-                    <stsfld class="java.lang.Throwable" name="UNASSIGNED_STACK" sig="[Ljava.lang.StackTraceElement;" />
-                    <ldc_i4_0 />
-                    <newobj class="java.util.ArrayList" name="&lt;init&gt;" sig="(I)V" />
-                    <call class="java.util.Collections" name="unmodifiableList" sig="(Ljava.util.List;)Ljava.util.List;" />
-                    <stsfld class="java.lang.Throwable" name="SUPPRESSED_SENTINEL" sig="Ljava.util.List;" />
+                    <stsfld class="java.lang.Throwable" name="emptyStackTrace" sig="[Ljava.lang.StackTraceElement;" />
                     <ret />
                 </body>
             </clinit>
@@ -941,6 +942,31 @@
                     <exceptionMapping />
                 </body>
             </method>
+            <method name="__&lt;map&gt;" sig="(Ljava.lang.Throwable;Z)Ljava.lang.Throwable;" modifiers="public static">
+                <attribute type="IKVM.Attributes.HideFromJavaAttribute" sig="()V" />
+                <attribute type="System.ComponentModel.EditorBrowsableAttribute" sig="(Lcli.System.ComponentModel.EditorBrowsableState;)V">
+                    <parameter>Never</parameter>
+                </attribute>
+                <body>
+                    <ldarg_0 />
+                    <ldarg_1 />
+                    <call class="java.lang.ExceptionHelper" name="MapExceptionFast" sig="(Ljava.lang.Throwable;Z)Ljava.lang.Throwable;" />
+                    <ret />
+                </body>
+            </method>
+            <method name="__&lt;map&gt;" sig="(Ljava.lang.Throwable;Lcli.System.Type;Z)Ljava.lang.Throwable;" modifiers="public static">
+                <attribute type="IKVM.Attributes.HideFromJavaAttribute" sig="()V" />
+                <attribute type="System.ComponentModel.EditorBrowsableAttribute" sig="(Lcli.System.ComponentModel.EditorBrowsableState;)V">
+                    <parameter>Never</parameter>
+                </attribute>
+                <body>
+                    <ldarg_0 />
+                    <ldarg_1 />
+                    <ldarg_2 />
+                    <call class="java.lang.ExceptionHelper" name="MapException" sig="(Ljava.lang.Throwable;Lcli.System.Type;Z)Ljava.lang.Throwable;" />
+                    <ret />
+                </body>
+            </method>
             <method name="__&lt;unmap&gt;" sig="(Ljava.lang.Throwable;)Ljava.lang.Throwable;" modifiers="public static">
                 <attribute type="IKVM.Attributes.HideFromJavaAttribute" sig="()V" />
                 <attribute type="System.ComponentModel.EditorBrowsableAttribute" sig="(Lcli.System.ComponentModel.EditorBrowsableState;)V">
@@ -948,7 +974,7 @@
                 </attribute>
                 <body>
                     <ldarg_0 />
-                    <call type="IKVM.Internal.ExceptionHelper" name="UnmapException" sig="(Ljava.lang.Throwable;)Ljava.lang.Throwable;" />
+                    <call class="java.lang.ExceptionHelper" name="UnmapException" sig="(Ljava.lang.Throwable;)Ljava.lang.Throwable;" />
                     <ret />
                 </body>
             </method>
@@ -959,7 +985,7 @@
                 </attribute>
                 <body>
                     <ldarg_0 />
-                    <call type="IKVM.Internal.ExceptionHelper" name="FixateException" sig="(Ljava.lang.Throwable;)V" />
+                    <call class="java.lang.ExceptionHelper" name="FixateException" sig="(Lcli.System.Exception;)V" />
                     <ldarg_0 />
                     <ret />
                 </body>
@@ -970,7 +996,7 @@
                 <body>
                     <ldarg_0 />
                     <ldarg_1 />
-                    <call type="IKVM.Internal.ExceptionHelper" name="readObject" sig="(Ljava.lang.Throwable;Ljava.io.ObjectInputStream;)V" />
+                    <call class="java.lang.ExceptionHelper" name="readObject" sig="(Ljava.lang.Throwable;Ljava.io.ObjectInputStream;)V" />
                     <ret />
                 </body>
             </method>
@@ -979,20 +1005,12 @@
                 <body>
                     <ldarg_0 />
                     <ldarg_1 />
-                    <call type="IKVM.Internal.ExceptionHelper" name="writeObject" sig="(Ljava.lang.Throwable;Ljava.io.ObjectOutputStream;)V" />
+                    <call class="java.lang.ExceptionHelper" name="writeObject" sig="(Ljava.lang.Throwable;Ljava.io.ObjectOutputStream;)V" />
                     <ret />
                 </body>
             </method>
             <constructor sig="()V" modifiers="public">
                 <body>
-                    <!-- Start field initialization -->
-                    <ldarg_0 />
-                    <ldsfld class="java.lang.Throwable" name="UNASSIGNED_STACK" sig="[Ljava.lang.StackTraceElement;" />
-                    <stfld class="java.lang.Throwable" name="stackTrace" sig="[Ljava.lang.StackTraceElement;" />
-                    <ldarg_0 />
-                    <ldsfld class="java.lang.Throwable" name="SUPPRESSED_SENTINEL" sig="Ljava.util.List;" />
-                    <stfld class="java.lang.Throwable" name="suppressedExceptions" sig="Ljava.util.List;" />
-                    <!-- End field initialization -->
                     <ldarg_0 />
                     <ldstr value="" />
                     <call type="System.Exception" name=".ctor" sig="(Ljava.lang.String;)V" />
@@ -1005,6 +1023,9 @@
                     <stsfld class="java.lang.Throwable" name="suppressFillInStackTrace" sig="Z" />
                     <brtrue name="skipFillInStackTrace" />
                     <ldarg_0 />
+                    <ldsfld class="java.lang.Throwable" name="emptyStackTrace" sig="[Ljava.lang.StackTraceElement;" />
+                    <stfld class="java.lang.Throwable" name="stackTrace" sig="[Ljava.lang.StackTraceElement;" />
+                    <ldarg_0 />
                     <callvirt class="java.lang.Throwable" name="fillInStackTrace" sig="()Ljava.lang.Throwable;" />
                     <pop />
                     <label name="skipFillInStackTrace" />
@@ -1015,17 +1036,9 @@
             <constructor sig="(Ljava.lang.String;)V" modifiers="public">
                 <parameter name="message" />
                 <body>
-                    <!-- Start field initialization -->
-                    <ldarg_0 />
-                    <ldsfld class="java.lang.Throwable" name="UNASSIGNED_STACK" sig="[Ljava.lang.StackTraceElement;" />
-                    <stfld class="java.lang.Throwable" name="stackTrace" sig="[Ljava.lang.StackTraceElement;" />
-                    <ldarg_0 />
-                    <ldsfld class="java.lang.Throwable" name="SUPPRESSED_SENTINEL" sig="Ljava.util.List;" />
-                    <stfld class="java.lang.Throwable" name="suppressedExceptions" sig="Ljava.util.List;" />
-                    <!-- End field initialization -->
                     <ldarg_0 />
                     <ldarg_1 />
-                    <call type="IKVM.Internal.ExceptionHelper" name="FilterMessage" sig="(Ljava.lang.String;)Ljava.lang.String;" />
+                    <call class="java.lang.ExceptionHelper" name="FilterMessage" sig="(Ljava.lang.String;)Ljava.lang.String;" />
                     <call type="System.Exception" name=".ctor" sig="(Ljava.lang.String;)V" />
                     <ldarg_0 />
                     <ldarg_0 />
@@ -1035,6 +1048,9 @@
                     <ldc_i4_0 />
                     <stsfld class="java.lang.Throwable" name="suppressFillInStackTrace" sig="Z" />
                     <brtrue name="skipFillInStackTrace" />
+                    <ldarg_0 />
+                    <ldsfld class="java.lang.Throwable" name="emptyStackTrace" sig="[Ljava.lang.StackTraceElement;" />
+                    <stfld class="java.lang.Throwable" name="stackTrace" sig="[Ljava.lang.StackTraceElement;" />
                     <ldarg_0 />
                     <callvirt class="java.lang.Throwable" name="fillInStackTrace" sig="()Ljava.lang.Throwable;" />
                     <pop />
@@ -1050,17 +1066,9 @@
                 <parameter name="message" />
                 <parameter name="cause" />
                 <body>
-                    <!-- Start field initialization -->
-                    <ldarg_0 />
-                    <ldsfld class="java.lang.Throwable" name="UNASSIGNED_STACK" sig="[Ljava.lang.StackTraceElement;" />
-                    <stfld class="java.lang.Throwable" name="stackTrace" sig="[Ljava.lang.StackTraceElement;" />
-                    <ldarg_0 />
-                    <ldsfld class="java.lang.Throwable" name="SUPPRESSED_SENTINEL" sig="Ljava.util.List;" />
-                    <stfld class="java.lang.Throwable" name="suppressedExceptions" sig="Ljava.util.List;" />
-                    <!-- End field initialization -->
                     <ldarg_0 />
                     <ldarg_1 />
-                    <call type="IKVM.Internal.ExceptionHelper" name="FilterMessage" sig="(Ljava.lang.String;)Ljava.lang.String;" />
+                    <call class="java.lang.ExceptionHelper" name="FilterMessage" sig="(Ljava.lang.String;)Ljava.lang.String;" />
                     <ldarg_2 />
                     <call type="System.Exception" name=".ctor" sig="(Ljava.lang.String;Ljava.lang.Throwable;)V" />
                     <ldarg_0 />
@@ -1071,6 +1079,9 @@
                     <ldc_i4_0 />
                     <stsfld class="java.lang.Throwable" name="suppressFillInStackTrace" sig="Z" />
                     <brtrue name="skipFillInStackTrace" />
+                    <ldarg_0 />
+                    <ldsfld class="java.lang.Throwable" name="emptyStackTrace" sig="[Ljava.lang.StackTraceElement;" />
+                    <stfld class="java.lang.Throwable" name="stackTrace" sig="[Ljava.lang.StackTraceElement;" />
                     <ldarg_0 />
                     <callvirt class="java.lang.Throwable" name="fillInStackTrace" sig="()Ljava.lang.Throwable;" />
                     <pop />
@@ -1088,17 +1099,9 @@
             <constructor sig="(Ljava.lang.Throwable;)V" modifiers="public">
                 <parameter name="cause" />
                 <body>
-                    <!-- Start field initialization -->
-                    <ldarg_0 />
-                    <ldsfld class="java.lang.Throwable" name="UNASSIGNED_STACK" sig="[Ljava.lang.StackTraceElement;" />
-                    <stfld class="java.lang.Throwable" name="stackTrace" sig="[Ljava.lang.StackTraceElement;" />
-                    <ldarg_0 />
-                    <ldsfld class="java.lang.Throwable" name="SUPPRESSED_SENTINEL" sig="Ljava.util.List;" />
-                    <stfld class="java.lang.Throwable" name="suppressedExceptions" sig="Ljava.util.List;" />
-                    <!-- End field initialization -->
                     <ldarg_0 />
                     <ldarg_1 />
-                    <call type="IKVM.Internal.ExceptionHelper" name="GetMessageFromCause" sig="(Ljava.lang.Throwable;)Ljava.lang.String;" />
+                    <call class="java.lang.ExceptionHelper" name="GetMessageFromCause" sig="(Ljava.lang.Throwable;)Ljava.lang.String;" />
                     <ldarg_1 />
                     <call type="System.Exception" name=".ctor" sig="(Ljava.lang.String;Ljava.lang.Throwable;)V" />
                     <ldarg_0 />
@@ -1109,6 +1112,9 @@
                     <ldc_i4_0 />
                     <stsfld class="java.lang.Throwable" name="suppressFillInStackTrace" sig="Z" />
                     <brtrue name="skipFillInStackTrace" />
+                    <ldarg_0 />
+                    <ldsfld class="java.lang.Throwable" name="emptyStackTrace" sig="[Ljava.lang.StackTraceElement;" />
+                    <stfld class="java.lang.Throwable" name="stackTrace" sig="[Ljava.lang.StackTraceElement;" />
                     <ldarg_0 />
                     <callvirt class="java.lang.Throwable" name="fillInStackTrace" sig="()Ljava.lang.Throwable;" />
                     <pop />
@@ -1127,70 +1133,18 @@
                     <ret />
                 </body>
             </constructor>
-            <constructor sig="(Ljava.lang.String;Ljava.lang.Throwable;ZZ)V" modifiers="protected">
-                <parameter name="message" />
-                <parameter name="cause" />
-                <parameter name="enableSuppression" />
-                <parameter name="writableStackTrace" />
-                <body>
-                    <!-- Start field initialization -->
-                    <ldarg_0 />
-                    <ldsfld class="java.lang.Throwable" name="UNASSIGNED_STACK" sig="[Ljava.lang.StackTraceElement;" />
-                    <stfld class="java.lang.Throwable" name="stackTrace" sig="[Ljava.lang.StackTraceElement;" />
-                    <ldarg_0 />
-                    <ldsfld class="java.lang.Throwable" name="SUPPRESSED_SENTINEL" sig="Ljava.util.List;" />
-                    <stfld class="java.lang.Throwable" name="suppressedExceptions" sig="Ljava.util.List;" />
-                    <!-- End field initialization -->
-                    <ldarg_0 />
-                    <ldarg_1 />
-                    <call type="IKVM.Internal.ExceptionHelper" name="FilterMessage" sig="(Ljava.lang.String;)Ljava.lang.String;" />
-                    <ldarg_2 />
-                    <call type="System.Exception" name=".ctor" sig="(Ljava.lang.String;Ljava.lang.Throwable;)V" />
-                    <ldarg_s argNum="4" />
-                    <brfalse name="else" />
-                    <!-- Start fillInStackTrace call -->
-                    <ldsfld class="java.lang.Throwable" name="suppressFillInStackTrace" sig="Z" />
-                    <ldc_i4_0 />
-                    <stsfld class="java.lang.Throwable" name="suppressFillInStackTrace" sig="Z" />
-                    <brtrue name="skipFillInStackTrace" />
-                    <ldarg_0 />
-                    <callvirt class="java.lang.Throwable" name="fillInStackTrace" sig="()Ljava.lang.Throwable;" />
-                    <pop />
-                    <label name="skipFillInStackTrace" />
-                    <!-- End fillInStackTrace call -->
-                    <br name="endif" />
-                    <label name="else" />
-                    <ldarg_0 />
-                    <ldnull />
-                    <stfld class="java.lang.Throwable" name="stackTrace" sig="[Ljava.lang.StackTraceElement;" />
-                    <label name="endif" />
-                    <ldarg_0 />
-                    <ldarg_1 />
-                    <stfld class="java.lang.Throwable" name="detailMessage" sig="Ljava.lang.String;" />
-                    <ldarg_0 />
-                    <ldarg_2 />
-                    <stfld class="java.lang.Throwable" name="cause" sig="Ljava.lang.Throwable;" />
-                    <ldarg_3 />
-                    <brtrue name="end" />
-                    <ldarg_0 />
-                    <ldnull />
-                    <stfld class="java.lang.Throwable" name="suppressedExceptions" sig="Ljava.util.List;" />
-                    <label name="end" />
-                    <ret />
-                </body>
-            </constructor>
-            <method name="printStackTrace" sig="()V" modifiers="public">
-                <redirect class="java.lang.ThrowableHelper" sig="(Ljava.lang.Throwable;)V" type="static" />
+            <method type="virtual" name="printStackTrace" sig="()V" modifiers="public">
+                <redirect class="java.lang.ExceptionHelper" sig="(Ljava.lang.Throwable;)V" type="static" />
             </method>
-            <method name="printStackTrace" sig="(Ljava.io.PrintStream;)V" modifiers="public">
+            <method type="virtual" name="printStackTrace" sig="(Ljava.io.PrintStream;)V" modifiers="public">
                 <parameter name="s" />
-                <redirect class="java.lang.ThrowableHelper" sig="(Ljava.lang.Throwable;Ljava.io.PrintStream;)V" type="static" />
+                <redirect class="java.lang.ExceptionHelper" sig="(Ljava.lang.Throwable;Ljava.io.PrintStream;)V" type="static" />
             </method>
-            <method name="printStackTrace" sig="(Ljava.io.PrintWriter;)V" modifiers="public">
+            <method type="virtual" name="printStackTrace" sig="(Ljava.io.PrintWriter;)V" modifiers="public">
                 <parameter name="s" />
-                <redirect class="java.lang.ThrowableHelper" sig="(Ljava.lang.Throwable;Ljava.io.PrintWriter;)V" type="static" />
+                <redirect class="java.lang.ExceptionHelper" sig="(Ljava.lang.Throwable;Ljava.io.PrintWriter;)V" type="static" />
             </method>
-            <method name="getMessage" sig="()Ljava.lang.String;" modifiers="public">
+            <method type="virtual" name="getMessage" sig="()Ljava.lang.String;" modifiers="public">
                 <body>
                     <ldarg_0 />
                     <ldfld class="java.lang.Throwable" name="detailMessage" sig="Ljava.lang.String;" />
@@ -1202,25 +1156,22 @@
                     <ret />
                 </alternateBody>
             </method>
-            <method name="getLocalizedMessage" sig="()Ljava.lang.String;" modifiers="public">
-                <redirect class="cli.IKVM.Internal.ExceptionHelper" sig="(Ljava.lang.Throwable;)Ljava.lang.String;" type="static" />
+            <method type="virtual" name="getLocalizedMessage" sig="()Ljava.lang.String;" modifiers="public">
+                <redirect class="java.lang.ExceptionHelper" sig="(Ljava.lang.Throwable;)Ljava.lang.String;" type="static" />
             </method>
-            <method name="fillInStackTrace" sig="()Ljava.lang.Throwable;" modifiers="public">
+            <method type="virtual" name="fillInStackTrace" sig="()Ljava.lang.Throwable;" modifiers="public">
                 <body>
                     <ldarg_0 />
                     <call type="System.Threading.Monitor" name="Enter" sig="(Ljava.lang.Object;)V" />
                     <exceptionBlock>
                         <try>
-                            <ldarg_0 />
-                            <ldfld class="java.lang.Throwable" name="stackTrace" sig="[Ljava.lang.StackTraceElement;" />
-                            <brfalse name="leave" />
                             <!--
-	                    stackTrace = UNASSIGNED_STACK;
+	                    stackTrace = null;
                             tracePart1 = null;
                             tracePart2 = new cli.System.Diagnostics.StackTrace(true);
                             -->
                             <ldarg_0 />
-                            <ldsfld class="java.lang.Throwable" name="UNASSIGNED_STACK" sig="[Ljava.lang.StackTraceElement;" />
+                            <ldnull />
                             <stfld class="java.lang.Throwable" name="stackTrace" sig="[Ljava.lang.StackTraceElement;" />
                             <ldarg_0 />
                             <ldnull />
@@ -1229,27 +1180,23 @@
                             <ldc_i4_1 />
                             <newobj type="System.Diagnostics.StackTrace" name=".ctor" sig="(Z)V" />
                             <stfld class="java.lang.Throwable" name="tracePart2" sig="Lcli.System.Diagnostics.StackTrace;" />
-                            <label name="leave" />
-                            <leave name="end" />
                         </try>
                         <finally>
                             <ldarg_0 />
                             <call type="System.Threading.Monitor" name="Exit" sig="(Ljava.lang.Object;)V" />
-                            <endfinally />
                         </finally>
                     </exceptionBlock>
-                    <label name="end" />
                     <ldarg_0 />
                     <ret />
                 </body>
                 <alternateBody>
                     <ldarg_0 />
-                    <call type="IKVM.Internal.ExceptionHelper" name="fillInStackTrace" sig="(Ljava.lang.Throwable;)V" />
+                    <call class="java.lang.ExceptionHelper" name="fillInStackTrace" sig="(Lcli.System.Exception;)V" />
                     <ldarg_0 />
                     <ret />
                 </alternateBody>
             </method>
-            <method name="initCause" sig="(Ljava.lang.Throwable;)Ljava.lang.Throwable;" modifiers="public">
+            <method type="virtual" name="initCause" sig="(Ljava.lang.Throwable;)Ljava.lang.Throwable;" modifiers="public">
                 <parameter name="cause" />
                 <body>
                     <ldarg_0 />
@@ -1260,19 +1207,16 @@
                             <ldarg_0 />
                             <ldfld class="java.lang.Throwable" name="cause" sig="Ljava.lang.Throwable;" />
                             <ldarg_1 />
-                            <call type="IKVM.Internal.ExceptionHelper" name="checkInitCause" sig="(Ljava.lang.Throwable;Ljava.lang.Throwable;Ljava.lang.Throwable;)V" />
+                            <call class="java.lang.ExceptionHelper" name="checkInitCause" sig="(Ljava.lang.Throwable;Ljava.lang.Throwable;Ljava.lang.Throwable;)V" />
                             <ldarg_0 />
                             <ldarg_1 />
                             <stfld class="java.lang.Throwable" name="cause" sig="Ljava.lang.Throwable;" />
-                            <leave name="end" />
                         </try>
                         <finally>
                             <ldarg_0 />
                             <call type="System.Threading.Monitor" name="Exit" sig="(Ljava.lang.Object;)V" />
-                            <endfinally />
                         </finally>
                     </exceptionBlock>
-                    <label name="end" />
                     <ldarg_0 />
                     <ret />
                 </body>
@@ -1281,15 +1225,17 @@
                     <ldarg_0 />
                     <ldnull />
                     <ldnull />
-                    <call type="IKVM.Internal.ExceptionHelper" name="checkInitCause" sig="(Ljava.lang.Throwable;Ljava.lang.Throwable;Ljava.lang.Throwable;)V" />
+                    <call class="java.lang.ExceptionHelper" name="checkInitCause" sig="(Ljava.lang.Throwable;Ljava.lang.Throwable;Ljava.lang.Throwable;)V" />
                     <ldarg_0 />
                     <ret />
                 </alternateBody>
             </method>
-            <method name="getCause" sig="()Ljava.lang.Throwable;" modifiers="public">
+            <method type="virtual" name="getCause" sig="()Ljava.lang.Throwable;" modifiers="public">
                 <body>
                     <ldarg_0 />
-                    <call type="IKVM.Internal.ExceptionHelper" name="getCause" sig="(Ljava.lang.Throwable;)Ljava.lang.Throwable;" />
+                    <ldarg_0 />
+                    <ldfld class="java.lang.Throwable" name="cause" sig="Ljava.lang.Throwable;" />
+                    <call class="java.lang.ExceptionHelper" name="getCause" sig="(Ljava.lang.Throwable;Ljava.lang.Throwable;)Ljava.lang.Throwable;" />
                     <ret />
                 </body>
                 <alternateBody>
@@ -1298,84 +1244,86 @@
                     <ret />
                 </alternateBody>
             </method>
-            <method name="getStackTrace" sig="()[Ljava.lang.StackTraceElement;" modifiers="public">
+            <method type="virtual" name="getStackTrace" sig="()[Ljava.lang.StackTraceElement;" modifiers="public">
                 <body>
                     <ldarg_0 />
-                    <call type="IKVM.Internal.ExceptionHelper" name="getOurStackTrace" sig="(Ljava.lang.Throwable;)[Ljava.lang.StackTraceElement;" />
+                    <call class="java.lang.Throwable" name="getOurStackTrace" sig="()[Ljava.lang.StackTraceElement;" />
                     <callvirt type="System.Array" name="Clone" sig="()Ljava.lang.Object;" />
                     <castclass class="[Ljava.lang.StackTraceElement;" />
                     <ret />
                 </body>
+                <alternateBody>
+                    <ldarg_0 />
+                    <call class="java.lang.ExceptionHelper" name="getStackTrace" sig="(Lcli.System.Exception;)[Ljava.lang.StackTraceElement;" />
+                    <ret />
+                </alternateBody>
             </method>
             <method name="getOurStackTrace" sig="()[Ljava.lang.StackTraceElement;" modifiers="private">
-                <redirect class="cli.IKVM.Internal.ExceptionHelper" name="getOurStackTrace" sig="(Ljava.lang.Throwable;)[Ljava.lang.StackTraceElement;" />
+                <body>
+                    <ldarg_0 />
+                    <call type="System.Threading.Monitor" name="Enter" sig="(Ljava.lang.Object;)V" />
+                    <exceptionBlock>
+                        <try>
+                            <ldarg_0 />
+                            <ldfld class="java.lang.Throwable" name="stackTrace" sig="[Ljava.lang.StackTraceElement;" />
+                            <brfalse name="gen" />
+                            <leave name="ok" />
+                            <label name="gen" />
+                            <ldarg_0 />
+                            <ldarg_0 />
+                            <ldarg_0 />
+                            <ldfld class="java.lang.Throwable" name="tracePart1" sig="Lcli.System.Diagnostics.StackTrace;" />
+                            <ldarg_0 />
+                            <ldfld class="java.lang.Throwable" name="tracePart2" sig="Lcli.System.Diagnostics.StackTrace;" />
+                            <call class="java.lang.ExceptionHelper" name="computeStackTrace" sig="(Ljava.lang.Throwable;Lcli.System.Diagnostics.StackTrace;Lcli.System.Diagnostics.StackTrace;)[Ljava.lang.StackTraceElement;" />
+                            <stfld class="java.lang.Throwable" name="stackTrace" sig="[Ljava.lang.StackTraceElement;" />
+                            <ldarg_0 />
+                            <ldnull />
+                            <stfld class="java.lang.Throwable" name="tracePart1" sig="Lcli.System.Diagnostics.StackTrace;" />
+                            <ldarg_0 />
+                            <ldnull />
+                            <stfld class="java.lang.Throwable" name="tracePart2" sig="Lcli.System.Diagnostics.StackTrace;" />
+                        </try>
+                        <finally>
+                            <ldarg_0 />
+                            <call type="System.Threading.Monitor" name="Exit" sig="(Ljava.lang.Object;)V" />
+                        </finally>
+                    </exceptionBlock>
+                    <label name="ok" />
+                    <ldarg_0 />
+                    <ldfld class="java.lang.Throwable" name="stackTrace" sig="[Ljava.lang.StackTraceElement;" />
+                    <ret />
+                </body>
+                <alternateBody>
+                    <ldarg_0 />
+                    <call class="java.lang.ExceptionHelper" name="getStackTrace" sig="(Lcli.System.Exception;)[Ljava.lang.StackTraceElement;" />
+                    <ret />
+                </alternateBody>
             </method>
-            <method name="setStackTrace" sig="([Ljava.lang.StackTraceElement;)V" modifiers="public">
+            <method type="virtual" name="setStackTrace" sig="([Ljava.lang.StackTraceElement;)V" modifiers="public">
                 <parameter name="stackTrace" />
-                <redirect class="cli.IKVM.Internal.ExceptionHelper" name="setStackTrace" sig="(Ljava.lang.Throwable;[Ljava.lang.StackTraceElement;)V" />
-            </method>
-            <method name="toString" sig="()Ljava.lang.String;" modifiers="public">
-                <redirect class="cli.IKVM.Internal.ExceptionHelper" sig="(Ljava.lang.Throwable;)Ljava.lang.String;" type="static" />
-            </method>
-            <method name="GetObjectData" sig="(Lcli.System.Runtime.Serialization.SerializationInfo;Lcli.System.Runtime.Serialization.StreamingContext;)V" modifiers="public">
-                <attribute type="System.Security.Permissions.SecurityPermissionAttribute" sig="(Lcli.System.Security.Permissions.SecurityAction;)V">
-                    <parameter>Demand</parameter>
-                    <property name="SerializationFormatter" sig="Z">true</property>
-                </attribute>
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="IKVM.Attributes.HideFromJavaAttribute" sig="()V" />
-                <attribute type="System.ComponentModel.EditorBrowsableAttribute" sig="(Lcli.System.ComponentModel.EditorBrowsableState;)V">
-                    <parameter>Never</parameter>
-                </attribute>
                 <body>
                     <ldarg_0 />
                     <ldarg_1 />
-                    <ldarg_2 />
-                    <call type="System.Exception" name="GetObjectData" sig="(Lcli.System.Runtime.Serialization.SerializationInfo;Lcli.System.Runtime.Serialization.StreamingContext;)V" />
+                    <call class="java.lang.ExceptionHelper" name="checkStackTrace" sig="([Ljava.lang.StackTraceElement;)[Ljava.lang.StackTraceElement;" />
+                    <stfld class="java.lang.Throwable" name="stackTrace" sig="[Ljava.lang.StackTraceElement;" />
                     <ldarg_0 />
-                    <ldarg_1 />
-                    <call class="ikvm.internal.Serialization" name="writeObject" sig="(Ljava.lang.Object;Lcli.System.Runtime.Serialization.SerializationInfo;)V" />
+                    <ldnull />
+                    <stfld class="java.lang.Throwable" name="tracePart1" sig="Lcli.System.Diagnostics.StackTrace;" />
+                    <ldarg_0 />
+                    <ldnull />
+                    <stfld class="java.lang.Throwable" name="tracePart2" sig="Lcli.System.Diagnostics.StackTrace;" />
                     <ret />
                 </body>
-            </method>
-            <constructor sig="(Lcli.System.Runtime.Serialization.SerializationInfo;Lcli.System.Runtime.Serialization.StreamingContext;)V" modifiers="protected">
-                <attribute type="System.Security.Permissions.SecurityPermissionAttribute" sig="(Lcli.System.Security.Permissions.SecurityAction;)V">
-                    <parameter>Demand</parameter>
-                    <property name="SerializationFormatter" sig="Z">true</property>
-                </attribute>
-                <attribute type="IKVM.Attributes.HideFromJavaAttribute" sig="()V" />
-                <body>
+                <alternateBody>
                     <ldarg_0 />
                     <ldarg_1 />
-                    <ldarg_2 />
-                    <call type="System.Exception" name=".ctor" sig="(Lcli.System.Runtime.Serialization.SerializationInfo;Lcli.System.Runtime.Serialization.StreamingContext;)V" />
-                    <ldarg_0 />
-                    <ldarg_1 />
-                    <call class="ikvm.internal.Serialization" name="readObject" sig="(Ljava.lang.Object;Lcli.System.Runtime.Serialization.SerializationInfo;)V" />
+                    <call class="java.lang.ExceptionHelper" name="setStackTrace" sig="(Lcli.System.Exception;[Ljava.lang.StackTraceElement;)V" />
                     <ret />
-                </body>
-            </constructor>
-            <method name="addSuppressed" sig="(Ljava.lang.Throwable;)V" modifiers="public final">
-                <parameter name="exception" />
-                <redirect class="cli.IKVM.Internal.ExceptionHelper" name="addSuppressed" sig="(Ljava.lang.Throwable;Ljava.lang.Throwable;)V" />
+                </alternateBody>
             </method>
-            <method name="getSuppressed" sig="()[Ljava.lang.Throwable;" modifiers="public final">
-                <redirect class="cli.IKVM.Internal.ExceptionHelper" name="getSuppressed" sig="(Ljava.lang.Throwable;)[Ljava.lang.Throwable;" />
-            </method>
-            <method name="getStackTraceDepth" sig="()I" modifiers="">
-                <redirect class="cli.IKVM.Internal.ExceptionHelper" name="getStackTraceDepth" sig="(Ljava.lang.Throwable;)I" />
-            </method>
-            <method name="getStackTraceElement" sig="(I)Ljava.lang.StackTraceElement;" modifiers="">
-                <redirect class="cli.IKVM.Internal.ExceptionHelper" name="getStackTraceElement" sig="(Ljava.lang.Throwable;I)Ljava.lang.StackTraceElement;" />
-            </method>
-        </class>
-        <class name="java.lang.ThrowableHelper">
-            <method name="getOurStackTrace" sig="(Ljava.lang.Throwable;)[Ljava.lang.StackTraceElement;">
-                <body>
-                    <ldarg_0 />
-                    <call type="IKVM.Internal.ExceptionHelper" name="getOurStackTrace" sig="(Ljava.lang.Throwable;)[Ljava.lang.StackTraceElement;" />
-                    <ret />
-                </body>
+            <method type="virtual" name="toString" sig="()Ljava.lang.String;" modifiers="public">
+                <redirect class="java.lang.ExceptionHelper" sig="(Ljava.lang.Throwable;)Ljava.lang.String;" type="static" />
             </method>
         </class>
         <class name="java.lang.Comparable" shadows="System.IComparable" modifiers="public abstract interface">
@@ -1390,60 +1338,51 @@
                 <override name="CompareTo" />
             </method>
         </class>
-        <class name="java.lang.AutoCloseable" shadows="System.IDisposable" modifiers="public abstract interface">
-            <method name="close" sig="()V" modifiers="public abstract">
-                <throws class="java.lang.Exception" />
-                <override name="Dispose" />
-            </method>
-        </class>
         <!-- Here we are adding/replacing methods to existing classes -->
         <class name="java.lang.Class">
-            <implements class="cli.System.Runtime.Serialization.ISerializable" />
             <field name="typeWrapper" sig="Lcli.IKVM.Internal.TypeWrapper;" modifiers="">
                 <attribute type="IKVM.Attributes.HideFromJavaAttribute" sig="()V" />
             </field>
+            <field name="pd" sig="Ljava.security.ProtectionDomain;" modifiers="" />
+            <field name="signers" sig="[Ljava.lang.Object;" modifiers="" />
+            <method name="op_Implicit" sig="(Lcli.System.Type;)Ljava.lang.Class;" modifiers="public static" attributes="SpecialName">
+                <attribute type="IKVM.Attributes.HideFromJavaAttribute" sig="()V" />
+                <body>
+                    <ldarg_0 />
+                    <call class="ikvm.runtime.Util" name="getFriendlyClassFromType" sig="(Lcli.System.Type;)Ljava.lang.Class;" />
+                    <ret />
+                </body>
+            </method>
+            <method name="newClass" sig="()Ljava.lang.Class;" modifiers="static">
+                <attribute type="IKVM.Attributes.HideFromJavaAttribute" sig="()V" />
+                <body>
+                    <newobj class="java.lang.Class" name="&lt;init&gt;" sig="()V" />
+                    <ret />
+                </body>
+            </method>
         </class>
         <class name="java.lang.ClassLoader">
             <field name="wrapper" sig="Lcli.IKVM.Internal.ClassLoaderWrapper;" modifiers="">
                 <attribute type="IKVM.Attributes.HideFromJavaAttribute" sig="()V" />
             </field>
-            <constructor sig="(Z)V">
+            <method name="getBootstrapResource" sig="(Ljava.lang.String;)Ljava.net.URL;">
                 <body>
                     <ldarg_0 />
-                    <call class="java.lang.Object" name="&lt;init&gt;" sig="()V" />
+                    <call class="java.lang.LangHelper" name="getBootstrapResource" sig="(Ljava.lang.String;)Ljava.net.URL;" />
                     <ret />
                 </body>
-            </constructor>
-        </class>
-        <class name="java.lang.Enum">
-            <implements class="cli.System.Runtime.Serialization.ISerializable" />
+            </method>
+            <method name="getBootstrapResources" sig="(Ljava.lang.String;)Ljava.util.Enumeration;">
+                <body>
+                    <ldarg_0 />
+                    <call class="java.lang.LangHelper" name="getBootstrapResources" sig="(Ljava.lang.String;)Ljava.util.Enumeration;" />
+                    <ret />
+                </body>
+            </method>
         </class>
         <class name="java.lang.Thread">
             <field name="parkLock" sig="Ljava.lang.Object;" modifiers="" />
             <field name="parkState" sig="I" modifiers="" />
-            <constructor sig="(Ljava.lang.Void;)V">
-                <body>
-                    <ldarg_0 />
-                    <call class="java.lang.Object" name="&lt;init&gt;" sig="()V" />
-                    <ret />
-                </body>
-            </constructor>
-            <method name="isCCLOverridden" sig="(Ljava.lang.Thread;)Z">
-                <body>
-                    <ldftn class="java.lang.Thread" name="getContextClassLoader" sig="()Ljava.lang.ClassLoader;" />
-                    <ldarg_0 />
-                    <ldvirtftn class="java.lang.Thread" name="getContextClassLoader" sig="()Ljava.lang.ClassLoader;" />
-                    <ceq />
-                    <ldftn class="java.lang.Thread" name="setContextClassLoader" sig="(Ljava.lang.ClassLoader;)V" />
-                    <ldarg_0 />
-                    <ldvirtftn class="java.lang.Thread" name="setContextClassLoader" sig="(Ljava.lang.ClassLoader;)V" />
-                    <ceq />
-                    <and />
-                    <ldc_i4_0 />
-                    <ceq />
-                    <ret />
-                </body>
-            </method>
         </class>
         <class name="java.lang.ThreadGroup">
             <method name="createRootGroup" sig="()Ljava.lang.ThreadGroup;" modifiers="static">
@@ -1462,15 +1401,6 @@
                 </body>
             </method>
         </class>
-        <class name="java.lang.reflect.Field">
-            <method name="_slot" sig="()I">
-                <body>
-                    <ldarg_0 />
-                    <ldfld class="java.lang.reflect.Field" name="slot" sig="I" />
-                    <ret />
-                </body>
-            </method>
-        </class>
         <class name="java.lang.reflect.Method">
             <method name="_slot" sig="()I">
                 <body>
@@ -1480,58 +1410,12 @@
                 </body>
             </method>
         </class>
-        <class name="java.net.Inet6Address">
-            <method name="_set" sig="(ILjava.net.NetworkInterface;)V" modifiers="">
-                <body>
-                    <ldarg_0 />
-                    <ldarg_1 />
-                    <stfld class="java.net.Inet6Address" name="scope_id" sig="I" />
-                    <ldarg_0 />
-                    <ldc_i4_1 />
-                    <stfld class="java.net.Inet6Address" name="scope_id_set" sig="Z" />
-                    <ldarg_0 />
-                    <ldarg_2 />
-                    <stfld class="java.net.Inet6Address" name="scope_ifname" sig="Ljava.net.NetworkInterface;" />
-                    <ret />
-                </body>
-            </method>
-        </class>
-        <class name="java.net.InterfaceAddress">
-            <method name="_set" sig="(Ljava.net.InetAddress;Ljava.net.Inet4Address;S)V" modifiers="">
-                <body>
-                    <ldarg_0 />
-                    <ldarg_1 />
-                    <stfld class="java.net.InterfaceAddress" name="address" sig="Ljava.net.InetAddress;" />
-                    <ldarg_0 />
-                    <ldarg_2 />
-                    <stfld class="java.net.InterfaceAddress" name="broadcast" sig="Ljava.net.Inet4Address;" />
-                    <ldarg_0 />
-                    <ldarg_3 />
-                    <stfld class="java.net.InterfaceAddress" name="maskLength" sig="S" />
-                    <ret />
-                </body>
-            </method>
-        </class>
         <class name="java.net.NetworkInterface">
-            <method name="_set1" sig="(Ljava.lang.String;Ljava.lang.String;I)V" modifiers="">
+            <method name="_set" sig="(Ljava.lang.String;[Ljava.net.InterfaceAddress;[Ljava.net.NetworkInterface;)V" modifiers="">
                 <body>
                     <ldarg_0 />
                     <ldarg_1 />
-                    <stfld class="java.net.NetworkInterface" name="name" sig="Ljava.lang.String;" />
-                    <ldarg_0 />
-                    <ldarg_2 />
                     <stfld class="java.net.NetworkInterface" name="displayName" sig="Ljava.lang.String;" />
-                    <ldarg_0 />
-                    <ldarg_3 />
-                    <stfld class="java.net.NetworkInterface" name="index" sig="I" />
-                    <ret />
-                </body>
-            </method>
-            <method name="_set2" sig="([Ljava.net.InetAddress;[Ljava.net.InterfaceAddress;[Ljava.net.NetworkInterface;)V" modifiers="">
-                <body>
-                    <ldarg_0 />
-                    <ldarg_1 />
-                    <stfld class="java.net.NetworkInterface" name="addrs" sig="[Ljava.net.InetAddress;" />
                     <ldarg_0 />
                     <ldarg_2 />
                     <stfld class="java.net.NetworkInterface" name="bindings" sig="[Ljava.net.InterfaceAddress;" />
@@ -1649,7 +1533,7 @@
                     <ldarg_1 />
                     <volatile />
                     <stfld class="java.lang.Thread" name="parkBlocker" sig="Ljava.lang.Object;" />
-                    <call type="System.Threading.Thread" name="MemoryBarrier" sig="" />
+                    <call class="cli.System.Threading.Thread" name="MemoryBarrier" sig="()V" />
                     <ret />
                 </body>
             </method>
@@ -1667,7 +1551,24 @@
                     <ldarg_1 />
                     <volatile />
                     <stfld class="java.lang.Thread" name="parkLock" sig="Ljava.lang.Object;" />
-                    <call type="System.Threading.Thread" name="MemoryBarrier" sig="" />
+                    <call class="cli.System.Threading.Thread" name="MemoryBarrier" sig="()V" />
+                    <ret />
+                </body>
+            </method>
+        </class>
+        <class name="java.lang.Package">
+            <method name="getSystemPackage" sig="(Ljava.lang.String;)Ljava.lang.Package;" modifiers="static">
+                <body>
+                    <ldsfld class="java.lang.Package" name="pkgs" sig="Ljava.util.Map;" />
+                    <ldarg_0 />
+                    <call class="java.lang.LangHelper" name="getSystemPackage" sig="(Ljava.util.Map;Ljava.lang.String;)Ljava.lang.Package;" />
+                    <ret />
+                </body>
+            </method>
+            <method name="getSystemPackages" sig="()[Ljava.lang.Package;" modifiers="static">
+                <body>
+                    <ldsfld class="java.lang.Package" name="pkgs" sig="Ljava.util.Map;" />
+                    <call class="java.lang.LangHelper" name="getSystemPackages" sig="(Ljava.util.Map;)[Ljava.lang.Package;" />
                     <ret />
                 </body>
             </method>
@@ -1847,12 +1748,33 @@
                         <call class="sun.misc.MiscHelper" name="getAppClassLoader" sig="(Ljava.lang.ClassLoader;)Ljava.lang.ClassLoader;" />
                     </code>
                 </replace-method-call>
-                <replace-method-call class="java.lang.Thread" name="setContextClassLoader" sig="(Ljava.lang.ClassLoader;)V">
+            </method>
+        </class>
+        <class name="sun.misc.SharedSecrets">
+            <method name="javaUtilJarAccess" sig="()Lsun.misc.JavaUtilJarAccess;">
+                <replace-method-call class="sun.misc.Unsafe" name="ensureClassInitialized" sig="(Ljava.lang.Class;)V">
                     <code>
-                        <!--
-                        The JDK uses setContextClassLoader() here, but we don't want to overwrite the context class loader if it has already been set.
-                        -->
-                        <callvirt class="java.lang.Thread" name="initContextClassLoader" sig="(Ljava.lang.ClassLoader;)V" />
+                        <pop />
+                        <pop />
+                        <runclassinit class="java.util.jar.JarFile" />
+                    </code>
+                </replace-method-call>
+            </method>
+            <method name="getJavaIOAccess" sig="()Lsun.misc.JavaIOAccess;">
+                <replace-method-call class="sun.misc.Unsafe" name="ensureClassInitialized" sig="(Ljava.lang.Class;)V">
+                    <code>
+                        <pop />
+                        <pop />
+                        <runclassinit class="java.io.Console" />
+                    </code>
+                </replace-method-call>
+            </method>
+            <method name="getJavaIODeleteOnExitAccess" sig="()Lsun.misc.JavaIODeleteOnExitAccess;">
+                <replace-method-call class="sun.misc.Unsafe" name="ensureClassInitialized" sig="(Ljava.lang.Class;)V">
+                    <code>
+                        <pop />
+                        <pop />
+                        <runclassinit class="java.io.File" />
                     </code>
                 </replace-method-call>
             </method>
@@ -1892,7 +1814,7 @@
                     <ldarg_2 />
                     <volatile />
                     <stind_ref />
-                    <call type="System.Threading.Thread" name="MemoryBarrier" sig="" />
+                    <call class="cli.System.Threading.Thread" name="MemoryBarrier" sig="()V" />
                     <ret />
                 </body>
             </method>
@@ -1963,15 +1885,6 @@
                     <ret />
                 </body>
             </method>
-            <method name="addAndGet" sig="(I)I">
-                <body>
-                    <ldarg_0 />
-                    <ldflda class="java.util.concurrent.atomic.AtomicInteger" name="value" sig="I" />
-                    <ldarg_1 />
-                    <call type="System.Threading.Interlocked" name="Add" sig="System.Int32&amp;;System.Int32" />
-                    <ret />
-                </body>
-            </method>
         </class>
         <class name="java.util.concurrent.atomic.AtomicIntegerArray">
             <method name="get" sig="(I)I">
@@ -1994,18 +1907,7 @@
                     <ldarg_2 />
                     <volatile />
                     <stind_i4 />
-                    <call type="System.Threading.Thread" name="MemoryBarrier" sig="" />
-                    <ret />
-                </body>
-            </method>
-            <method name="getAndSet" sig="(II)I">
-                <body>
-                    <ldarg_0 />
-                    <ldfld class="java.util.concurrent.atomic.AtomicIntegerArray" name="array" sig="[I" />
-                    <ldarg_1 />
-                    <ldelema sig="I" />
-                    <ldarg_2 />
-                    <call type="System.Threading.Interlocked" name="Exchange" sig="System.Int32&amp;;System.Int32" />
+                    <call class="cli.System.Threading.Thread" name="MemoryBarrier" sig="()V" />
                     <ret />
                 </body>
             </method>
@@ -2023,164 +1925,11 @@
                     <ret />
                 </body>
             </method>
-            <method name="incrementAndGet" sig="(I)I">
-                <body>
-                    <ldarg_0 />
-                    <ldfld class="java.util.concurrent.atomic.AtomicIntegerArray" name="array" sig="[I" />
-                    <ldarg_1 />
-                    <ldelema sig="I" />
-                    <call type="System.Threading.Interlocked" name="Increment" sig="System.Int32&amp;" />
-                    <ret />
-                </body>
-            </method>
-            <method name="decrementAndGet" sig="(I)I">
-                <body>
-                    <ldarg_0 />
-                    <ldfld class="java.util.concurrent.atomic.AtomicIntegerArray" name="array" sig="[I" />
-                    <ldarg_1 />
-                    <ldelema sig="I" />
-                    <call type="System.Threading.Interlocked" name="Decrement" sig="System.Int32&amp;" />
-                    <ret />
-                </body>
-            </method>
-            <method name="addAndGet" sig="(II)I">
-                <body>
-                    <ldarg_0 />
-                    <ldfld class="java.util.concurrent.atomic.AtomicIntegerArray" name="array" sig="[I" />
-                    <ldarg_1 />
-                    <ldelema sig="I" />
-                    <ldarg_2 />
-                    <call type="System.Threading.Interlocked" name="Add" sig="System.Int32&amp;;System.Int32" />
-                    <ret />
-                </body>
-            </method>
         </class>
         <class name="java.util.concurrent.atomic.AtomicLong">
-            <method name="getAndSet" sig="(J)J">
+            <method name="VMSupportsCS8" sig="()Z">
                 <body>
-                    <ldarg_0 />
-                    <ldflda class="java.util.concurrent.atomic.AtomicLong" name="value" sig="J" />
-                    <ldarg_1 />
-                    <call type="System.Threading.Interlocked" name="Exchange" sig="System.Int64&amp;;System.Int64" />
-                    <ret />
-                </body>
-            </method>
-            <method name="compareAndSet" sig="(JJ)Z">
-                <body>
-                    <ldarg_0 />
-                    <ldflda class="java.util.concurrent.atomic.AtomicLong" name="value" sig="J" />
-                    <ldarg_2 />
-                    <ldarg_1 />
-                    <call type="System.Threading.Interlocked" name="CompareExchange" sig="System.Int64&amp;;System.Int64;System.Int64" />
-                    <ldarg_1 />
-                    <ceq />
-                    <ret />
-                </body>
-            </method>
-            <method name="incrementAndGet" sig="()J">
-                <body>
-                    <ldarg_0 />
-                    <ldflda class="java.util.concurrent.atomic.AtomicLong" name="value" sig="J" />
-                    <call type="System.Threading.Interlocked" name="Increment" sig="System.Int64&amp;" />
-                    <ret />
-                </body>
-            </method>
-            <method name="decrementAndGet" sig="()J">
-                <body>
-                    <ldarg_0 />
-                    <ldflda class="java.util.concurrent.atomic.AtomicLong" name="value" sig="J" />
-                    <call type="System.Threading.Interlocked" name="Decrement" sig="System.Int64&amp;" />
-                    <ret />
-                </body>
-            </method>
-            <method name="addAndGet" sig="(J)J">
-                <body>
-                    <ldarg_0 />
-                    <ldflda class="java.util.concurrent.atomic.AtomicLong" name="value" sig="J" />
-                    <ldarg_1 />
-                    <call type="System.Threading.Interlocked" name="Add" sig="System.Int64&amp;;System.Int64" />
-                    <ret />
-                </body>
-            </method>
-        </class>
-        <class name="java.util.concurrent.atomic.AtomicLongArray">
-            <method name="get" sig="(I)J">
-                <body>
-                    <ldarg_0 />
-                    <ldfld class="java.util.concurrent.atomic.AtomicLongArray" name="array" sig="[J" />
-                    <ldarg_1 />
-                    <ldelema sig="J" />
-                    <volatile />
-                    <ldind_i8 />
-                    <ret />
-                </body>
-            </method>
-            <method name="set" sig="(IJ)V">
-                <body>
-                    <ldarg_0 />
-                    <ldfld class="java.util.concurrent.atomic.AtomicLongArray" name="array" sig="[J" />
-                    <ldarg_1 />
-                    <ldelema sig="J" />
-                    <ldarg_2 />
-                    <volatile />
-                    <stind_i8 />
-                    <call type="System.Threading.Thread" name="MemoryBarrier" sig="" />
-                    <ret />
-                </body>
-            </method>
-            <method name="getAndSet" sig="(IJ)J">
-                <body>
-                    <ldarg_0 />
-                    <ldfld class="java.util.concurrent.atomic.AtomicLongArray" name="array" sig="[J" />
-                    <ldarg_1 />
-                    <ldelema sig="J" />
-                    <ldarg_2 />
-                    <call type="System.Threading.Interlocked" name="Exchange" sig="System.Int64&amp;;System.Int64" />
-                    <ret />
-                </body>
-            </method>
-            <method name="compareAndSet" sig="(IJJ)Z">
-                <body>
-                    <ldarg_0 />
-                    <ldfld class="java.util.concurrent.atomic.AtomicLongArray" name="array" sig="[J" />
-                    <ldarg_1 />
-                    <ldelema sig="J" />
-                    <ldarg_3 />
-                    <ldarg_2 />
-                    <call type="System.Threading.Interlocked" name="CompareExchange" sig="System.Int64&amp;;System.Int64;System.Int64" />
-                    <ldarg_2 />
-                    <ceq />
-                    <ret />
-                </body>
-            </method>
-            <method name="incrementAndGet" sig="(I)J">
-                <body>
-                    <ldarg_0 />
-                    <ldfld class="java.util.concurrent.atomic.AtomicLongArray" name="array" sig="[J" />
-                    <ldarg_1 />
-                    <ldelema sig="J" />
-                    <call type="System.Threading.Interlocked" name="Increment" sig="System.Int64&amp;" />
-                    <ret />
-                </body>
-            </method>
-            <method name="decrementAndGet" sig="(I)J">
-                <body>
-                    <ldarg_0 />
-                    <ldfld class="java.util.concurrent.atomic.AtomicLongArray" name="array" sig="[J" />
-                    <ldarg_1 />
-                    <ldelema sig="J" />
-                    <call type="System.Threading.Interlocked" name="Decrement" sig="System.Int64&amp;" />
-                    <ret />
-                </body>
-            </method>
-            <method name="addAndGet" sig="(IJ)J">
-                <body>
-                    <ldarg_0 />
-                    <ldfld class="java.util.concurrent.atomic.AtomicLongArray" name="array" sig="[J" />
-                    <ldarg_1 />
-                    <ldelema sig="J" />
-                    <ldarg_2 />
-                    <call type="System.Threading.Interlocked" name="Add" sig="System.Int64&amp;;System.Int64" />
+                    <ldc_i4_0 />
                     <ret />
                 </body>
             </method>
@@ -2227,6 +1976,79 @@
                 </method>
             </implements>
         </class>
+        <class name="java.lang.ExceptionHelper">
+            <method name="getCauseForSerialization" sig="(Ljava.lang.Throwable;)Ljava.lang.Throwable;">
+                <body>
+                    <ldarg_0 />
+                    <castclass_impl class="java.lang.Throwable" />
+                    <ldfld class="java.lang.Throwable" name="cause" sig="Ljava.lang.Throwable;" />
+                    <ret />
+                </body>
+            </method>
+            <method name="getOriginalAndClear" sig="(Ljava.lang.Throwable;)Lcli.System.Exception;">
+                <body>
+                    <ldarg_0 />
+                    <castclass_impl class="java.lang.Throwable" />
+                    <ldfld class="java.lang.Throwable" name="original" sig="Ljava.lang.Throwable;" />
+                    <ldarg_0 />
+                    <castclass_impl class="java.lang.Throwable" />
+                    <ldnull />
+                    <stfld class="java.lang.Throwable" name="original" sig="Ljava.lang.Throwable;" />
+                    <ret />
+                </body>
+            </method>
+            <method name="setOriginal" sig="(Ljava.lang.Throwable;Lcli.System.Exception;)V">
+                <body>
+                    <ldarg_0 />
+                    <castclass_impl class="java.lang.Throwable" />
+                    <ldarg_1 />
+                    <stfld class="java.lang.Throwable" name="original" sig="Ljava.lang.Throwable;" />
+                    <ret />
+                </body>
+            </method>
+            <method name="needStackTraceInfo" sig="(Ljava.lang.Throwable;)Z">
+                <body>
+                    <ldarg_0 />
+                    <castclass_impl class="java.lang.Throwable" />
+                    <ldfld class="java.lang.Throwable" name="tracePart1" sig="Lcli.System.Diagnostics.StackTrace;" />
+                    <brtrue name="no" />
+                    <ldarg_0 />
+                    <castclass_impl class="java.lang.Throwable" />
+                    <ldfld class="java.lang.Throwable" name="tracePart2" sig="Lcli.System.Diagnostics.StackTrace;" />
+                    <brtrue name="no" />
+                    <ldarg_0 />
+                    <castclass_impl class="java.lang.Throwable" />
+                    <ldfld class="java.lang.Throwable" name="stackTrace" sig="[Ljava.lang.StackTraceElement;" />
+                    <brtrue name="no" />
+                    <ldc_i4_1 />
+                    <ret />
+                    <label name="no" />
+                    <ldc_i4_0 />
+                    <ret />
+                </body>
+            </method>
+            <method name="setStackTraceInfo" sig="(Ljava.lang.Throwable;Lcli.System.Diagnostics.StackTrace;Lcli.System.Diagnostics.StackTrace;)V">
+                <body>
+                    <ldarg_0 />
+                    <castclass_impl class="java.lang.Throwable" />
+                    <ldarg_1 />
+                    <stfld class="java.lang.Throwable" name="tracePart1" sig="Lcli.System.Diagnostics.StackTrace;" />
+                    <ldarg_0 />
+                    <castclass_impl class="java.lang.Throwable" />
+                    <ldarg_2 />
+                    <stfld class="java.lang.Throwable" name="tracePart2" sig="Lcli.System.Diagnostics.StackTrace;" />
+                    <ret />
+                </body>
+            </method>
+        </class>
+        <class name="java.lang.Runtime">
+            <method name="addShutdownHook" sig="(Ljava.lang.Thread;)V">
+                <attribute type="System.Security.Permissions.SecurityPermissionAttribute" sig="(Lcli.System.Security.Permissions.SecurityAction;)V">
+                    <parameter>LinkDemand</parameter>
+                    <property name="ControlAppDomain" sig="Z">true</property>
+                </attribute>
+            </method>
+        </class>
         <class name="java.nio.DirectByteBuffer">
             <!-- add a constructor accessor for JNI -->
             <method name="__new" sig="(JI)Ljava.nio.DirectByteBuffer;" modifiers="static">
@@ -2237,478 +2059,6 @@
                     <ret />
                 </body>
             </method>
-            <constructor sig="(I)V">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </constructor>
-            <method name="_get" sig="(I)B">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="_put" sig="(IB)V">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="()B">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="(I)B">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="([BII)Ljava.nio.ByteBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="getChar" sig="(J)C">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="putChar" sig="(JC)Ljava.nio.ByteBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="getShort" sig="(J)S">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="putShort" sig="(JS)Ljava.nio.ByteBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="getInt" sig="(J)I">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="putInt" sig="(JI)Ljava.nio.ByteBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="getLong" sig="(J)J">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="putLong" sig="(JJ)Ljava.nio.ByteBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="getFloat" sig="(J)F">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="putFloat" sig="(JF)Ljava.nio.ByteBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="getDouble" sig="(J)D">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="putDouble" sig="(JD)Ljava.nio.ByteBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(Ljava.nio.ByteBuffer;)Ljava.nio.ByteBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(B)Ljava.nio.ByteBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(IB)Ljava.nio.ByteBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="([BII)Ljava.nio.ByteBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="compact" sig="()Ljava.nio.ByteBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-        </class>
-        <class name="java.nio.DirectByteBuffer$Deallocator">
-            <method name="run" sig="()V">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-        </class>
-        <class name="java.nio.DirectByteBufferR">
-            <method name="_get" sig="(I)B">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-        </class>
-        <class name="java.nio.DirectCharBufferS">
-            <method name="get" sig="()C">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="(I)C">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="([CII)Ljava.nio.CharBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(Ljava.nio.CharBuffer;)Ljava.nio.CharBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(C)Ljava.nio.CharBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(IC)Ljava.nio.CharBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="([CII)Ljava.nio.CharBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="compact" sig="()Ljava.nio.CharBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-        </class>
-        <class name="java.nio.DirectCharBufferU">
-            <method name="get" sig="()C">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="(I)C">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="([CII)Ljava.nio.CharBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(Ljava.nio.CharBuffer;)Ljava.nio.CharBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(C)Ljava.nio.CharBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(IC)Ljava.nio.CharBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="([CII)Ljava.nio.CharBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="compact" sig="()Ljava.nio.CharBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-        </class>
-        <class name="java.nio.DirectDoubleBufferS">
-            <method name="get" sig="()D">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="(I)D">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="([DII)Ljava.nio.DoubleBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(Ljava.nio.DoubleBuffer;)Ljava.nio.DoubleBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(D)Ljava.nio.DoubleBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(ID)Ljava.nio.DoubleBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="([DII)Ljava.nio.DoubleBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="compact" sig="()Ljava.nio.DoubleBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-        </class>
-        <class name="java.nio.DirectDoubleBufferU">
-            <method name="get" sig="()D">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="(I)D">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="([DII)Ljava.nio.DoubleBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(Ljava.nio.DoubleBuffer;)Ljava.nio.DoubleBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(D)Ljava.nio.DoubleBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(ID)Ljava.nio.DoubleBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="([DII)Ljava.nio.DoubleBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="compact" sig="()Ljava.nio.DoubleBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-        </class>
-        <class name="java.nio.DirectFloatBufferS">
-            <method name="get" sig="()F">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="(I)F">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="([FII)Ljava.nio.FloatBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(Ljava.nio.FloatBuffer;)Ljava.nio.FloatBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(F)Ljava.nio.FloatBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(IF)Ljava.nio.FloatBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="([FII)Ljava.nio.FloatBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="compact" sig="()Ljava.nio.FloatBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-        </class>
-        <class name="java.nio.DirectFloatBufferU">
-            <method name="get" sig="()F">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="(I)F">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="([FII)Ljava.nio.FloatBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(Ljava.nio.FloatBuffer;)Ljava.nio.FloatBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(F)Ljava.nio.FloatBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(IF)Ljava.nio.FloatBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="([FII)Ljava.nio.FloatBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="compact" sig="()Ljava.nio.FloatBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-        </class>
-        <class name="java.nio.DirectIntBufferS">
-            <method name="get" sig="()I">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="(I)I">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="([III)Ljava.nio.IntBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(Ljava.nio.IntBuffer;)Ljava.nio.IntBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(I)Ljava.nio.IntBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(II)Ljava.nio.IntBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="([III)Ljava.nio.IntBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="compact" sig="()Ljava.nio.IntBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-        </class>
-        <class name="java.nio.DirectIntBufferU">
-            <method name="get" sig="()I">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="(I)I">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="([III)Ljava.nio.IntBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(Ljava.nio.IntBuffer;)Ljava.nio.IntBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(I)Ljava.nio.IntBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(II)Ljava.nio.IntBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="([III)Ljava.nio.IntBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="compact" sig="()Ljava.nio.IntBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-        </class>
-        <class name="java.nio.DirectLongBufferS">
-            <method name="get" sig="()J">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="(I)J">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="([JII)Ljava.nio.LongBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(Ljava.nio.LongBuffer;)Ljava.nio.LongBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(J)Ljava.nio.LongBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(IJ)Ljava.nio.LongBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="([JII)Ljava.nio.LongBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="compact" sig="()Ljava.nio.LongBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-        </class>
-        <class name="java.nio.DirectLongBufferU">
-            <method name="get" sig="()J">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="(I)J">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="([JII)Ljava.nio.LongBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(Ljava.nio.LongBuffer;)Ljava.nio.LongBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(J)Ljava.nio.LongBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(IJ)Ljava.nio.LongBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="([JII)Ljava.nio.LongBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="compact" sig="()Ljava.nio.LongBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-        </class>
-        <class name="java.nio.DirectShortBufferS">
-            <method name="get" sig="()S">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="(I)S">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="([SII)Ljava.nio.ShortBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(Ljava.nio.ShortBuffer;)Ljava.nio.ShortBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(S)Ljava.nio.ShortBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(IS)Ljava.nio.ShortBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="([SII)Ljava.nio.ShortBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="compact" sig="()Ljava.nio.ShortBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-        </class>
-        <class name="java.nio.DirectShortBufferU">
-            <method name="get" sig="()S">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="(I)S">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="get" sig="([SII)Ljava.nio.ShortBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(Ljava.nio.ShortBuffer;)Ljava.nio.ShortBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(S)Ljava.nio.ShortBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="(IS)Ljava.nio.ShortBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-            <method name="put" sig="([SII)Ljava.nio.ShortBuffer;">
-                <!-- we use TreasAsSafe + Critical instead of SafeCritical to workaround PEVerify bug on .NET 2.0/3.5 -->
-                <attribute type="System.Security.SecurityCriticalAttribute" sig="()V" />
-                <attribute type="System.Security.SecurityTreatAsSafeAttribute" sig="()V" />
-            </method>
-            <method name="compact" sig="()Ljava.nio.ShortBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
-        </class>
-        <class name="java.nio.MappedByteBuffer">
-            <method name="load" sig="()Ljava.nio.MappedByteBuffer;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
         </class>
         <class name="sun.reflect.Reflection">
             <!-- we manually hook up this native method, to prevent inlining and tail-call optimizations -->
@@ -2718,7 +2068,7 @@
                 </attribute>
                 <body>
                     <ldarg_0 />
-                    <call type="Java_sun_reflect_Reflection" name="getCallerClass" sig="(I)Ljava.lang.Object;" />
+                    <call type="IKVM.NativeCode.sun.reflect.Reflection" name="getCallerClass" sig="(I)Ljava.lang.Object;" />
                     <stloc name="class" class="java.lang.Object" />
                     <!-- "leave" is to thwart tail-call optimization -->
                     <leave name="x" />
@@ -2731,57 +2081,6 @@
         </class>
         <class name="java.lang.StackTraceElement">
             <attribute type="System.SerializableAttribute" sig="()V" />
-        </class>
-        <class name="java.lang.invoke.MethodHandle">
-            <method name="invoke" sig="([Ljava.lang.Object;)Ljava.lang.Object;">
-                <attribute type="IKVM.Attributes.HideFromJavaAttribute" sig="()V" />
-            </method>
-            <method name="invokeExact" sig="([Ljava.lang.Object;)Ljava.lang.Object;">
-                <attribute type="IKVM.Attributes.HideFromJavaAttribute" sig="()V" />
-            </method>
-            <!-- NOTE Modifiers.Final and MethodAttributes.NewSlot is recognized by AotTypeWrapper.MapModifiers() as a magic combination that generates a non-virtual method -->
-            <method name="reflectionInvoke" sig="([Ljava.lang.Object;)Ljava.lang.Object;" modifiers="final" attributes="NewSlot">
-                <throws class="java.lang.Throwable" />
-                <attribute type="System.Runtime.CompilerServices.MethodImplAttribute" sig="(Lcli.System.Runtime.CompilerServices.MethodImplOptions;)V">
-                    <parameter>NoInlining</parameter>
-                </attribute>
-                <attribute type="IKVM.Attributes.NameSigAttribute" sig="(Ljava.lang.String;Ljava.lang.String;)V">
-                    <parameter>invoke</parameter>
-                    <parameter>([Ljava.lang.Object;)Ljava.lang.Object;</parameter>
-                </attribute>
-                <attribute type="IKVM.Attributes.ModifiersAttribute" sig="(Lcli.IKVM.Attributes.Modifiers;)V">
-                    <parameter>Public,Final,Native</parameter>
-                </attribute>
-                <body>
-                    <ldstr value="MethodHandle.invoke cannot be invoked reflectively" />
-                    <newobj class="java.lang.UnsupportedOperationException" name="&lt;init&gt;" sig="(Ljava.lang.String;)V" />
-                    <throw />
-                </body>
-            </method>
-            <!-- NOTE Modifiers.Final and MethodAttributes.NewSlot is recognized by AotTypeWrapper.MapModifiers() as a magic combination that generates a non-virtual method -->
-            <method name="reflectionInvokeExact" sig="([Ljava.lang.Object;)Ljava.lang.Object;" modifiers="final" attributes="NewSlot">
-                <throws class="java.lang.Throwable" />
-                <attribute type="System.Runtime.CompilerServices.MethodImplAttribute" sig="(Lcli.System.Runtime.CompilerServices.MethodImplOptions;)V">
-                    <parameter>NoInlining</parameter>
-                </attribute>
-                <attribute type="IKVM.Attributes.NameSigAttribute" sig="(Ljava.lang.String;Ljava.lang.String;)V">
-                    <parameter>invokeExact</parameter>
-                    <parameter>([Ljava.lang.Object;)Ljava.lang.Object;</parameter>
-                </attribute>
-                <attribute type="IKVM.Attributes.ModifiersAttribute" sig="(Lcli.IKVM.Attributes.Modifiers;)V">
-                    <parameter>Public,Final,Native</parameter>
-                </attribute>
-                <body>
-                    <ldstr value="MethodHandle.invokeExact cannot be invoked reflectively" />
-                    <newobj class="java.lang.UnsupportedOperationException" name="&lt;init&gt;" sig="(Ljava.lang.String;)V" />
-                    <throw />
-                </body>
-            </method>
-        </class>
-        <class name="java.lang.invoke.MethodHandleImpl$AllocateObject">
-            <method name="allocate" sig="()Ljava.lang.Object;">
-                <attribute type="System.Security.SecuritySafeCriticalAttribute" sig="()V" />
-            </method>
         </class>
     </assembly>
     <exceptionMappings>
@@ -2816,6 +2115,7 @@
         </exception>
         <exception src="System.ArrayTypeMismatchException" dst="java.lang.ArrayStoreException" />
         <exception src="System.StackOverflowException" dst="java.lang.StackOverflowError" />
+        <exception src="System.Security.VerificationException" dst="java.lang.VerifyError" />
         <exception src="System.Threading.ThreadAbortException" dst="java.lang.ThreadDeath">
             <code>
                 <castclass type="System.Threading.ThreadAbortException" />
@@ -2836,14 +2136,11 @@
                         <!-- TODO instead of catching the ThreadStateException, we should check the ThreadState
 			     before calling ResetAbort -->
                         <call type="System.Threading.Thread" name="ResetAbort" sig="()V" />
-                        <leave name="next" />
                     </try>
                     <catch type="System.Threading.ThreadStateException">
                         <!-- ignore the exception -->
-                        <leave name="next" />
                     </catch>
                 </exceptionBlock>
-                <label name="next" />
                 <ldloc name="x" />
             </code>
         </exception>
