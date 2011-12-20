@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2002-2013 Jeroen Frijters
+  Copyright (C) 2002-2010 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -389,11 +389,7 @@ sealed class InstructionState
 			st2.Push(t2);
 			t2 = t2.BaseTypeWrapper;
 		}
-		if(HasMissingBaseType(st1) || HasMissingBaseType(st2))
-		{
-			return VerifierTypeWrapper.Unloadable;
-		}
-		TypeWrapper type = CoreClasses.java.lang.Object.Wrapper;
+		TypeWrapper type = null;
 		for(;;)
 		{
 			t1 = st1.Count > 0 ? st1.Pop() : null;
@@ -404,19 +400,6 @@ sealed class InstructionState
 			}
 			type = t1;
 		}
-	}
-
-	private static bool HasMissingBaseType(Stack<TypeWrapper> st)
-	{
-#if STATIC_COMPILER
-		if (st.Pop().IsUnloadable)
-		{
-			// we have a missing type in base class hierarchy
-			StaticCompiler.IssueMissingTypeMessage(st.Pop().TypeAsBaseType.BaseType);
-			return true;
-		}
-#endif
-		return false;
 	}
 
 	private void SetLocal1(int index, TypeWrapper type)
@@ -579,12 +562,7 @@ sealed class InstructionState
 
 	internal void PopInt()
 	{
-		PopIntImpl(PopAnyType());
-	}
-
-	internal static void PopIntImpl(TypeWrapper type)
-	{
-		if (type != PrimitiveTypeWrapper.INT)
+		if(PopAnyType() != PrimitiveTypeWrapper.INT)
 		{
 			throw new VerifyError("Int expected on stack");
 		}
@@ -593,41 +571,26 @@ sealed class InstructionState
 	internal bool PopFloat()
 	{
 		TypeWrapper tw = PopAnyType();
-		PopFloatImpl(tw);
-		return tw == VerifierTypeWrapper.ExtendedFloat;
-	}
-
-	internal static void PopFloatImpl(TypeWrapper tw)
-	{
 		if(tw != PrimitiveTypeWrapper.FLOAT && tw != VerifierTypeWrapper.ExtendedFloat)
 		{
 			throw new VerifyError("Float expected on stack");
 		}
+		return tw == VerifierTypeWrapper.ExtendedFloat;
 	}
 
 	internal bool PopDouble()
 	{
 		TypeWrapper tw = PopAnyType();
-		PopDoubleImpl(tw);
-		return tw == VerifierTypeWrapper.ExtendedDouble;
-	}
-
-	internal static void PopDoubleImpl(TypeWrapper tw)
-	{
 		if(tw != PrimitiveTypeWrapper.DOUBLE && tw != VerifierTypeWrapper.ExtendedDouble)
 		{
 			throw new VerifyError("Double expected on stack");
 		}
+		return tw == VerifierTypeWrapper.ExtendedDouble;
 	}
 
 	internal void PopLong()
 	{
-		PopLongImpl(PopAnyType());
-	}
-
-	internal static void PopLongImpl(TypeWrapper tw)
-	{
-		if(tw != PrimitiveTypeWrapper.LONG)
+		if(PopAnyType() != PrimitiveTypeWrapper.LONG)
 		{
 			throw new VerifyError("Long expected on stack");
 		}
@@ -635,11 +598,7 @@ sealed class InstructionState
 
 	internal TypeWrapper PopArrayType()
 	{
-		return PopArrayTypeImpl(PopAnyType());
-	}
-
-	internal static TypeWrapper PopArrayTypeImpl(TypeWrapper type)
-	{
+		TypeWrapper type = PopAnyType();
 		if(!VerifierTypeWrapper.IsNullOrUnloadable(type) && type.ArrayRank == 0)
 		{
 			throw new VerifyError("Array reference expected on stack");
@@ -650,11 +609,7 @@ sealed class InstructionState
 	// null or an initialized object reference
 	internal TypeWrapper PopObjectType()
 	{
-		return PopObjectTypeImpl(PopType());
-	}
-
-	internal static TypeWrapper PopObjectTypeImpl(TypeWrapper type)
-	{
+		TypeWrapper type = PopType();
 		if(type.IsPrimitive || VerifierTypeWrapper.IsNew(type) || type == VerifierTypeWrapper.UninitializedThis)
 		{
 			throw new VerifyError("Expected object reference on stack");
@@ -665,11 +620,7 @@ sealed class InstructionState
 	// null or an initialized object reference derived from baseType (or baseType)
 	internal TypeWrapper PopObjectType(TypeWrapper baseType)
 	{
-		return PopObjectTypeImpl(baseType, PopObjectType());
-	}
-
-	internal static TypeWrapper PopObjectTypeImpl(TypeWrapper baseType, TypeWrapper type)
-	{
+		TypeWrapper type = PopObjectType();
 		// HACK because of the way interfaces references works, if baseType
 		// is an interface or array of interfaces, any reference will be accepted
 		if(!baseType.IsUnloadable && !baseType.IsInterfaceOrInterfaceArray && !(type.IsUnloadable || type.IsAssignableTo(baseType)))
@@ -727,11 +678,7 @@ sealed class InstructionState
 	// NOTE this can *not* be used to pop double or long
 	internal TypeWrapper PopType()
 	{
-		return PopTypeImpl(PopAnyType());
-	}
-
-	internal static TypeWrapper PopTypeImpl(TypeWrapper type)
-	{
+		TypeWrapper type = PopAnyType();
 		if(type.IsWidePrimitive || type == VerifierTypeWrapper.ExtendedDouble)
 		{
 			throw new VerifyError("Attempt to split long or double on the stack");
@@ -744,73 +691,36 @@ sealed class InstructionState
 	// NOTE this can also be used to pop double or long
 	internal TypeWrapper PopType(TypeWrapper baseType)
 	{
-		return PopTypeImpl(baseType, PopAnyType());
-	}
-
-	internal static TypeWrapper PopTypeImpl(TypeWrapper baseType, TypeWrapper type)
-	{
 		if(baseType.IsIntOnStackPrimitive)
 		{
 			baseType = PrimitiveTypeWrapper.INT;
 		}
+		TypeWrapper type = PopAnyType();
 		if(VerifierTypeWrapper.IsNew(type) || type == VerifierTypeWrapper.UninitializedThis)
 		{
 			throw new VerifyError("Expecting to find object/array on stack");
 		}
-		if(type == baseType)
+		if(type != baseType &&
+			!((type.IsUnloadable && !baseType.IsPrimitive) || (baseType.IsUnloadable && !type.IsPrimitive) ||
+				type.IsAssignableTo(baseType)))
 		{
-			return type;
-		}
-		else if(type == VerifierTypeWrapper.ExtendedDouble && baseType == PrimitiveTypeWrapper.DOUBLE)
-		{
-			return type;
-		}
-		else if(type == VerifierTypeWrapper.ExtendedFloat && baseType == PrimitiveTypeWrapper.FLOAT)
-		{
-			return type;
-		}
-		else if(type.IsPrimitive || baseType.IsPrimitive)
-		{
-			// throw at the end of the method
-		}
-		else if(baseType == CoreClasses.java.lang.Object.Wrapper)
-		{
-			return type;
-		}
-		else if(type.IsUnloadable || baseType.IsUnloadable)
-		{
-			return type;
-		}
-		else if (baseType.IsInterfaceOrInterfaceArray)
-		{
-			// because of the way interfaces references works, if baseType
+			// HACK because of the way interfaces references works, if baseType
 			// is an interface or array of interfaces, any reference will be accepted
-			return type;
-		}
-		else if (type.IsAssignableTo(baseType))
-		{
-			return type;
-		}
-		else if (HasMissingBaseType(type) || HasMissingBaseType(baseType))
-		{
-			return type;
-		}
-		throw new VerifyError("Unexpected type " + type.Name + " where " + baseType.Name + " was expected");
-	}
-
-	private static bool HasMissingBaseType(TypeWrapper tw)
-	{
-#if STATIC_COMPILER
-		for (TypeWrapper baseTypeWrapper; (baseTypeWrapper = tw.BaseTypeWrapper) != null; tw = baseTypeWrapper)
-		{
-			if (baseTypeWrapper.IsUnloadable)
+			if(baseType.IsInterfaceOrInterfaceArray && !type.IsPrimitive)
 			{
-				StaticCompiler.IssueMissingTypeMessage(tw.TypeAsBaseType.BaseType);
-				return true;
+				return type;
 			}
+			if(type == VerifierTypeWrapper.ExtendedDouble && baseType == PrimitiveTypeWrapper.DOUBLE)
+			{
+				return type;
+			}
+			if(type == VerifierTypeWrapper.ExtendedFloat && baseType == PrimitiveTypeWrapper.FLOAT)
+			{
+				return type;
+			}
+			throw new VerifyError("Unexpected type " + type.Name + " where " + baseType.Name + " was expected");
 		}
-#endif
-		return false;
+		return type;
 	}
 
 	internal int GetStackHeight()
@@ -922,6 +832,27 @@ sealed class InstructionState
 		Console.WriteLine();
 	}
 
+	// this method ensures that no uninitialized object are in the current state
+	internal void CheckUninitializedObjRefs()
+	{
+		for(int i = 0; i < locals.Length; i++)
+		{
+			TypeWrapper type = locals[i];
+			if(VerifierTypeWrapper.IsNew(type))
+			{
+				throw new VerifyError("uninitialized object ref in local (2)");
+			}
+		}
+		for(int i = 0; i < stackSize; i++)
+		{
+			TypeWrapper type = stack[i];
+			if(VerifierTypeWrapper.IsNew(type))
+			{
+				throw new VerifyError("uninitialized object ref on stack");
+			}
+		}
+	}
+
 	internal void ClearFaultBlockException()
 	{
 		if(VerifierTypeWrapper.IsFaultBlockException(stack[0]))
@@ -979,50 +910,115 @@ struct StackState
 
 	internal TypeWrapper PopType(TypeWrapper baseType)
 	{
-		return InstructionState.PopTypeImpl(baseType, PopAnyType());
+		if(baseType.IsIntOnStackPrimitive)
+		{
+			baseType = PrimitiveTypeWrapper.INT;
+		}
+		TypeWrapper type = PopAnyType();
+		if(VerifierTypeWrapper.IsNew(type) || type == VerifierTypeWrapper.UninitializedThis)
+		{
+			throw new VerifyError("Expecting to find object/array on stack");
+		}
+		if(type != baseType &&
+			!((type.IsUnloadable && !baseType.IsPrimitive) || (baseType.IsUnloadable && !type.IsPrimitive) ||
+			type.IsAssignableTo(baseType)))
+		{
+			// HACK because of the way interfaces references works, if baseType
+			// is an interface or array of interfaces, any reference will be accepted
+			if(baseType.IsInterfaceOrInterfaceArray && !type.IsPrimitive)
+			{
+				return type;
+			}
+			if(type == VerifierTypeWrapper.ExtendedDouble && baseType == PrimitiveTypeWrapper.DOUBLE)
+			{
+				return type;
+			}
+			if(type == VerifierTypeWrapper.ExtendedFloat && baseType == PrimitiveTypeWrapper.FLOAT)
+			{
+				return type;
+			}
+			throw new VerifyError("Unexpected type " + type.Name + " where " + baseType.Name + " was expected");
+		}
+		return type;
 	}
 
 	// NOTE this can *not* be used to pop double or long
 	internal TypeWrapper PopType()
 	{
-		return InstructionState.PopTypeImpl(PopAnyType());
+		TypeWrapper type = PopAnyType();
+		if(type.IsWidePrimitive || type == VerifierTypeWrapper.ExtendedDouble)
+		{
+			throw new VerifyError("Attempt to split long or double on the stack");
+		}
+		return type;
 	}
 
 	internal void PopInt()
 	{
-		InstructionState.PopIntImpl(PopAnyType());
+		if(PopAnyType() != PrimitiveTypeWrapper.INT)
+		{
+			throw new VerifyError("Int expected on stack");
+		}
 	}
 
 	internal void PopFloat()
 	{
-		InstructionState.PopFloatImpl(PopAnyType());
+		TypeWrapper tw = PopAnyType();
+		if(tw != PrimitiveTypeWrapper.FLOAT && tw != VerifierTypeWrapper.ExtendedFloat)
+		{
+			throw new VerifyError("Float expected on stack");
+		}
 	}
 
 	internal void PopDouble()
 	{
-		InstructionState.PopDoubleImpl(PopAnyType());
+		TypeWrapper tw = PopAnyType();
+		if(tw != PrimitiveTypeWrapper.DOUBLE && tw != VerifierTypeWrapper.ExtendedDouble)
+		{
+			throw new VerifyError("Double expected on stack");
+		}
 	}
 
 	internal void PopLong()
 	{
-		InstructionState.PopLongImpl(PopAnyType());
+		if(PopAnyType() != PrimitiveTypeWrapper.LONG)
+		{
+			throw new VerifyError("Long expected on stack");
+		}
 	}
 
 	internal TypeWrapper PopArrayType()
 	{
-		return InstructionState.PopArrayTypeImpl(PopAnyType());
+		TypeWrapper type = PopAnyType();
+		if(!VerifierTypeWrapper.IsNullOrUnloadable(type) && type.ArrayRank == 0)
+		{
+			throw new VerifyError("Array reference expected on stack");
+		}
+		return type;
 	}
 
 	// either null or an initialized object reference
 	internal TypeWrapper PopObjectType()
 	{
-		return InstructionState.PopObjectTypeImpl(PopAnyType());
+		TypeWrapper type = PopAnyType();
+		if(type.IsPrimitive || VerifierTypeWrapper.IsNew(type) || type == VerifierTypeWrapper.UninitializedThis)
+		{
+			throw new VerifyError("Expected object reference on stack");
+		}
+		return type;
 	}
 
 	// null or an initialized object reference derived from baseType (or baseType)
 	internal TypeWrapper PopObjectType(TypeWrapper baseType)
 	{
-		return InstructionState.PopObjectTypeImpl(baseType, PopObjectType());
+		TypeWrapper type = PopObjectType();
+		// HACK because of the way interfaces references works, if baseType
+		// is an interface or array of interfaces, any reference will be accepted
+		if(!baseType.IsUnloadable && !baseType.IsInterfaceOrInterfaceArray && !(type.IsUnloadable || type.IsAssignableTo(baseType)))
+		{
+			throw new VerifyError("Unexpected type " + type + " where " + baseType + " was expected");
+		}
+		return type;
 	}
 }
 
@@ -1225,7 +1221,7 @@ sealed class MethodAnalyzer
 		{
 			thisType = VerifierTypeWrapper.MakeThis(wrapper);
 			// this reference. If we're a constructor, the this reference is uninitialized.
-			if(method.IsConstructor)
+			if(ReferenceEquals(method.Name, StringConstants.INIT))
 			{
 				state[0].SetLocalType(firstNonArgLocalIndex++, VerifierTypeWrapper.UninitializedThis, -1);
 				state[0].SetUnitializedThis(true);
@@ -1256,33 +1252,6 @@ sealed class MethodAnalyzer
 		}
 		AnalyzeTypeFlow();
 		VerifyPassTwo();
-		PatchLoadConstants();
-	}
-
-	private void PatchLoadConstants()
-	{
-		ClassFile.Method.Instruction[] code = method.Instructions;
-		for (int i = 0; i < code.Length; i++)
-		{
-			if (state[i] != null)
-			{
-				switch (code[i].NormalizedOpCode)
-				{
-					case NormalizedByteCode.__ldc:
-						switch (GetConstantPoolConstantType(code[i].Arg1))
-						{
-							case ClassFile.ConstantType.Double:
-							case ClassFile.ConstantType.Float:
-							case ClassFile.ConstantType.Integer:
-							case ClassFile.ConstantType.Long:
-							case ClassFile.ConstantType.String:
-								code[i].PatchOpCode(NormalizedByteCode.__ldc_nothrow);
-								break;
-						}
-						break;
-				}
-			}
-		}
 	}
 
 	internal CodeInfo GetCodeInfoAndErrors(UntangledExceptionTable exceptions, out List<string> errors)
@@ -1321,7 +1290,26 @@ sealed class MethodAnalyzer
 						{
 							if(method.ExceptionTable[j].startIndex <= i && i < method.ExceptionTable[j].endIndex)
 							{
-								MergeExceptionHandler(j, state[i]);
+								int idx = method.ExceptionTable[j].handlerIndex;
+								InstructionState ex = state[i].CopyLocals();
+								int catch_type = method.ExceptionTable[j].catch_type;
+								if(catch_type == 0)
+								{
+									TypeWrapper tw;
+									if (!faultTypes.TryGetValue(idx, out tw))
+									{
+										tw = VerifierTypeWrapper.MakeFaultBlockException(this, idx);
+										faultTypes.Add(idx, tw);
+									}
+									ex.PushType(tw);
+								}
+								else
+								{
+									// TODO if the exception type is unloadable we should consider pushing
+									// Throwable as the type and recording a loader constraint
+									ex.PushType(GetConstantPoolClassType(catch_type));
+								}
+								state[idx] += ex;
 							}
 						}
 						state[i].CopyTo(s);
@@ -1620,7 +1608,6 @@ sealed class MethodAnalyzer
 									s.PopObjectType(GetFieldref(instr.Arg1).GetClassType());
 								}
 								break;
-							case NormalizedByteCode.__ldc_nothrow:
 							case NormalizedByteCode.__ldc:
 							{
 								switch(GetConstantPoolConstantType(instr.Arg1))
@@ -1647,12 +1634,6 @@ sealed class MethodAnalyzer
 										}
 										s.PushType(CoreClasses.java.lang.Class.Wrapper);
 										break;
-									case ClassFile.ConstantType.MethodHandle:
-										s.PushType(CoreClasses.java.lang.invoke.MethodHandle.Wrapper);
-										break;
-									case ClassFile.ConstantType.MethodType:
-										s.PushType(CoreClasses.java.lang.invoke.MethodType.Wrapper);
-										break;
 									default:
 										// NOTE this is not a VerifyError, because it cannot happen (unless we have
 										// a bug in ClassFile.GetConstantPoolConstantType)
@@ -1669,22 +1650,8 @@ sealed class MethodAnalyzer
 							case NormalizedByteCode.__dynamic_invokespecial:
 							case NormalizedByteCode.__dynamic_invokeinterface:
 							case NormalizedByteCode.__dynamic_invokestatic:
-							case NormalizedByteCode.__methodhandle_invoke:
-							case NormalizedByteCode.__methodhandle_invokeexact:
 							{
 								ClassFile.ConstantPoolItemMI cpi = GetMethodref(instr.Arg1);
-								TypeWrapper retType = cpi.GetRetType();
-								// HACK to allow the result of Unsafe.getObjectVolatile() (on an array)
-								// to be used with Unsafe.putObject() we need to propagate the
-								// element type here as the return type (instead of object)
-								if(cpi.GetMethod() != null
-									&& cpi.GetMethod().IsIntrinsic
-									&& cpi.Class == "sun.misc.Unsafe"
-									&& cpi.Name == "getObjectVolatile"
-									&& Intrinsics.IsSupportedArrayTypeForUnsafeOperation(s.GetStackSlot(1)))
-								{
-									retType = s.GetStackSlot(1).ElementTypeWrapper;
-								}
 								s.MultiPopAnyType(cpi.GetArgTypes().Length);
 								if(instr.NormalizedOpCode != NormalizedByteCode.__invokestatic
 									&& instr.NormalizedOpCode != NormalizedByteCode.__dynamic_invokestatic)
@@ -1713,6 +1680,7 @@ sealed class MethodAnalyzer
 										}
 									}
 								}
+								TypeWrapper retType = cpi.GetRetType();
 								if(retType != PrimitiveTypeWrapper.VOID)
 								{
 									if(cpi.GetMethod() != null && cpi.GetMethod().ReturnType.IsUnloadable)
@@ -1724,28 +1692,6 @@ sealed class MethodAnalyzer
 										s.PushExtendedDouble();
 									}
 									else if(retType == PrimitiveTypeWrapper.FLOAT)
-									{
-										s.PushExtendedFloat();
-									}
-									else
-									{
-										s.PushType(retType);
-									}
-								}
-								break;
-							}
-							case NormalizedByteCode.__invokedynamic:
-							{
-								ClassFile.ConstantPoolItemInvokeDynamic cpi = GetInvokeDynamic(instr.Arg1);
-								s.MultiPopAnyType(cpi.GetArgTypes().Length);
-								TypeWrapper retType = cpi.GetRetType();
-								if (retType != PrimitiveTypeWrapper.VOID)
-								{
-									if (retType == PrimitiveTypeWrapper.DOUBLE)
-									{
-										s.PushExtendedDouble();
-									}
-									else if (retType == PrimitiveTypeWrapper.FLOAT)
 									{
 										s.PushExtendedFloat();
 									}
@@ -2271,22 +2217,12 @@ sealed class MethodAnalyzer
 								break;
 							case NormalizedByteCode.__static_error:
 								break;
-							case NormalizedByteCode.__jsr:
-							case NormalizedByteCode.__ret:
-								throw new VerifyError("Bad instruction");
 							default:
 								throw new NotImplementedException(instr.NormalizedOpCode.ToString());
 						}
 						if(s.GetStackHeight() > method.MaxStack)
 						{
 							throw new VerifyError("Stack size too large");
-						}
-						for(int j = 0; j < method.ExceptionTable.Length; j++)
-						{
-							if(method.ExceptionTable[j].endIndex == i + 1)
-							{
-								MergeExceptionHandler(j, s);
-							}
 						}
 						try
 						{
@@ -2340,30 +2276,6 @@ sealed class MethodAnalyzer
 		}
 	}
 
-	private void MergeExceptionHandler(int exceptionIndex, InstructionState curr)
-	{
-		int idx = method.ExceptionTable[exceptionIndex].handlerIndex;
-		InstructionState ex = curr.CopyLocals();
-		int catch_type = method.ExceptionTable[exceptionIndex].catch_type;
-		if (catch_type == 0)
-		{
-			TypeWrapper tw;
-			if (!faultTypes.TryGetValue(idx, out tw))
-			{
-				tw = VerifierTypeWrapper.MakeFaultBlockException(this, idx);
-				faultTypes.Add(idx, tw);
-			}
-			ex.PushType(tw);
-		}
-		else
-		{
-			// TODO if the exception type is unloadable we should consider pushing
-			// Throwable as the type and recording a loader constraint
-			ex.PushType(GetConstantPoolClassType(catch_type));
-		}
-		state[idx] += ex;
-	}
-
 	// this verification pass must run on the unmodified bytecode stream
 	private void VerifyPassTwo()
 	{
@@ -2382,8 +2294,34 @@ sealed class MethodAnalyzer
 						case NormalizedByteCode.__invokevirtual:
 							VerifyInvokePassTwo(i);
 							break;
-						case NormalizedByteCode.__invokedynamic:
-							VerifyInvokeDynamic(i);
+					}
+					// verify backward branches
+					switch (ByteCodeMetaData.GetFlowControl(instructions[i].NormalizedOpCode))
+					{
+						case ByteCodeFlowControl.Switch:
+							{
+								bool hasbackbranch = false;
+								for (int j = 0; j < instructions[i].SwitchEntryCount; j++)
+								{
+									hasbackbranch |= instructions[i].GetSwitchTargetIndex(j) < i;
+								}
+								hasbackbranch |= instructions[i].DefaultTarget < i;
+								if (hasbackbranch)
+								{
+									// backward branches cannot have uninitialized objects on
+									// the stack or in local variables
+									state[i].CheckUninitializedObjRefs();
+								}
+								break;
+							}
+						case ByteCodeFlowControl.Branch:
+						case ByteCodeFlowControl.CondBranch:
+							if (instructions[i].TargetIndex < i)
+							{
+								// backward branches cannot have uninitialized objects on
+								// the stack or in local variables
+								state[i].CheckUninitializedObjRefs();
+							}
 							break;
 					}
 				}
@@ -2406,11 +2344,7 @@ sealed class MethodAnalyzer
 		StackState stack = new StackState(state[index]);
 		NormalizedByteCode invoke = method.Instructions[index].NormalizedOpCode;
 		ClassFile.ConstantPoolItemMI cpi = GetMethodref(method.Instructions[index].Arg1);
-		if (invoke == NormalizedByteCode.__invokestatic && classFile.MajorVersion >= 52)
-		{
-			// invokestatic may be used to invoke interface methods in Java 8
-		}
-		else if ((cpi is ClassFile.ConstantPoolItemInterfaceMethodref) != (invoke == NormalizedByteCode.__invokeinterface))
+		if ((cpi is ClassFile.ConstantPoolItemInterfaceMethodref) != (invoke == NormalizedByteCode.__invokeinterface))
 		{
 			throw new VerifyError("Illegal constant pool index");
 		}
@@ -2511,17 +2445,6 @@ sealed class MethodAnalyzer
 		}
 	}
 
-	private void VerifyInvokeDynamic(int index)
-	{
-		StackState stack = new StackState(state[index]);
-		ClassFile.ConstantPoolItemInvokeDynamic cpi = GetInvokeDynamic(method.Instructions[index].Arg1);
-		TypeWrapper[] args = cpi.GetArgTypes();
-		for (int j = args.Length - 1; j >= 0; j--)
-		{
-			stack.PopType(args[j]);
-		}
-	}
-
 	private static void OptimizationPass(CodeInfo codeInfo, ClassFile classFile, ClassFile.Method method, UntangledExceptionTable exceptions, TypeWrapper wrapper, ClassLoaderWrapper classLoader)
 	{
 		// Optimization pass
@@ -2591,35 +2514,15 @@ sealed class MethodAnalyzer
 							PatchFieldAccess(wrapper, mw, ref instructions[i], stack);
 							break;
 						case NormalizedByteCode.__ldc:
-							switch(classFile.GetConstantPoolConstantType(instructions[i].Arg1))
+							if(classFile.GetConstantPoolConstantType(instructions[i].Arg1) == ClassFile.ConstantType.Class)
 							{
-								case ClassFile.ConstantType.Class:
+								TypeWrapper tw = classFile.GetConstantPoolClassType(instructions[i].Arg1);
+								if(tw.IsUnloadable)
 								{
-									TypeWrapper tw = classFile.GetConstantPoolClassType(instructions[i].Arg1);
-									if(tw.IsUnloadable)
-									{
-										ConditionalPatchNoClassDefFoundError(ref instructions[i], tw);
-									}
-									break;
+#if STATIC_COMPILER
+									SetHardError(wrapper.GetClassLoader(), ref instructions[i], HardError.NoClassDefFoundError, "{0}", tw.Name);
+#endif
 								}
-								case ClassFile.ConstantType.MethodType:
-								{
-									ClassFile.ConstantPoolItemMethodType cpi = classFile.GetConstantPoolConstantMethodType(instructions[i].Arg1);
-									TypeWrapper[] args = cpi.GetArgTypes();
-									TypeWrapper tw = cpi.GetRetType();
-									for(int j = 0; !tw.IsUnloadable && j < args.Length; j++)
-									{
-										tw = args[j];
-									}
-									if(tw.IsUnloadable)
-									{
-										ConditionalPatchNoClassDefFoundError(ref instructions[i], tw);
-									}
-									break;
-								}
-								case ClassFile.ConstantType.MethodHandle:
-									PatchLdcMethodHandle(ref instructions[i]);
-									break;
 							}
 							break;
 						case NormalizedByteCode.__new:
@@ -2627,7 +2530,9 @@ sealed class MethodAnalyzer
 							TypeWrapper tw = classFile.GetConstantPoolClassType(instructions[i].Arg1);
 							if(tw.IsUnloadable)
 							{
-								ConditionalPatchNoClassDefFoundError(ref instructions[i], tw);
+#if STATIC_COMPILER
+								SetHardError(wrapper.GetClassLoader(), ref instructions[i], HardError.NoClassDefFoundError, "{0}", tw.Name);
+#endif
 							}
 							else if(!tw.IsAccessibleFrom(wrapper))
 							{
@@ -2645,7 +2550,9 @@ sealed class MethodAnalyzer
 							TypeWrapper tw = classFile.GetConstantPoolClassType(instructions[i].Arg1);
 							if(tw.IsUnloadable)
 							{
-								ConditionalPatchNoClassDefFoundError(ref instructions[i], tw);
+#if STATIC_COMPILER
+								SetHardError(wrapper.GetClassLoader(), ref instructions[i], HardError.NoClassDefFoundError, "{0}", tw.Name);
+#endif
 							}
 							else if(!tw.IsAccessibleFrom(wrapper))
 							{
@@ -2660,7 +2567,7 @@ sealed class MethodAnalyzer
 							if(tw.IsUnloadable)
 							{
 								// If the type is unloadable, we always generate the dynamic code
-								// (regardless of ClassLoaderWrapper.DisableDynamicBinding), because at runtime,
+								// (regardless of JVM.DisableDynamicBinding), because at runtime,
 								// null references should always pass thru without attempting
 								// to load the type (for Sun compatibility).
 							}
@@ -2676,7 +2583,9 @@ sealed class MethodAnalyzer
 							TypeWrapper tw = stack.PopArrayType();
 							if(tw.IsUnloadable)
 							{
-								ConditionalPatchNoClassDefFoundError(ref instructions[i], tw);
+#if STATIC_COMPILER
+								SetHardError(wrapper.GetClassLoader(), ref instructions[i], HardError.NoClassDefFoundError, "{0}", tw.Name);
+#endif
 							}
 							break;
 						}
@@ -2687,7 +2596,9 @@ sealed class MethodAnalyzer
 							TypeWrapper tw = stack.PopArrayType();
 							if(tw.IsUnloadable)
 							{
-								ConditionalPatchNoClassDefFoundError(ref instructions[i], tw);
+#if STATIC_COMPILER
+								SetHardError(wrapper.GetClassLoader(), ref instructions[i], HardError.NoClassDefFoundError, "{0}", tw.Name);
+#endif
 							}
 							break;
 						}
@@ -2697,119 +2608,6 @@ sealed class MethodAnalyzer
 				}
 			}
 		}
-	}
-
-	private void PatchLdcMethodHandle(ref ClassFile.Method.Instruction instr)
-	{
-		ClassFile.ConstantPoolItemMethodHandle cpi = classFile.GetConstantPoolConstantMethodHandle(instr.Arg1);
-		if (cpi.GetClassType().IsUnloadable)
-		{
-			ConditionalPatchNoClassDefFoundError(ref instr, cpi.GetClassType());
-		}
-		else if (!cpi.GetClassType().IsAccessibleFrom(wrapper))
-		{
-			SetHardError(wrapper.GetClassLoader(), ref instr, HardError.IllegalAccessError, "tried to access class {0} from class {1}", cpi.Class, wrapper.Name);
-		}
-		else if (cpi.Kind == ClassFile.RefKind.invokeVirtual
-			&& cpi.GetClassType() == CoreClasses.java.lang.invoke.MethodHandle.Wrapper
-			&& (cpi.Name == "invoke" || cpi.Name == "invokeExact"))
-		{
-			// it's allowed to use ldc to create a MethodHandle invoker
-		}
-		else if (cpi.Member == null
-			|| cpi.Member.IsStatic != (cpi.Kind == ClassFile.RefKind.getStatic || cpi.Kind == ClassFile.RefKind.putStatic || cpi.Kind == ClassFile.RefKind.invokeStatic))
-		{
-			HardError err;
-			string msg;
-			switch (cpi.Kind)
-			{
-				case ClassFile.RefKind.getField:
-				case ClassFile.RefKind.getStatic:
-				case ClassFile.RefKind.putField:
-				case ClassFile.RefKind.putStatic:
-					err = HardError.NoSuchFieldException;
-					msg = "no such field: {0}.{1}{2}";
-					break;
-				default:
-					err = HardError.NoSuchMethodException;
-					msg = "no such method: {0}.{1}{2}";
-					break;
-			}
-			SetHardError(wrapper.GetClassLoader(), ref instr, err, msg, cpi.Class, cpi.Name, SigToString(cpi.Signature));
-		}
-		else if (!cpi.Member.IsAccessibleFrom(cpi.GetClassType(), wrapper, cpi.GetClassType()))
-		{
-			if (cpi.Member.IsProtected && wrapper.IsSubTypeOf(cpi.Member.DeclaringType))
-			{
-				// this is allowed, the receiver will be narrowed to current type
-			}
-			else
-			{
-				SetHardError(wrapper.GetClassLoader(), ref instr, HardError.IllegalAccessException, "member is private: {0}.{1}/{2}, from {3}", cpi.Class, cpi.Name, SigToString(cpi.Signature), wrapper.Name);
-			}
-		}
-	}
-
-	private static string SigToString(string sig)
-	{
-		System.Text.StringBuilder sb = new System.Text.StringBuilder();
-		string sep = "";
-		int dims = 0;
-		for (int i = 0; i < sig.Length; i++)
-		{
-			if (sig[i] == '(' || sig[i] == ')')
-			{
-				sb.Append(sig[i]);
-				sep = "";
-				continue;
-			}
-			else if (sig[i] == '[')
-			{
-				dims++;
-				continue;
-			}
-			sb.Append(sep);
-			sep = ",";
-			switch (sig[i])
-			{
-				case 'V':
-					sb.Append("void");
-					break;
-				case 'B':
-					sb.Append("byte");
-					break;
-				case 'Z':
-					sb.Append("boolean");
-					break;
-				case 'S':
-					sb.Append("short");
-					break;
-				case 'C':
-					sb.Append("char");
-					break;
-				case 'I':
-					sb.Append("int");
-					break;
-				case 'J':
-					sb.Append("long");
-					break;
-				case 'F':
-					sb.Append("float");
-					break;
-				case 'D':
-					sb.Append("double");
-					break;
-				case 'L':
-					sb.Append(sig, i + 1, sig.IndexOf(';', i + 1) - (i + 1));
-					i = sig.IndexOf(';', i + 1);
-					break;
-			}
-			for (; dims != 0; dims--)
-			{
-				sb.Append("[]");
-			}
-		}
-		return sb.ToString();
 	}
 
 	internal static InstructionFlags[] ComputePartialReachability(CodeInfo codeInfo, ClassFile.Method.Instruction[] instructions, UntangledExceptionTable exceptions, int initialInstructionIndex, bool skipFaultBlocks)
@@ -2934,21 +2732,6 @@ sealed class MethodAnalyzer
 					ar.RemoveAt(i);
 					i--;
 				}
-			}
-		}
-
-		// Modern versions of javac split try blocks when the try block contains a return statement.
-		// Here we merge these exception blocks again, because it allows us to generate more efficient code.
-		for (int i = 0; i < ar.Count - 1; i++)
-		{
-			if (ar[i].endIndex + 1 == ar[i + 1].startIndex
-				&& ar[i].handlerIndex == ar[i + 1].handlerIndex
-				&& ar[i].catch_type == ar[i + 1].catch_type
-				&& IsReturn(instructions[ar[i].endIndex].NormalizedOpCode))
-			{
-				ar[i] = new ExceptionTableEntry(ar[i].startIndex, ar[i + 1].endIndex, ar[i].handlerIndex, ar[i].catch_type, ar[i].ordinal);
-				ar.RemoveAt(i + 1);
-				i--;
 			}
 		}
 
@@ -3160,16 +2943,6 @@ sealed class MethodAnalyzer
 		return new UntangledExceptionTable(exceptions);
 	}
 
-	private static bool IsReturn(NormalizedByteCode bc)
-	{
-		return bc == NormalizedByteCode.__return
-			|| bc == NormalizedByteCode.__areturn
-			|| bc == NormalizedByteCode.__dreturn
-			|| bc == NormalizedByteCode.__ireturn
-			|| bc == NormalizedByteCode.__freturn
-			|| bc == NormalizedByteCode.__lreturn;
-	}
-
 	private static bool AnalyzePotentialFaultBlocks(CodeInfo codeInfo, ClassFile.Method method, UntangledExceptionTable exceptions)
 	{
 		ClassFile.Method.Instruction[] code = method.Instructions;
@@ -3213,11 +2986,6 @@ sealed class MethodAnalyzer
 										{
 											goto not_fault_block;
 										}
-									}
-									if (VerifierTypeWrapper.IsFaultBlockException(codeInfo.GetRawStackTypeWrapper(j, 0))
-										&& codeInfo.GetRawStackTypeWrapper(j, 0) != codeInfo.GetRawStackTypeWrapper(exceptions[i].handlerIndex, 0))
-									{
-										goto not_fault_block;
 									}
 									break;
 							}
@@ -3496,15 +3264,6 @@ sealed class MethodAnalyzer
 		}
 	}
 
-	private void ConditionalPatchNoClassDefFoundError(ref ClassFile.Method.Instruction instruction, TypeWrapper tw)
-	{
-		ClassLoaderWrapper loader = wrapper.GetClassLoader();
-		if (loader.DisableDynamicBinding)
-		{
-			SetHardError(loader, ref instruction, HardError.NoClassDefFoundError, "{0}", tw.Name);
-		}
-	}
-
 	private void SetHardError(ClassLoaderWrapper classLoader, ref ClassFile.Method.Instruction instruction, HardError hardError, string message, params object[] args)
 	{
 		string text = string.Format(message, args);
@@ -3522,9 +3281,6 @@ sealed class MethodAnalyzer
 				msg = Message.EmittedIllegalAccessError;
 				break;
 			case HardError.IncompatibleClassChangeError:
-			case HardError.NoSuchFieldException:
-			case HardError.IllegalAccessException:
-			case HardError.NoSuchMethodException:
 				msg = Message.EmittedIncompatibleClassChangeError;
 				break;
 			case HardError.NoSuchFieldError:
@@ -3557,21 +3313,6 @@ sealed class MethodAnalyzer
 		{
 			thisType = null;
 		}
-		else if (invoke == NormalizedByteCode.__invokevirtual
-			&& classFile.MajorVersion >= 51
-			&& cpi.Class == "java.lang.invoke.MethodHandle"
-			&& (cpi.Name == "invoke" || cpi.Name == "invokeExact"))
-		{
-			if (cpi.Name == "invoke")
-			{
-				instr.PatchOpCode(NormalizedByteCode.__methodhandle_invoke);
-			}
-			else
-			{
-				instr.PatchOpCode(NormalizedByteCode.__methodhandle_invokeexact);
-			}
-			return;
-		}
 		else
 		{
 			TypeWrapper[] args = cpi.GetArgTypes();
@@ -3587,47 +3328,40 @@ sealed class MethodAnalyzer
 			}
 		}
 
-		if(cpi.GetClassType().IsUnloadable)
+		if(cpi.GetClassType().IsUnloadable || (thisType != null && thisType.IsUnloadable))
 		{
-			if(wrapper.GetClassLoader().DisableDynamicBinding)
+#if STATIC_COMPILER
+			SetHardError(wrapper.GetClassLoader(), ref instr, HardError.NoClassDefFoundError, "{0}", cpi.GetClassType().Name);
+#else
+			switch(invoke)
 			{
-				SetHardError(wrapper.GetClassLoader(), ref instr, HardError.NoClassDefFoundError, "{0}", cpi.GetClassType().Name);
+				case NormalizedByteCode.__invokeinterface:
+					instr.PatchOpCode(NormalizedByteCode.__dynamic_invokeinterface);
+					break;
+				case NormalizedByteCode.__invokestatic:
+					instr.PatchOpCode(NormalizedByteCode.__dynamic_invokestatic);
+					break;
+				case NormalizedByteCode.__invokevirtual:
+					instr.PatchOpCode(NormalizedByteCode.__dynamic_invokevirtual);
+					break;
+				case NormalizedByteCode.__invokespecial:
+					if(isnew)
+					{
+						instr.PatchOpCode(NormalizedByteCode.__dynamic_invokespecial);
+					}
+					else
+					{
+						SetHardError(wrapper.GetClassLoader(), ref instr, HardError.LinkageError, "Base class no longer loadable");
+					}
+					break;
+				default:
+					throw new InvalidOperationException();
 			}
-			else
-			{
-				switch(invoke)
-				{
-					case NormalizedByteCode.__invokeinterface:
-						instr.PatchOpCode(NormalizedByteCode.__dynamic_invokeinterface);
-						break;
-					case NormalizedByteCode.__invokestatic:
-						instr.PatchOpCode(NormalizedByteCode.__dynamic_invokestatic);
-						break;
-					case NormalizedByteCode.__invokevirtual:
-						instr.PatchOpCode(NormalizedByteCode.__dynamic_invokevirtual);
-						break;
-					case NormalizedByteCode.__invokespecial:
-						if(isnew)
-						{
-							instr.PatchOpCode(NormalizedByteCode.__dynamic_invokespecial);
-						}
-						else
-						{
-							throw new VerifyError("Invokespecial cannot call subclass methods");
-						}
-						break;
-					default:
-						throw new InvalidOperationException();
-				}
-			}
+#endif
 		}
-		else if(invoke == NormalizedByteCode.__invokeinterface && !cpi.GetClassType().IsInterface)
+		else if(cpi.GetClassType().IsInterface != (invoke == NormalizedByteCode.__invokeinterface))
 		{
 			SetHardError(wrapper.GetClassLoader(), ref instr, HardError.IncompatibleClassChangeError, "invokeinterface on non-interface");
-		}
-		else if(cpi.GetClassType().IsInterface && invoke != NormalizedByteCode.__invokeinterface && (invoke != NormalizedByteCode.__invokestatic || classFile.MajorVersion < 52))
-		{
-			SetHardError(wrapper.GetClassLoader(), ref instr, HardError.IncompatibleClassChangeError, "interface method must be invoked used invokeinterface or invokestatic");
 		}
 		else
 		{
@@ -3641,7 +3375,7 @@ sealed class MethodAnalyzer
 				}
 				else if(targetMethod.IsStatic == (invoke == NormalizedByteCode.__invokestatic))
 				{
-					if(targetMethod.IsAbstract && invoke == NormalizedByteCode.__invokespecial && (targetMethod.GetMethod() == null || targetMethod.GetMethod().IsAbstract))
+					if(targetMethod.IsAbstract && invoke == NormalizedByteCode.__invokespecial)
 					{
 						SetHardError(wrapper.GetClassLoader(), ref instr, HardError.AbstractMethodError, "{0}.{1}{2}", cpi.Class, cpi.Name, cpi.Signature);
 					}
@@ -3759,32 +3493,29 @@ sealed class MethodAnalyzer
 			// We're being called from IsSideEffectFreeStaticInitializer,
 			// no further checks are possible (nor needed).
 		}
-		else if(cpi.GetClassType().IsUnloadable)
+		else if(cpi.GetClassType().IsUnloadable || (thisType != null && thisType.IsUnloadable))
 		{
-			if(wrapper.GetClassLoader().DisableDynamicBinding)
+#if STATIC_COMPILER
+			SetHardError(wrapper.GetClassLoader(), ref instr, HardError.NoClassDefFoundError, "{0}", cpi.GetClassType().Name);
+#else
+			switch(instr.NormalizedOpCode)
 			{
-				SetHardError(wrapper.GetClassLoader(), ref instr, HardError.NoClassDefFoundError, "{0}", cpi.GetClassType().Name);
+				case NormalizedByteCode.__getstatic:
+					instr.PatchOpCode(NormalizedByteCode.__dynamic_getstatic);
+					break;
+				case NormalizedByteCode.__putstatic:
+					instr.PatchOpCode(NormalizedByteCode.__dynamic_putstatic);
+					break;
+				case NormalizedByteCode.__getfield:
+					instr.PatchOpCode(NormalizedByteCode.__dynamic_getfield);
+					break;
+				case NormalizedByteCode.__putfield:
+					instr.PatchOpCode(NormalizedByteCode.__dynamic_putfield);
+					break;
+				default:
+					throw new InvalidOperationException();
 			}
-			else
-			{
-				switch(instr.NormalizedOpCode)
-				{
-					case NormalizedByteCode.__getstatic:
-						instr.PatchOpCode(NormalizedByteCode.__dynamic_getstatic);
-						break;
-					case NormalizedByteCode.__putstatic:
-						instr.PatchOpCode(NormalizedByteCode.__dynamic_putstatic);
-						break;
-					case NormalizedByteCode.__getfield:
-						instr.PatchOpCode(NormalizedByteCode.__dynamic_getfield);
-						break;
-					case NormalizedByteCode.__putfield:
-						instr.PatchOpCode(NormalizedByteCode.__dynamic_putfield);
-						break;
-					default:
-						throw new InvalidOperationException();
-				}
-			}
+#endif
 			return;
 		}
 		else
@@ -3857,7 +3588,7 @@ sealed class MethodAnalyzer
 
 	private string CheckLoaderConstraints(ClassFile.ConstantPoolItemMI cpi, MethodWrapper mw)
 	{
-		if(cpi.GetRetType() != mw.ReturnType && !cpi.GetRetType().IsUnloadable && !mw.ReturnType.IsUnloadable)
+		if(cpi.GetRetType() != mw.ReturnType && !mw.ReturnType.IsUnloadable)
 		{
 #if STATIC_COMPILER
 			StaticCompiler.LinkageError("Method \"{2}.{3}{4}\" has a return type \"{0}\" instead of type \"{1}\" as expected by \"{5}\"", mw.ReturnType, cpi.GetRetType(), cpi.GetClassType().Name, cpi.Name, cpi.Signature, classFile.Name);
@@ -3868,7 +3599,7 @@ sealed class MethodAnalyzer
 		TypeWrapper[] there = mw.GetParameters();
 		for(int i = 0; i < here.Length; i++)
 		{
-			if(here[i] != there[i] && !here[i].IsUnloadable && !there[i].IsUnloadable)
+			if(here[i] != there[i] && !there[i].IsUnloadable)
 			{
 #if STATIC_COMPILER
 				StaticCompiler.LinkageError("Method \"{2}.{3}{4}\" has a argument type \"{0}\" instead of type \"{1}\" as expected by \"{5}\"", there[i], here[i], cpi.GetClassType().Name, cpi.Name, cpi.Signature, classFile.Name);
@@ -3879,26 +3610,7 @@ sealed class MethodAnalyzer
 		return null;
 	}
 
-	private ClassFile.ConstantPoolItemInvokeDynamic GetInvokeDynamic(int index)
-	{
-		try
-		{
-			ClassFile.ConstantPoolItemInvokeDynamic item = classFile.GetInvokeDynamic(index);
-			if(item != null)
-			{
-				return item;
-			}
-		}
-		catch(InvalidCastException)
-		{
-		}
-		catch(IndexOutOfRangeException)
-		{
-		}
-		throw new VerifyError("Illegal constant pool index");
-	}
-
-	private ClassFile.ConstantPoolItemMI GetMethodref(int index)
+	internal ClassFile.ConstantPoolItemMI GetMethodref(int index)
 	{
 		try
 		{
@@ -4031,7 +3743,6 @@ sealed class MethodAnalyzer
 						Console.Write(" {0}", code[i].Arg1);
 						break;
 					case NormalizedByteCode.__ldc:
-					case NormalizedByteCode.__ldc_nothrow:
 					case NormalizedByteCode.__getfield:
 					case NormalizedByteCode.__getstatic:
 					case NormalizedByteCode.__putfield:
