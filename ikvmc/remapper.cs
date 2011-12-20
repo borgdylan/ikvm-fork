@@ -34,7 +34,7 @@ using IKVM.Internal;
 
 namespace IKVM.Internal.MapXml
 {
-	sealed class CodeGenContext
+	class CodeGenContext
 	{
 		private ClassLoaderWrapper classLoader;
 		private readonly Dictionary<string, object> h = new Dictionary<string, object>();
@@ -71,38 +71,6 @@ namespace IKVM.Internal.MapXml
 		}
 
 		internal abstract void Generate(CodeGenContext context, CodeEmitter ilgen);
-
-		public override string ToString()
-		{
-			System.Text.StringBuilder sb = new System.Text.StringBuilder();
-			sb.Append('<');
-			object[] attr = GetType().GetCustomAttributes(typeof(XmlTypeAttribute), false);
-			if (attr.Length == 1)
-			{
-				sb.Append(((XmlTypeAttribute)attr[0]).TypeName);
-			}
-			else
-			{
-				sb.Append(GetType().Name);
-			}
-			foreach (System.Reflection.FieldInfo field in GetType().GetFields())
-			{
-				if (!field.IsStatic)
-				{
-					object value = field.GetValue(this);
-					if (value != null)
-					{
-						attr = field.GetCustomAttributes(typeof(XmlAttributeAttribute), false);
-						if (attr.Length == 1)
-						{
-							sb.AppendFormat(" {0}=\"{1}\"", ((XmlAttributeAttribute)attr[0]).AttributeName, value);
-						}
-					}
-				}
-			}
-			sb.Append(" />");
-			return sb.ToString();
-		}
 	}
 
 	[XmlType("ldstr")]
@@ -373,9 +341,11 @@ namespace IKVM.Internal.MapXml
 				if(typeWrapper.IsGhost || typeWrapper.IsGhostArray)
 				{
 					ilgen.Emit(OpCodes.Dup);
-					typeWrapper.EmitInstanceOf(ilgen);
+					// NOTE we pass a null context, but that shouldn't be a problem, because
+					// typeWrapper should never be an UnloadableTypeWrapper
+					typeWrapper.EmitInstanceOf(null, ilgen);
 					CodeEmitterLabel endLabel = ilgen.DefineLabel();
-					ilgen.EmitBrtrue(endLabel);
+					ilgen.Emit(OpCodes.Brtrue_S, endLabel);
 					ilgen.Emit(OpCodes.Pop);
 					ilgen.Emit(OpCodes.Ldnull);
 					ilgen.MarkLabel(endLabel);
@@ -404,7 +374,9 @@ namespace IKVM.Internal.MapXml
 			}
 			else
 			{
-				typeWrapper.EmitCheckcast(ilgen);
+				// NOTE we pass a null context, but that shouldn't be a problem, because
+				// typeWrapper should never be an UnloadableTypeWrapper
+				typeWrapper.EmitCheckcast(null, ilgen);
 			}
 		}
 	}
@@ -475,6 +447,13 @@ namespace IKVM.Internal.MapXml
 
 	public abstract class Branch : Instruction
 	{
+		private OpCode opcode;
+
+		public Branch(OpCode opcode)
+		{
+			this.opcode = opcode;
+		}
+
 		internal sealed override void Generate(CodeGenContext context, CodeEmitter ilgen)
 		{
 			CodeEmitterLabel l;
@@ -487,10 +466,8 @@ namespace IKVM.Internal.MapXml
 			{
 				l = (CodeEmitterLabel)context[Name];
 			}
-			Emit(ilgen, l);
+			ilgen.Emit(opcode, l);
 		}
-
-		internal abstract void Emit(CodeEmitter ilgen, CodeEmitterLabel label);
 
 		[XmlAttribute("name")]
 		public string Name;
@@ -499,81 +476,74 @@ namespace IKVM.Internal.MapXml
 	[XmlType("brfalse")]
 	public sealed class BrFalse : Branch
 	{
-		internal override void Emit(CodeEmitter ilgen, CodeEmitterLabel label)
+		public BrFalse() : base(OpCodes.Brfalse)
 		{
-			ilgen.EmitBrfalse(label);
 		}
 	}
 
 	[XmlType("brtrue")]
 	public sealed class BrTrue : Branch
 	{
-		internal override void Emit(CodeEmitter ilgen, CodeEmitterLabel label)
+		public BrTrue() : base(OpCodes.Brtrue)
 		{
-			ilgen.EmitBrtrue(label);
 		}
 	}
 
 	[XmlType("br")]
 	public sealed class Br : Branch
 	{
-		internal override void Emit(CodeEmitter ilgen, CodeEmitterLabel label)
+		public Br() : base(OpCodes.Br)
 		{
-			ilgen.EmitBr(label);
 		}
 	}
 
 	[XmlType("beq")]
 	public sealed class Beq : Branch
 	{
-		internal override void Emit(CodeEmitter ilgen, CodeEmitterLabel label)
+		public Beq()
+			: base(OpCodes.Beq)
 		{
-			ilgen.EmitBeq(label);
 		}
 	}
 
 	[XmlType("bne_un")]
 	public sealed class Bne_Un : Branch
 	{
-		internal override void Emit(CodeEmitter ilgen, CodeEmitterLabel label)
+		public Bne_Un()
+			: base(OpCodes.Bne_Un)
 		{
-			ilgen.EmitBne_Un(label);
 		}
 	}
 
 	[XmlType("bge_un")]
 	public sealed class Bge_Un : Branch
 	{
-		internal override void Emit(CodeEmitter ilgen, CodeEmitterLabel label)
+		public Bge_Un() : base(OpCodes.Bge_Un)
 		{
-			ilgen.EmitBge_Un(label);
 		}
 	}
 
 	[XmlType("ble_un")]
 	public sealed class Ble_Un : Branch
 	{
-		internal override void Emit(CodeEmitter ilgen, CodeEmitterLabel label)
+		public Ble_Un() : base(OpCodes.Ble_Un)
 		{
-			ilgen.EmitBle_Un(label);
 		}
 	}
 
 	[XmlType("blt")]
 	public sealed class Blt : Branch
 	{
-		internal override void Emit(CodeEmitter ilgen, CodeEmitterLabel label)
+		public Blt() : base(OpCodes.Blt)
 		{
-			ilgen.EmitBlt(label);
 		}
 	}
 
 	[XmlType("blt_un")]
 	public sealed class Blt_Un : Branch
 	{
-		internal override void Emit(CodeEmitter ilgen, CodeEmitterLabel label)
+		public Blt_Un() : base(OpCodes.Blt_Un)
 		{
-			ilgen.EmitBlt_Un(label);
 		}
 	}
 
@@ -656,19 +626,7 @@ namespace IKVM.Internal.MapXml
 
 		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
 		{
-			ilgen.EmitLdarga(ArgNum);
-		}
-	}
-
-	[XmlType("ldarg_s")]
-	public sealed class LdArg_S : Instruction
-	{
-		[XmlAttribute("argNum")]
-		public byte ArgNum;
-
-		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
-		{
-			ilgen.EmitLdarg(ArgNum);
+			ilgen.Emit(OpCodes.Ldarga, (short)ArgNum);
 		}
 	}
 
@@ -780,15 +738,6 @@ namespace IKVM.Internal.MapXml
 	public sealed class Stind_i4 : Simple
 	{
 		public Stind_i4() : base(OpCodes.Stind_I4)
-		{
-		}
-	}
-
-	[XmlType("stind_i8")]
-	public sealed class Stind_i8 : Simple
-	{
-		public Stind_i8()
-			: base(OpCodes.Stind_I8)
 		{
 		}
 	}
@@ -928,7 +877,7 @@ namespace IKVM.Internal.MapXml
 
 		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
 		{
-			ilgen.EmitLdc_I4(val);
+			ilgen.Emit(OpCodes.Ldc_I4, val);
 		}
 	}
 
@@ -1070,33 +1019,6 @@ namespace IKVM.Internal.MapXml
 		}
 	}
 
-	[XmlType("or")]
-	public sealed class Or : Simple
-	{
-		public Or()
-			: base(OpCodes.Or)
-		{
-		}
-	}
-
-	[XmlType("xor")]
-	public sealed class Xor : Simple
-	{
-		public Xor()
-			: base(OpCodes.Xor)
-		{
-		}
-	}
-
-	[XmlType("not")]
-	public sealed class Not : Simple
-	{
-		public Not()
-			: base(OpCodes.Not)
-		{
-		}
-	}
-
 	[XmlType("unaligned")]
 	public sealed class Unaligned : Instruction
 	{
@@ -1105,7 +1027,7 @@ namespace IKVM.Internal.MapXml
 
 		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
 		{
-			ilgen.EmitUnaligned((byte)Alignment);
+			ilgen.Emit(OpCodes.Unaligned, (byte)Alignment);
 		}
 	}
 
@@ -1128,9 +1050,8 @@ namespace IKVM.Internal.MapXml
 	[XmlType("leave")]
 	public sealed class Leave : Branch
 	{
-		internal override void Emit(CodeEmitter ilgen, CodeEmitterLabel label)
+		public Leave() : base(OpCodes.Leave)
 		{
-			ilgen.EmitLeave(label);
 		}
 	}
 
@@ -1176,7 +1097,7 @@ namespace IKVM.Internal.MapXml
 		}
 	}
 
-	public sealed class CatchBlock : InstructionList
+	public class CatchBlock : InstructionList
 	{
 		[XmlAttribute("type")]
 		public string type;
@@ -1185,7 +1106,7 @@ namespace IKVM.Internal.MapXml
 	}
 
 	[XmlType("conditional")]
-	public sealed class ConditionalInstruction : Instruction
+	public class ConditionalInstruction : Instruction
 	{
 		[XmlAttribute("framework")]
 		public string framework;
@@ -1237,129 +1158,10 @@ namespace IKVM.Internal.MapXml
 	{
 		[XmlAttribute("type")]
 		public string type;
-		[XmlAttribute("class")]
-		public string Class;
-		[XmlAttribute("method")]
-		public string Method;
-		[XmlAttribute("field")]
-		public string Field;
-		[XmlAttribute("sig")]
-		public string Sig;
 
 		internal override void Generate(CodeGenContext context, CodeEmitter ilgen)
 		{
-			if (!Validate())
-			{
-				return;
-			}
-
-			MemberInfo member = Resolve(context);
-			Type type = member as Type;
-			MethodInfo method = member as MethodInfo;
-			ConstructorInfo constructor = member as ConstructorInfo;
-			FieldInfo field = member as FieldInfo;
-
-			if (type != null)
-			{
-				ilgen.Emit(OpCodes.Ldtoken, type);
-			}
-			else if (method != null)
-			{
-				ilgen.Emit(OpCodes.Ldtoken, method);
-			}
-			else if (constructor != null)
-			{
-				ilgen.Emit(OpCodes.Ldtoken, constructor);
-			}
-			else if (field != null)
-			{
-				ilgen.Emit(OpCodes.Ldtoken, field);
-			}
-			else
-			{
-				StaticCompiler.IssueMessage(Message.MapXmlUnableToResolveOpCode, ToString());
-			}
-		}
-
-		private bool Validate()
-		{
-			if (type != null && Class == null)
-			{
-				if (Method != null || Field != null || Sig != null)
-				{
-					StaticCompiler.IssueMessage(Message.MapXmlError, "not implemented: cannot use 'type' attribute with 'method' or 'field' attribute for ldtoken");
-					return false;
-				}
-				return true;
-			}
-			else if (Class != null && type == null)
-			{
-				if (Method == null && Field == null)
-				{
-					if (Sig != null)
-					{
-						StaticCompiler.IssueMessage(Message.MapXmlError, "cannot specify 'sig' attribute without either 'method' or 'field' attribute for ldtoken");
-					}
-					return true;
-				}
-				if (Method != null && Field != null)
-				{
-					StaticCompiler.IssueMessage(Message.MapXmlError, "cannot specify both 'method' and 'field' attribute for ldtoken");
-					return false;
-				}
-				return true;
-			}
-			else
-			{
-				StaticCompiler.IssueMessage(Message.MapXmlError, "must specify either 'type' or 'class' attribute for ldtoken");
-				return false;
-			}
-		}
-
-		private MemberInfo Resolve(CodeGenContext context)
-		{
-			if (type != null)
-			{
-				if (Class != null || Method != null || Field != null || Sig != null)
-				{
-					throw new NotImplementedException();
-				}
-				return StaticCompiler.GetTypeForMapXml(context.ClassLoader, type);
-			}
-			else if (Class != null)
-			{
-				TypeWrapper tw = context.ClassLoader.LoadClassByDottedNameFast(Class);
-				if (tw == null)
-				{
-					return null;
-				}
-				else if (Method != null)
-				{
-					MethodWrapper mw = tw.GetMethodWrapper(Method, Sig, false);
-					if (mw == null)
-					{
-						return null;
-					}
-					return mw.GetMethod();
-				}
-				else if (Field != null)
-				{
-					FieldWrapper fw = tw.GetFieldWrapper(Field, Sig);
-					if (fw == null)
-					{
-						return null;
-					}
-					return fw.GetField();
-				}
-				else
-				{
-					return tw.TypeAsBaseType;
-				}
-			}
-			else
-			{
-				return null;
-			}
+			ilgen.Emit(OpCodes.Ldtoken, StaticCompiler.GetTypeForMapXml(context.ClassLoader, type));
 		}
 	}
 
@@ -1416,7 +1218,6 @@ namespace IKVM.Internal.MapXml
 		[XmlElement(typeof(StLoc))]
 		[XmlElement(typeof(LdLoc))]
 		[XmlElement(typeof(LdArga))]
-		[XmlElement(typeof(LdArg_S))]
 		[XmlElement(typeof(LdArg_0))]
 		[XmlElement(typeof(LdArg_1))]
 		[XmlElement(typeof(LdArg_2))]
@@ -1431,7 +1232,6 @@ namespace IKVM.Internal.MapXml
 		[XmlElement(typeof(Stind_i1))]
 		[XmlElement(typeof(Stind_i2))]
 		[XmlElement(typeof(Stind_i4))]
-		[XmlElement(typeof(Stind_i8))]
 		[XmlElement(typeof(Stind_ref))]
 		[XmlElement(typeof(Ret))]
 		[XmlElement(typeof(Throw))]
@@ -1460,9 +1260,6 @@ namespace IKVM.Internal.MapXml
 		[XmlElement(typeof(Sub))]
 		[XmlElement(typeof(Mul))]
 		[XmlElement(typeof(And))]
-		[XmlElement(typeof(Or))]
-		[XmlElement(typeof(Xor))]
-		[XmlElement(typeof(Not))]
 		[XmlElement(typeof(Unaligned))]
 		[XmlElement(typeof(Cpblk))]
 		[XmlElement(typeof(Ceq))]
@@ -1498,13 +1295,13 @@ namespace IKVM.Internal.MapXml
 		}
 	}
 
-	public sealed class Throws
+	public class Throws
 	{
 		[XmlAttribute("class")]
 		public string Class;
 	}
 
-	public sealed class Redirect
+	public class Redirect
 	{
 		private int linenum = Root.LineNumber;
 
@@ -1534,7 +1331,7 @@ namespace IKVM.Internal.MapXml
 			Type[] redirParamTypes = loader.ArgTypeListFromSig(Sig);
 			for(int i = 0; i < redirParamTypes.Length; i++)
 			{
-				ilgen.EmitLdarg(i);
+				ilgen.Emit(OpCodes.Ldarg, (short)i);
 			}
 			// HACK if the class name contains a comma, we assume it is a .NET type
 			if(Class.IndexOf(',') >= 0)
@@ -1563,7 +1360,7 @@ namespace IKVM.Internal.MapXml
 		}
 	}
 
-	public sealed class Override
+	public class Override
 	{
 		[XmlAttribute("class")]
 		public string Class;
@@ -1571,7 +1368,7 @@ namespace IKVM.Internal.MapXml
 		public string Name;
 	}
 
-	public sealed class ReplaceMethodCall
+	public class ReplaceMethodCall
 	{
 		[XmlAttribute("class")]
 		public string Class;
@@ -1593,7 +1390,6 @@ namespace IKVM.Internal.MapXml
 		public Attribute[] Attributes;
 		[XmlElement("replace-method-call")]
 		public ReplaceMethodCall[] ReplaceMethodCalls;
-		public InstructionList prologue;
 
 		internal abstract MethodKey ToMethodKey(string className);
 	}
@@ -1611,10 +1407,6 @@ namespace IKVM.Internal.MapXml
 
 		internal void Emit(ClassLoaderWrapper loader, CodeEmitter ilgen)
 		{
-			if(prologue != null)
-			{
-				prologue.Emit(loader, ilgen);
-			}
 			if(redirect != null)
 			{
 				redirect.Emit(loader, ilgen);
@@ -1626,7 +1418,7 @@ namespace IKVM.Internal.MapXml
 		}
 	}
 
-	public sealed class Method : MethodConstructorBase
+	public class Method : MethodConstructorBase
 	{
 		[XmlAttribute("name")]
 		public string Name;
@@ -1641,7 +1433,7 @@ namespace IKVM.Internal.MapXml
 		}
 	}
 
-	public sealed class Constructor : MethodConstructorBase
+	public class Constructor : MethodConstructorBase
 	{
 		internal override MethodKey ToMethodKey(string className)
 		{
@@ -1649,7 +1441,7 @@ namespace IKVM.Internal.MapXml
 		}
 	}
 
-	public sealed class ClassInitializer : MethodBase
+	public class ClassInitializer : MethodBase
 	{
 		internal override MethodKey ToMethodKey(string className)
 		{
@@ -1657,7 +1449,7 @@ namespace IKVM.Internal.MapXml
 		}
 	}
 
-	public sealed class Field
+	public class Field
 	{
 		[XmlAttribute("name")]
 		public string Name;
@@ -1667,11 +1459,12 @@ namespace IKVM.Internal.MapXml
 		public MapModifiers Modifiers;
 		[XmlAttribute("constant")]
 		public string Constant;
+		public Redirect redirect;
 		[XmlElement("attribute")]
 		public Attribute[] Attributes;
 	}
 
-	public sealed class Property
+	public class Property
 	{
 		[XmlAttribute("name")]
 		public string Name;
@@ -1683,7 +1476,7 @@ namespace IKVM.Internal.MapXml
 		public Attribute[] Attributes;
 	}
 
-	public sealed class Interface
+	public class Interface
 	{
 		[XmlAttribute("class")]
 		public string Name;
@@ -1707,11 +1500,7 @@ namespace IKVM.Internal.MapXml
 		[XmlEnum("static")]
 		Static = Modifiers.Static,
 		[XmlEnum("abstract")]
-		Abstract = Modifiers.Abstract,
-		[XmlEnum("ACC_BRIDGE")]
-		Bridge = Modifiers.Bridge,
-		[XmlEnum("ACC_SYNTHETIC")]
-		Synthetic = Modifiers.Synthetic,
+		Abstract = Modifiers.Abstract
 	}
 
 	public enum Scope
@@ -1722,13 +1511,13 @@ namespace IKVM.Internal.MapXml
 		Private = 1
 	}
 
-	public sealed class Element
+	public class Element
 	{
 		[XmlText]
 		public string Value;
 	}
 
-	public sealed class Param
+	public class Param
 	{
 		[XmlText]
 		public string Value;
@@ -1742,7 +1531,7 @@ namespace IKVM.Internal.MapXml
 		public Attribute[] Attributes;
 	}
 
-	public sealed class Attribute
+	public class Attribute
 	{
 		[XmlAttribute("type")]
 		public string Type;
@@ -1759,7 +1548,7 @@ namespace IKVM.Internal.MapXml
 	}
 
 	[XmlType("class")]
-	public sealed class Class
+	public class Class
 	{
 		[XmlAttribute("name")]
 		public string Name;
@@ -1785,7 +1574,7 @@ namespace IKVM.Internal.MapXml
 		public Attribute[] Attributes;
 	}
 
-	public sealed class Assembly
+	public class Assembly
 	{
 		[XmlElement("class")]
 		public Class[] Classes;
@@ -1794,7 +1583,7 @@ namespace IKVM.Internal.MapXml
 	}
 
 	[XmlType("exception")]
-	public sealed class ExceptionMapping
+	public class ExceptionMapping
 	{
 		[XmlAttribute]
 		public string src;
@@ -1804,9 +1593,10 @@ namespace IKVM.Internal.MapXml
 	}
 
 	[XmlRoot("root")]
-	public sealed class Root
+	public class Root
 	{
 		internal static System.Xml.XmlTextReader xmlReader;
+		internal static string filename;
 
 		internal static int LineNumber
 		{
