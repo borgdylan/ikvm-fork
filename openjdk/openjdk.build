@@ -3,9 +3,7 @@
     <include buildfile="../ikvm.include" />
     <property name="pathsep" value=":" />
     <property overwrite="false" name="signoption" value="" />
-    <property overwrite="false" name="SkipSystemCoreDependency" value="false" />
-    <property name="OPENJDK_VERSION" value="OpenJDK 7u6 b24" />
-    <property name="OpenJDK7.dir" value="${project::get-base-directory()}/../../openjdk-7u6-b24" />
+    <property name="OpenJDK7.dir" value="${project::get-base-directory()}/../../openjdk7-b147" />
     <if test="${platform::is-win32()}">
         <property name="pathsep" value=";" />
     </if>
@@ -15,11 +13,7 @@
 
     <target name="version">
         <property name="VERSION" value="${assemblyname::get-version(assemblyname::get-assembly-name(path::combine(project::get-base-directory(), '../bin/IKVM.Runtime.dll')))}" />
-    </target>
-
-    <target name="copyright" depends="allsources.gen.lst">
-        <exec program="${project::get-base-directory()}/../tools/SourceLicenseAnalyzer.exe" output="copyright.txt" useruntimeengine="true" />
-        <loadfile file="copyright.txt" property="COPYRIGHT" />
+        <property name="OPENJDK_VERSION" value="OpenJDK 7 b147" />
     </target>
 
     <target name="allsources.gen.lst">
@@ -32,7 +26,7 @@
         </copy>
     </target>
 
-    <target name="System.Core" unless="${SkipSystemCoreDependency}">
+    <target name="System.Core">
         <delete file="System.Core.dll" />
         <if test="${version::get-major(framework::get-version(framework::get-target-framework() )) &lt; 4}">
             <copy file="../bin/IKVM.Reflection.dll" todir="." overwrite="true" />
@@ -54,23 +48,7 @@
         </if>
     </target>
 
-    <target name="DummySystemCoreJar">
-        <exec program="javac" commandline="-implicit:none ExtensionAttribute.java" useruntimeengine="false" />
-        <zip zipfile="System.Core.jar">
-            <fileset prefix="cli/System/Runtime/CompilerServices">
-                <include name="ExtensionAttribute.class" />
-                <include name="ExtensionAttribute$Annotation.class" />
-            </fileset>
-        </zip>
-        <delete>
-            <fileset basedir=".">
-                <include name="ExtensionAttribute.class" />
-                <include name="ExtensionAttribute$Annotation.class" />
-            </fileset>
-        </delete>
-    </target>
-
-    <target name="classes" depends="version copyright allsources.gen.lst System.Core">
+    <target name="classes" depends="version allsources.gen.lst System.Core">
         <delete>
             <fileset basedir="../classpath">
                 <include name="**.class"/>
@@ -93,10 +71,7 @@
         </delete>
         <exec program="${project::get-base-directory()}/../bin/ikvmstub.exe" commandline="-bootstrap mscorlib" useruntimeengine="true" />
         <exec program="${project::get-base-directory()}/../bin/ikvmstub.exe" commandline="-bootstrap System" useruntimeengine="true" />
-        <exec program="${project::get-base-directory()}/../bin/ikvmstub.exe" commandline="-bootstrap System.Core" useruntimeengine="true" unless="${SkipSystemCoreDependency}" />
-        <if test="${SkipSystemCoreDependency}">
-            <call target="DummySystemCoreJar" />
-        </if>
+        <exec program="${project::get-base-directory()}/../bin/ikvmstub.exe" commandline="-bootstrap System.Core" useruntimeengine="true" />
         <exec program="${project::get-base-directory()}/../bin/ikvmstub.exe" commandline="-bootstrap System.Data" useruntimeengine="true" />
         <exec program="${project::get-base-directory()}/../bin/ikvmstub.exe" commandline="-bootstrap System.Drawing" useruntimeengine="true" />
         <property name="IKVM.Runtime" value="IKVM.Runtime" />
@@ -109,7 +84,6 @@
                 <replacetokens>
                     <token key="RUNTIME" value="${IKVM.Runtime}" />
                     <token key="VERSION" value="${VERSION}" />
-                    <token key="COPYRIGHT" value="${COPYRIGHT}" />
                 </replacetokens>
             </filterchain>
         </copy>
@@ -183,7 +157,6 @@
                 <include name="com/sun/swing/internal/plaf/**/*" />
                 <include name="com/sun/java/swing/plaf/**/*.properties" />
                 <include name="com/sun/java/swing/plaf/**/*.gif" />
-                <include name="sun/launcher/resources/*.properties" />
             </fileset>
         </zip>
     </target>
@@ -212,8 +185,7 @@
             <arg value="-sharedclassloader" />
             <arg value="-r:mscorlib.dll" />
             <arg value="-r:System.dll" />
-            <arg value="-r:System.Core.dll" unless="${SkipSystemCoreDependency}" />
-            <arg value="-r:System.Xml.dll" />
+            <arg value="-r:System.Core.dll" />
             <arg value="-r:IKVM.Runtime.dll" />
             <!-- we already know that the JNI assembly is not available, so suppress the warning -->
             <arg value="-nowarn:110" />

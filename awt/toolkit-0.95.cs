@@ -26,7 +26,7 @@
 /*
 Copyright (C) 2002, 2004-2009 Jeroen Frijters
 Copyright (C) 2006 Active Endpoints, Inc.
-Copyright (C) 2006-2013 Volker Berlin (i-net software)
+Copyright (C) 2006-2011 Volker Berlin (i-net software)
 Copyright (C) 2010-2011 Karsten Heinrich (i-net software)
 
 This software is provided 'as-is', without any express or implied
@@ -80,7 +80,7 @@ namespace ikvm.awt
 		public UndecoratedForm()
 		{
 			setBorderStyle();
-            SetStyle(ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.SupportsTransparentBackColor, true);
+			SetStyle(ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
 		}
 
         protected virtual void setBorderStyle()
@@ -211,71 +211,11 @@ namespace ikvm.awt
 		}
 	}
 
-	static class WinFormsMessageLoop
-	{
-		private static readonly object mylock = new object();
-		private static Form theForm;
-
-		private static Form GetForm()
-		{
-			lock (mylock)
-			{
-				if (theForm == null)
-				{
-					Thread thread = new Thread(MessageLoop);
-					thread.SetApartmentState(ApartmentState.STA);
-					thread.Name = "IKVM AWT WinForms Message Loop";
-					thread.IsBackground = true;
-					thread.Start();
-					while (theForm == null && thread.IsAlive)
-					{
-						Thread.Sleep(1);
-					}
-				}
-			}
-			return theForm;
-		}
-
-		private static void MessageLoop()
-		{
-			using (Form form = new Form())
-			{
-				NetToolkit.CreateNative(form);
-				theForm = form;
-				Application.Run();
-			}
-		}
-
-		internal static bool InvokeRequired
-		{
-			get { return GetForm().InvokeRequired; }
-		}
-
-		internal static object Invoke(Delegate method)
-		{
-			return GetForm().Invoke(method);
-		}
-
-		internal static object Invoke(Delegate method, params object[] args)
-		{
-			return GetForm().Invoke(method, args);
-		}
-
-		internal static IAsyncResult BeginInvoke(Delegate method)
-		{
-			return GetForm().BeginInvoke(method);
-		}
-
-		internal static IAsyncResult BeginInvoke(Delegate method, params object[] args)
-		{
-			return GetForm().BeginInvoke(method, args);
-		}
-	}
-
 	public sealed class NetToolkit : sun.awt.SunToolkit, ikvm.awt.IkvmToolkit, sun.awt.KeyboardFocusManagerPeerProvider
     {
         public static readonly String DATA_TRANSFERER_CLASS_NAME = typeof(NetDataTransferer).AssemblyQualifiedName;
 
+        private static volatile Form bogusForm;
         private int resolution;
         private NetClipboard clipboard;
 		private bool eventQueueSynchronizationContext;
@@ -304,6 +244,16 @@ namespace ikvm.awt
 			}
 		}
 
+        private static void MessageLoop()
+        {
+            using (Form form = new Form())
+            {
+				CreateNative(form);
+                bogusForm = form;
+                Application.Run();
+            }
+        }
+
 		internal static void CreateNative(Control control)
 		{
 			control.CreateControl();
@@ -317,7 +267,22 @@ namespace ikvm.awt
 
         public NetToolkit()
         {
-            setDataTransfererClassName(DATA_TRANSFERER_CLASS_NAME);
+            lock (typeof(NetToolkit))
+            {
+                System.Diagnostics.Debug.Assert(bogusForm == null);
+                setDataTransfererClassName(DATA_TRANSFERER_CLASS_NAME);
+
+                Thread thread = new Thread(new ThreadStart(MessageLoop));
+                thread.SetApartmentState(ApartmentState.STA);
+                thread.Name = "IKVM AWT WinForms Message Loop";
+                thread.IsBackground = true;
+                thread.Start();
+                // TODO don't use polling...
+                while (bogusForm == null && thread.IsAlive)
+                {
+                    Thread.Sleep(1);
+                }
+            }
         }
 
         /// <summary>
@@ -447,27 +412,21 @@ namespace ikvm.awt
 
         public override java.awt.peer.FramePeer createFrame(java.awt.Frame target)
         {
-			bool isFocusableWindow = target.isFocusableWindow();
-			bool isAlwaysOnTop = target.isAlwaysOnTop();
-            java.awt.peer.FramePeer peer = Invoke<NetFramePeer>(delegate { return new NetFramePeer(target, isFocusableWindow, isAlwaysOnTop); });
+            java.awt.peer.FramePeer peer = Invoke<NetFramePeer>(delegate { return new NetFramePeer(target); });
             targetCreatedPeer(target, peer);
             return peer;
         }
 
         public override java.awt.peer.WindowPeer createWindow(java.awt.Window target)
         {
-			bool isFocusableWindow = target.isFocusableWindow();
-			bool isAlwaysOnTop = target.isAlwaysOnTop();
-			java.awt.peer.WindowPeer peer = Invoke<NetWindowPeer>(delegate { return new NetWindowPeer(target, isFocusableWindow, isAlwaysOnTop); });
+            java.awt.peer.WindowPeer peer = Invoke<NetWindowPeer>(delegate { return new NetWindowPeer(target); });
 			targetCreatedPeer(target, peer);
 			return peer;
 		}
 
         public override java.awt.peer.DialogPeer createDialog(java.awt.Dialog target)
         {
-			bool isFocusableWindow = target.isFocusableWindow();
-			bool isAlwaysOnTop = target.isAlwaysOnTop();
-			java.awt.peer.DialogPeer peer = Invoke<NetDialogPeer>(delegate { return new NetDialogPeer(target, isFocusableWindow, isAlwaysOnTop); });
+            java.awt.peer.DialogPeer peer = Invoke<NetDialogPeer>(delegate { return new NetDialogPeer(target); });
 			targetCreatedPeer(target, peer);
 			return peer;
 		}
@@ -522,11 +481,7 @@ namespace ikvm.awt
 
         public override java.awt.peer.FileDialogPeer createFileDialog(java.awt.FileDialog target)
         {
-			bool isFocusableWindow = target.isFocusableWindow();
-			bool isAlwaysOnTop = target.isAlwaysOnTop();
-			java.awt.peer.FileDialogPeer peer = Invoke<NetFileDialogPeer>(delegate { return new NetFileDialogPeer(target, isFocusableWindow, isAlwaysOnTop); });
-            targetCreatedPeer(target, peer);
-            return peer;
+            return new NetFileDialogPeer(target);
         }
 
         public override java.awt.peer.CheckboxMenuItemPeer createCheckboxMenuItem(java.awt.CheckboxMenuItem target)
@@ -553,8 +508,7 @@ namespace ikvm.awt
         {
             if (resolution == 0)
             {
-                using (Form form = new Form())
-                using (Graphics g = form.CreateGraphics())
+                using (Graphics g = bogusForm.CreateGraphics())
                 {
                     resolution = (int)Math.Round(g.DpiY);
                 }
@@ -597,7 +551,7 @@ namespace ikvm.awt
             }
             catch (Exception)
             {
-                return new NoImage(new sun.awt.image.FileImageSource(filename));
+                return new NoImage();
             }
         }
 
@@ -618,7 +572,7 @@ namespace ikvm.awt
             }
             catch
             {
-                return new NoImage(new sun.awt.image.URLImageSource(url));
+                return new NoImage();
             }
         }
 
@@ -640,7 +594,7 @@ namespace ikvm.awt
             }
             catch (Exception)
             {
-                return new NoImage(new sun.awt.image.ByteArrayImageSource(imagedata, imageoffset, imagelength));
+                return new NoImage();//TODO should throw the exception unstead of NoImage()
             }
         }
 
@@ -975,9 +929,9 @@ namespace ikvm.awt
 
 		internal static void BeginInvoke(MethodInvoker del)
         {
-            if (WinFormsMessageLoop.InvokeRequired)
+            if (bogusForm.InvokeRequired)
             {
-                WinFormsMessageLoop.BeginInvoke(del);
+                bogusForm.BeginInvoke(del);
             }
             else
             {
@@ -987,9 +941,9 @@ namespace ikvm.awt
 
         internal static void BeginInvoke<T>(Action<T> del, T t)
         {
-            if (WinFormsMessageLoop.InvokeRequired)
+            if (bogusForm.InvokeRequired)
             {
-                WinFormsMessageLoop.BeginInvoke(del, t);
+                bogusForm.BeginInvoke(del, t);
             }
             else
             {
@@ -998,9 +952,9 @@ namespace ikvm.awt
         }
         internal static void Invoke<T>(Action<T> del, T t)
         {
-            if (WinFormsMessageLoop.InvokeRequired)
+            if (bogusForm.InvokeRequired)
             {
-                WinFormsMessageLoop.Invoke(del, t);
+                bogusForm.Invoke(del, t);
             }
             else
             {
@@ -1010,9 +964,9 @@ namespace ikvm.awt
 
         internal static TResult Invoke<TResult>(Func<TResult> del)
         {
-            if (WinFormsMessageLoop.InvokeRequired)
+            if (bogusForm.InvokeRequired)
             {
-                return (TResult)WinFormsMessageLoop.Invoke(del);
+                return (TResult)bogusForm.Invoke(del);
             }
             else
             {
@@ -1022,20 +976,15 @@ namespace ikvm.awt
 
         internal static void Invoke(MethodInvoker del)
         {
-            if (WinFormsMessageLoop.InvokeRequired)
+            if (bogusForm.InvokeRequired)
             {
-                WinFormsMessageLoop.Invoke(del);
+                bogusForm.Invoke(del);
             }
             else
             {
                 del();
             }
         }
-
-		public override bool areExtraMouseButtonsEnabled()
-		{
-			return true;
-		}
 	}
 
 	sealed class NetMenuBarPeer : java.awt.peer.MenuBarPeer
@@ -3830,7 +3779,7 @@ namespace ikvm.awt
 
         private static NetWindowPeer grabbedWindow;
 
-		public NetWindowPeer(java.awt.Window window, bool isFocusableWindow, bool isAlwaysOnTop)
+        public NetWindowPeer(java.awt.Window window)
 			: base(window)
 		{
             //form.Shown += new EventHandler(OnOpened); Will already post in java.awt.Window.show()
@@ -3841,8 +3790,7 @@ namespace ikvm.awt
 			control.SizeChanged += new EventHandler(OnSizeChanged);
 			control.Resize += new EventHandler(OnResize);
             control.Move += new EventHandler(OnMove);
-			((UndecoratedForm)control).SetWindowState(isFocusableWindow, isAlwaysOnTop);
-		}
+        }
 
         protected override void initialize()
         {
@@ -4117,21 +4065,26 @@ namespace ikvm.awt
 
         public void updateIconImages()
         {
-            java.util.List imageList = ((java.awt.Window)target).getIconImages();
-            Icon icon;
+            java.util.List imageList = ((java.awt.Window) target).getIconImages();
+            Bitmap originalImage;
             if (imageList == null || imageList.size() == 0)
             {
-                icon = null;
+                originalImage = null;
             }
             else
             {
-                IconFactory factory = new IconFactory();
-                icon = factory.CreateIcon(imageList, SystemInformation.IconSize);
+                java.awt.Image image = (java.awt.Image)imageList.get(0);
+                originalImage = ((java.awt.image.BufferedImage)image).getBitmap();
             }
             NetToolkit.BeginInvoke(delegate
                {
-                   ((Form)control).Icon = icon;
+                   Size iconSize = SystemInformation.IconSize;
+                   using (Bitmap scaleBitmap = originalImage == null ? null : new Bitmap(originalImage, iconSize))
+                   {
+                       ((Form) control).Icon = scaleBitmap == null ? null : Icon.FromHandle(scaleBitmap.GetHicon());
+                   }
                });
+
         }
 
         public void updateMinimumSize()
@@ -4187,7 +4140,9 @@ namespace ikvm.awt
 
 		protected override Form CreateControl()
 		{
-			return new UndecoratedForm();
+			UndecoratedForm form = new UndecoratedForm();
+            form.SetWindowState(target.isFocusableWindow(),target.isAlwaysOnTop());
+		    return form;
 		}
 
         protected override void OnMouseDown(object sender, MouseEventArgs ev)
@@ -4247,8 +4202,8 @@ namespace ikvm.awt
 
     sealed class NetFramePeer : NetWindowPeer, java.awt.peer.FramePeer
 	{
-		public NetFramePeer(java.awt.Frame frame, bool isFocusableWindow, bool isAlwaysOnTop)
-			: base(frame, isFocusableWindow, isAlwaysOnTop)
+		public NetFramePeer(java.awt.Frame frame)
+			: base(frame)
 		{
         }
 
@@ -4288,20 +4243,13 @@ namespace ikvm.awt
 
         public void setResizable(bool resizable)
         {
-            if (((java.awt.Frame)target).isUndecorated())
+            if (resizable)
             {
-                setFormBorderStyle(FormBorderStyle.None);
+                setFormBorderStyle(FormBorderStyle.Sizable);
             }
             else
             {
-                if (resizable)
-                {
-                    setFormBorderStyle(FormBorderStyle.Sizable);
-                }
-                else
-                {
-                    setFormBorderStyle(FormBorderStyle.FixedSingle);
-                }
+                setFormBorderStyle(FormBorderStyle.FixedSingle);
             }
         }
 
@@ -4370,8 +4318,8 @@ namespace ikvm.awt
 
     sealed class NetDialogPeer : NetWindowPeer, java.awt.peer.DialogPeer
 	{
-		public NetDialogPeer(java.awt.Dialog target, bool isFocusableWindow, bool isAlwaysOnTop)
-			: base(target, isFocusableWindow, isAlwaysOnTop)
+        public NetDialogPeer(java.awt.Dialog target)
+			: base(target)
 		{
 			control.MaximizeBox = false;
 			control.MinimizeBox = false;
@@ -4387,20 +4335,13 @@ namespace ikvm.awt
 
         public void setResizable(bool resizable)
         {
-            if (((java.awt.Dialog)target).isUndecorated())
+            if (resizable)
             {
-                setFormBorderStyle(FormBorderStyle.None);
+                setFormBorderStyle(FormBorderStyle.Sizable);
             }
             else
             {
-                if (resizable)
-                {
-                    setFormBorderStyle(FormBorderStyle.Sizable);
-                }
-                else
-                {
-                    setFormBorderStyle(FormBorderStyle.FixedSingle);
-                }
+                setFormBorderStyle(FormBorderStyle.FixedDialog);
             }
         }
 
@@ -4698,8 +4639,7 @@ namespace ikvm.awt
     //also WFileDialogPeer extends from WWindowPeer
 	class NetFileDialogPeer : NetWindowPeer, java.awt.peer.FileDialogPeer
 	{
-		internal NetFileDialogPeer(java.awt.FileDialog dialog, bool isFocusableWindow, bool isAlwaysOnTop)
-			: base(dialog, isFocusableWindow, isAlwaysOnTop)
+		internal NetFileDialogPeer(java.awt.FileDialog dialog) : base(dialog)
 		{
 		}
 
@@ -4751,16 +4691,9 @@ namespace ikvm.awt
 			t.Start();
 		}
 
-        public void blockWindows(List toBlock)
+        public void blockWindows(List l)
         {
-            // code copies from sun.awt.windows.WFileDialogPeer.java
-            for (Iterator it = toBlock.iterator(); it.hasNext(); ) {
-                java.awt.Window w = (java.awt.Window)it.next();
-                java.awt.peer.WindowPeer wp = (java.awt.peer.WindowPeer)AWTAccessor.getComponentAccessor().getPeer(w);
-                if (wp != null) {
-                    wp.setModalBlocked((java.awt.Dialog)target, true);
-                }
-            }
+            throw new NotImplementedException();
         }
 	}
 
@@ -5168,7 +5101,6 @@ namespace ikvm.awt
             }
         }
 
-        [System.Security.SecuritySafeCritical]
         public bool isWindowUnderMouse(java.awt.Window window)
         {
             if (NetToolkit.isWin32())

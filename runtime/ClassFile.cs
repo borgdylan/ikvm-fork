@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2002-2013 Jeroen Frijters
+  Copyright (C) 2002-2011 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -51,12 +51,12 @@ namespace IKVM.Internal
 		None = 0,
 		LocalVariableTable = 1,
 		LineNumberTable = 2,
-		RelaxedClassNameValidation = 4,
 	}
 
 	sealed class ClassFile
 	{
 		private ConstantPoolItem[] constantpool;
+		private string[] utf8_cp;
 		// Modifiers is a ushort, so the next four fields combine into two 32 bit slots
 		private Modifiers access_flags;
 		private ushort this_class;
@@ -65,14 +65,12 @@ namespace IKVM.Internal
 		private const ushort FLAG_MASK_MAJORVERSION = 0xFF;
 		private const ushort FLAG_MASK_DEPRECATED = 0x100;
 		private const ushort FLAG_MASK_INTERNAL = 0x200;
-		private const ushort FLAG_CALLERSENSITIVE = 0x400;
+		private const ushort FLAG_MASK_EFFECTIVELY_FINAL = 0x400;
+		private const ushort FLAG_HAS_CALLERID = 0x800;
 		private ConstantPoolItemClass[] interfaces;
 		private Field[] fields;
 		private Method[] methods;
 		private string sourceFile;
-#if STATIC_COMPILER
-		private string sourcePath;
-#endif
 		private string ikvmAssembly;
 		private InnerClass[] innerClasses;
 		private object[] annotations;
@@ -83,17 +81,15 @@ namespace IKVM.Internal
 		private static class SupportedVersions
 		{
 			internal static readonly int Minimum = 45;
-			internal static readonly int Maximum = Experimental.JDK_8 ? 52 : 51;
+			internal static readonly int Maximum = JVM.SafeGetEnvironmentVariable("IKVM_EXPERIMENTAL_JDK_8") != null ? 52 : 51;
 		}
 
 #if STATIC_COMPILER
-		// This method parses just enough of the class file to obtain its name and
-		// determine if the class is a possible ikvmstub generated stub, it doesn't
+		// This method parses just enough of the class file to obtain its name, it doesn't
 		// validate the class file structure, but it may throw a ClassFormatError if it
 		// encounters bogus data
-		internal static string GetClassName(byte[] buf, int offset, int length, out bool isstub)
+		internal static string GetClassName(byte[] buf, int offset, int length)
 		{
-			isstub = false;
 			BigEndianBinaryReader br = new BigEndianBinaryReader(buf, offset, length);
 			if(br.ReadUInt32() != 0xCAFEBABE)
 			{
@@ -142,7 +138,7 @@ namespace IKVM.Internal
 						br.Skip(2);
 						break;
 					case Constant.Utf8:
-						isstub |= (utf8_cp[i] = br.ReadString("<unknown>")) == "IKVM.NET.Assembly";
+						utf8_cp[i] = br.ReadString("<unknown>");
 						break;
 					default:
 						throw new ClassFormatError("Illegal constant pool type 0x{0:X}", tag);
@@ -182,7 +178,7 @@ namespace IKVM.Internal
 				flags = majorVersion;
 				int constantpoolcount = br.ReadUInt16();
 				constantpool = new ConstantPoolItem[constantpoolcount];
-				string[] utf8_cp = new string[constantpoolcount];
+				utf8_cp = new string[constantpoolcount];
 				for(int i = 1; i < constantpoolcount; i++)
 				{
 					Constant tag = (Constant)br.ReadByte();
@@ -248,7 +244,7 @@ namespace IKVM.Internal
 					{
 						try
 						{
-							constantpool[i].Resolve(this, utf8_cp, options);
+							constantpool[i].Resolve(this);
 						}
 						catch(ClassFormatError x)
 						{
@@ -308,25 +304,37 @@ namespace IKVM.Internal
 						throw new ClassFormatError("{0} (Interface name has bad constant type)", Name);
 					}
 					interfaces[i] = cpi;
+					for(int j = 0; j < i; j++)
+					{
+						if(ReferenceEquals(interfaces[j].Name, cpi.Name))
+						{
+							throw new ClassFormatError("{0} (Repetitive interface name)", Name);
+						}
+					}
 				}
-				CheckDuplicates(interfaces, "Repetitive interface name");
 				int fields_count = br.ReadUInt16();
 				fields = new Field[fields_count];
 				for(int i = 0; i < fields_count; i++)
 				{
-					fields[i] = new Field(this, utf8_cp, br);
+					fields[i] = new Field(this, br);
 					string name = fields[i].Name;
 					if(!IsValidFieldName(name, majorVersion))
 					{
 						throw new ClassFormatError("{0} (Illegal field name \"{1}\")", Name, name);
 					}
+					for(int j = 0; j < i; j++)
+					{
+						if(ReferenceEquals(fields[j].Name, name) && ReferenceEquals(fields[j].Signature, fields[i].Signature))
+						{
+							throw new ClassFormatError("{0} (Repetitive field name/signature)", Name);
+						}
+					}
 				}
-				CheckDuplicates<FieldOrMethod>(fields, "Repetitive field name/signature");
 				int methods_count = br.ReadUInt16();
 				methods = new Method[methods_count];
 				for(int i = 0; i < methods_count; i++)
 				{
-					methods[i] = new Method(this, utf8_cp, options, br);
+					methods[i] = new Method(this, options, br);
 					string name = methods[i].Name;
 					string sig = methods[i].Signature;
 					if(!IsValidMethodName(name, majorVersion))
@@ -340,12 +348,18 @@ namespace IKVM.Internal
 							throw new ClassFormatError("{0} (Method \"{1}\" has illegal signature \"{2}\")", Name, name, sig);
 						}
 					}
+					for(int j = 0; j < i; j++)
+					{
+						if(ReferenceEquals(methods[j].Name, name) && ReferenceEquals(methods[j].Signature, sig))
+						{
+							throw new ClassFormatError("{0} (Repetitive method name/signature)", Name);
+						}
+					}
 				}
-				CheckDuplicates<FieldOrMethod>(methods, "Repetitive method name/signature");
 				int attributes_count = br.ReadUInt16();
 				for(int i = 0; i < attributes_count; i++)
 				{
-					switch(GetConstantPoolUtf8String(utf8_cp, br.ReadUInt16()))
+					switch(GetConstantPoolUtf8String(br.ReadUInt16()))
 					{
 						case "Deprecated":
 							if(br.ReadUInt32() != 0)
@@ -359,7 +373,7 @@ namespace IKVM.Internal
 							{
 								throw new ClassFormatError("SourceFile attribute has incorrect length");
 							}
-							sourceFile = GetConstantPoolUtf8String(utf8_cp, br.ReadUInt16());
+							sourceFile = GetConstantPoolUtf8String(br.ReadUInt16());
 							break;
 						case "InnerClasses":
 						{
@@ -393,11 +407,6 @@ namespace IKVM.Internal
 								{
 									throw new ClassFormatError("{0} (Class is both inner and outer class)", this.Name);
 								}
-								if(innerClasses[j].innerClass != 0 && innerClasses[j].outerClass != 0)
-								{
-									MarkLinkRequiredConstantPoolItem(innerClasses[j].innerClass);
-									MarkLinkRequiredConstantPoolItem(innerClasses[j].outerClass);
-								}
 							}
 							break;
 						}
@@ -410,7 +419,7 @@ namespace IKVM.Internal
 							{
 								throw new ClassFormatError("Signature attribute has incorrect length");
 							}
-							signature = GetConstantPoolUtf8String(utf8_cp, br.ReadUInt16());
+							signature = GetConstantPoolUtf8String(br.ReadUInt16());
 							break;
 						case "EnclosingMethod":
 							if(majorVersion < 49)
@@ -423,9 +432,8 @@ namespace IKVM.Internal
 							}
 							else
 							{
-								ushort class_index = br.ReadUInt16();
-								ushort method_index = br.ReadUInt16();
-								ValidateConstantPoolItemClass(inputClassName, class_index);
+								int class_index = br.ReadUInt16();
+								int method_index = br.ReadUInt16();
 								if(method_index == 0)
 								{
 									enclosingMethod = new string[] {
@@ -436,15 +444,11 @@ namespace IKVM.Internal
 								}
 								else
 								{
-									ConstantPoolItemNameAndType m = GetConstantPoolItem(method_index) as ConstantPoolItemNameAndType;
-									if(m == null)
-									{
-										throw new ClassFormatError("{0} (Bad constant pool index #{1})", inputClassName, method_index);
-									}
+									ConstantPoolItemNameAndType m = (ConstantPoolItemNameAndType)GetConstantPoolItem(method_index);
 									enclosingMethod = new string[] {
 										GetConstantPoolClass(class_index),
-										GetConstantPoolUtf8String(utf8_cp, m.name_index),
-										GetConstantPoolUtf8String(utf8_cp, m.descriptor_index).Replace('/', '.')
+										GetConstantPoolUtf8String(m.name_index),
+										GetConstantPoolUtf8String(m.descriptor_index).Replace('/', '.')
 																   };
 								}
 							}
@@ -454,7 +458,7 @@ namespace IKVM.Internal
 							{
 								goto default;
 							}
-							annotations = ReadAnnotations(br, this, utf8_cp);
+							annotations = ReadAnnotations(br, this);
 							break;
 #if STATIC_COMPILER
 						case "RuntimeInvisibleAnnotations":
@@ -462,7 +466,7 @@ namespace IKVM.Internal
 							{
 								goto default;
 							}
-							foreach(object[] annot in ReadAnnotations(br, this, utf8_cp))
+							foreach(object[] annot in ReadAnnotations(br, this))
 							{
 								if(annot[1].Equals("Likvm/lang/Internal;"))
 								{
@@ -484,7 +488,7 @@ namespace IKVM.Internal
 							{
 								throw new ClassFormatError("IKVM.NET.Assembly attribute has incorrect length");
 							}
-							ikvmAssembly = GetConstantPoolUtf8String(utf8_cp, br.ReadUInt16());
+							ikvmAssembly = GetConstantPoolUtf8String(br.ReadUInt16());
 							break;
 						default:
 							br.Skip(br.ReadUInt32());
@@ -504,6 +508,9 @@ namespace IKVM.Internal
 						}
 					}
 				}
+				// now that we've constructed the high level objects, the utf8 table isn't needed anymore
+				// TODO remove utf8_cp field from ClassFile object
+				utf8_cp = null;
 				if(br.Position != offset + length)
 				{
 					throw new ClassFormatError("Extra bytes at the end of the class file");
@@ -528,44 +535,6 @@ namespace IKVM.Internal
 			//		}
 		}
 
-		private void CheckDuplicates<T>(T[] members, string msg)
-			where T : IEquatable<T>
-		{
-			if (members.Length < 100)
-			{
-				for (int i = 0; i < members.Length; i++)
-				{
-					for (int j = 0; j < i; j++)
-					{
-						if (members[i].Equals(members[j]))
-						{
-							throw new ClassFormatError("{0} ({1})", Name, msg);
-						}
-					}
-				}
-			}
-			else
-			{
-				Dictionary<T, object> dict = new Dictionary<T, object>();
-				for (int i = 0; i < members.Length; i++)
-				{
-					if (dict.ContainsKey(members[i]))
-					{
-						throw new ClassFormatError("{0} ({1})", Name, msg);
-					}
-					dict.Add(members[i], null);
-				}
-			}
-		}
-
-		private void MarkLinkRequiredConstantPoolItem(int index)
-		{
-			if (index > 0 && index < constantpool.Length && constantpool[index] != null)
-			{
-				constantpool[index].MarkLinkRequired();
-			}
-		}
-
 		private static BootstrapMethod[] ReadBootstrapMethods(BigEndianBinaryReader br, ClassFile classFile)
 		{
 			BigEndianBinaryReader rdr = br.Section(br.ReadUInt32());
@@ -578,7 +547,6 @@ namespace IKVM.Internal
 				{
 					throw new ClassFormatError("bootstrap_method_index {0} has bad constant type in class file {1}", bsm_index, classFile.Name);
 				}
-				classFile.MarkLinkRequiredConstantPoolItem(bsm_index);
 				ushort argument_count = rdr.ReadUInt16();
 				ushort[] args = new ushort[argument_count];
 				for(int j = 0; j < args.Length; j++)
@@ -588,7 +556,6 @@ namespace IKVM.Internal
 					{
 						throw new ClassFormatError("argument_index {0} has bad constant type in class file {1}", argument_index, classFile.Name);
 					}
-					classFile.MarkLinkRequiredConstantPoolItem(argument_index);
 					args[j] = argument_index;
 				}
 				bsm[i] = new BootstrapMethod(bsm_index, args);
@@ -614,14 +581,14 @@ namespace IKVM.Internal
 			return false;
 		}
 
-		private static object[] ReadAnnotations(BigEndianBinaryReader br, ClassFile classFile, string[] utf8_cp)
+		private static object[] ReadAnnotations(BigEndianBinaryReader br, ClassFile classFile)
 		{
 			BigEndianBinaryReader rdr = br.Section(br.ReadUInt32());
 			ushort num_annotations = rdr.ReadUInt16();
 			object[] annotations = new object[num_annotations];
 			for(int i = 0; i < annotations.Length; i++)
 			{
-				annotations[i] = ReadAnnotation(rdr, classFile, utf8_cp);
+				annotations[i] = ReadAnnotation(rdr, classFile);
 			}
 			if(!rdr.IsAtEnd)
 			{
@@ -630,22 +597,22 @@ namespace IKVM.Internal
 			return annotations;
 		}
 
-		private static object ReadAnnotation(BigEndianBinaryReader rdr, ClassFile classFile, string[] utf8_cp)
+		private static object ReadAnnotation(BigEndianBinaryReader rdr, ClassFile classFile)
 		{
-			string type = classFile.GetConstantPoolUtf8String(utf8_cp, rdr.ReadUInt16());
+			string type = classFile.GetConstantPoolUtf8String(rdr.ReadUInt16());
 			ushort num_element_value_pairs = rdr.ReadUInt16();
 			object[] annot = new object[2 + num_element_value_pairs * 2];
 			annot[0] = AnnotationDefaultAttribute.TAG_ANNOTATION;
 			annot[1] = type;
 			for(int i = 0; i < num_element_value_pairs; i++)
 			{
-				annot[2 + i * 2 + 0] = classFile.GetConstantPoolUtf8String(utf8_cp, rdr.ReadUInt16());
-				annot[2 + i * 2 + 1] = ReadAnnotationElementValue(rdr, classFile, utf8_cp);
+				annot[2 + i * 2 + 0] = classFile.GetConstantPoolUtf8String(rdr.ReadUInt16());
+				annot[2 + i * 2 + 1] = ReadAnnotationElementValue(rdr, classFile);
 			}
 			return annot;
 		}
 
-		private static object ReadAnnotationElementValue(BigEndianBinaryReader rdr, ClassFile classFile, string[] utf8_cp)
+		private static object ReadAnnotationElementValue(BigEndianBinaryReader rdr, ClassFile classFile)
 		{
 			try
 			{
@@ -669,24 +636,24 @@ namespace IKVM.Internal
 					case (byte)'D':
 						return classFile.GetConstantPoolConstantDouble(rdr.ReadUInt16());
 					case (byte)'s':
-						return classFile.GetConstantPoolUtf8String(utf8_cp, rdr.ReadUInt16());
+						return classFile.GetConstantPoolUtf8String(rdr.ReadUInt16());
 					case (byte)'e':
 						{
 							ushort type_name_index = rdr.ReadUInt16();
 							ushort const_name_index = rdr.ReadUInt16();
 							return new object[] {
 											AnnotationDefaultAttribute.TAG_ENUM,
-											classFile.GetConstantPoolUtf8String(utf8_cp, type_name_index),
-											classFile.GetConstantPoolUtf8String(utf8_cp, const_name_index)
+											classFile.GetConstantPoolUtf8String(type_name_index),
+											classFile.GetConstantPoolUtf8String(const_name_index)
 										};
 						}
 					case (byte)'c':
 						return new object[] {
 											AnnotationDefaultAttribute.TAG_CLASS,
-											classFile.GetConstantPoolUtf8String(utf8_cp, rdr.ReadUInt16())
+											classFile.GetConstantPoolUtf8String(rdr.ReadUInt16())
 										};
 					case (byte)'@':
-						return ReadAnnotation(rdr, classFile, utf8_cp);
+						return ReadAnnotation(rdr, classFile);
 					case (byte)'[':
 						{
 							ushort num_values = rdr.ReadUInt16();
@@ -694,7 +661,7 @@ namespace IKVM.Internal
 							array[0] = AnnotationDefaultAttribute.TAG_ARRAY;
 							for (int i = 0; i < num_values; i++)
 							{
-								array[i + 1] = ReadAnnotationElementValue(rdr, classFile, utf8_cp);
+								array[i + 1] = ReadAnnotationElementValue(rdr, classFile);
 							}
 							return array;
 						}
@@ -1045,7 +1012,7 @@ namespace IKVM.Internal
 			return ((ConstantPoolItemClass)constantpool[index]).GetClassType();
 		}
 
-		private string GetConstantPoolUtf8String(string[] utf8_cp, int index)
+		internal string GetConstantPoolUtf8String(int index)
 		{
 			string s = utf8_cp[index];
 			if(s == null)
@@ -1150,16 +1117,6 @@ namespace IKVM.Internal
 			}
 		}
 
-		internal string SourcePath
-		{
-#if STATIC_COMPILER
-			get { return sourcePath; }
-			set { sourcePath = value; }
-#else
-			get { return sourceFile; }
-#endif
-		}
-
 		internal object[] Annotations
 		{
 			get
@@ -1213,6 +1170,19 @@ namespace IKVM.Internal
 		{
 			access_flags &= ~Modifiers.AccessMask;
 			flags |= FLAG_MASK_INTERNAL;
+		}
+
+		internal void SetEffectivelyFinal()
+		{
+			flags |= FLAG_MASK_EFFECTIVELY_FINAL;
+		}
+
+		internal bool IsEffectivelyFinal
+		{
+			get
+			{
+				return (flags & FLAG_MASK_EFFECTIVELY_FINAL) != 0;
+			}
 		}
 
 		internal bool HasInitializedFields
@@ -1305,7 +1275,7 @@ namespace IKVM.Internal
 
 		internal abstract class ConstantPoolItem
 		{
-			internal virtual void Resolve(ClassFile classFile, string[] utf8_cp, ClassFileParseOptions options)
+			internal virtual void Resolve(ClassFile classFile)
 			{
 			}
 
@@ -1317,13 +1287,9 @@ namespace IKVM.Internal
 			{
 				throw new InvalidOperationException();
 			}
-
-			internal virtual void MarkLinkRequired()
-			{
-			}
 		}
 
-		internal sealed class ConstantPoolItemClass : ConstantPoolItem, IEquatable<ConstantPoolItemClass>
+		internal sealed class ConstantPoolItemClass : ConstantPoolItem
 		{
 			private ushort name_index;
 			private string name;
@@ -1335,16 +1301,16 @@ namespace IKVM.Internal
 				name_index = br.ReadUInt16();
 			}
 
-			internal override void Resolve(ClassFile classFile, string[] utf8_cp, ClassFileParseOptions options)
+			internal override void Resolve(ClassFile classFile)
 			{
-				name = classFile.GetConstantPoolUtf8String(utf8_cp, name_index);
+				name = classFile.GetConstantPoolUtf8String(name_index);
 				if(name.Length > 0)
 				{
 					// We don't enforce the strict class name rules in the static compiler, since HotSpot doesn't enforce *any* rules on
 					// class names for the system (and boot) class loader. We still need to enforce the 1.5 restrictions, because we
 					// rely on those invariants.
 #if !STATIC_COMPILER
-					if(classFile.MajorVersion < 49 && (options & ClassFileParseOptions.RelaxedClassNameValidation) == 0)
+					if(classFile.MajorVersion < 49)
 					{
 						char prev = name[0];
 						if(Char.IsLetter(prev) || prev == '$' || prev == '_' || prev == '[' || prev == '/')
@@ -1411,30 +1377,11 @@ namespace IKVM.Internal
 					throw new ClassFormatError("Invalid class name \"{0}\"", name);
 			}
 
-			internal override void MarkLinkRequired()
-			{
-				typeWrapper = VerifierTypeWrapper.Null;
-			}
-
 			internal override void Link(TypeWrapper thisType)
 			{
-				if(typeWrapper == VerifierTypeWrapper.Null)
+				if(typeWrapper == null)
 				{
-					TypeWrapper tw = ClassLoaderWrapper.LoadClassNoThrow(thisType.GetClassLoader(), name, true);
-#if !STATIC_COMPILER && !FIRST_PASS
-					if(!tw.IsUnloadable)
-					{
-						try
-						{
-							thisType.GetClassLoader().CheckPackageAccess(tw, thisType.ClassObject.pd);
-						}
-						catch(java.lang.SecurityException)
-						{
-							tw = new UnloadableTypeWrapper(name);
-						}
-					}
-#endif
-					typeWrapper = tw;
+					typeWrapper = ClassLoaderWrapper.LoadClassNoThrow(thisType.GetClassLoader(), name);
 				}
 			}
 
@@ -1454,16 +1401,6 @@ namespace IKVM.Internal
 			internal override ConstantType GetConstantType()
 			{
 				return ConstantType.Class;
-			}
-
-			public sealed override int GetHashCode()
-			{
-				return name.GetHashCode();
-			}
-
-			public bool Equals(ConstantPoolItemClass other)
-			{
-				return ReferenceEquals(name, other.name);
 			}
 		}
 
@@ -1504,7 +1441,7 @@ namespace IKVM.Internal
 				name_and_type_index = br.ReadUInt16();
 			}
 
-			internal override void Resolve(ClassFile classFile, string[] utf8_cp, ClassFileParseOptions options)
+			internal override void Resolve(ClassFile classFile)
 			{
 				ConstantPoolItemNameAndType name_and_type = (ConstantPoolItemNameAndType)classFile.GetConstantPoolItem(name_and_type_index);
 				clazz = (ConstantPoolItemClass)classFile.GetConstantPoolItem(class_index);
@@ -1513,18 +1450,13 @@ namespace IKVM.Internal
 				{
 					throw new ClassFormatError("Bad index in constant pool");
 				}
-				name = String.Intern(classFile.GetConstantPoolUtf8String(utf8_cp, name_and_type.name_index));
-				descriptor = classFile.GetConstantPoolUtf8String(utf8_cp, name_and_type.descriptor_index);
+				name = String.Intern(classFile.GetConstantPoolUtf8String(name_and_type.name_index));
+				descriptor = classFile.GetConstantPoolUtf8String(name_and_type.descriptor_index);
 				Validate(name, descriptor, classFile.MajorVersion);
 				descriptor = String.Intern(descriptor.Replace('/', '.'));
 			}
 
 			protected abstract void Validate(string name, string descriptor, int majorVersion);
-
-			internal override void MarkLinkRequired()
-			{
-				clazz.MarkLinkRequired();
-			}
 
 			internal override void Link(TypeWrapper thisType)
 			{
@@ -1601,10 +1533,6 @@ namespace IKVM.Internal
 				}
 				FieldWrapper fw = null;
 				TypeWrapper wrapper = GetClassType();
-				if(wrapper == null)
-				{
-					return;
-				}
 				if(!wrapper.IsUnloadable)
 				{
 					fw = wrapper.GetFieldWrapper(Name, Signature);
@@ -1725,18 +1653,16 @@ namespace IKVM.Internal
 			{
 				base.Link(thisType);
 				TypeWrapper wrapper = GetClassType();
-				if(wrapper != null && !wrapper.IsUnloadable)
+				if(!wrapper.IsUnloadable)
 				{
 					method = wrapper.GetMethodWrapper(Name, Signature, !ReferenceEquals(Name, StringConstants.INIT));
 					if(method != null)
 					{
 						method.Link();
 					}
-					if(Name != StringConstants.INIT
-						&& !thisType.IsInterface
-						&& (!JVM.AllowNonVirtualCalls || (thisType.Modifiers & Modifiers.Super) == Modifiers.Super)
-						&& thisType != wrapper
-						&& thisType.IsSubTypeOf(wrapper))
+					if(Name != StringConstants.INIT && 
+						(thisType.Modifiers & (Modifiers.Interface | Modifiers.Super)) == Modifiers.Super &&
+						thisType != wrapper && thisType.IsSubTypeOf(wrapper))
 					{
 						invokespecialMethod = thisType.BaseTypeWrapper.GetMethodWrapper(Name, Signature, true);
 						if(invokespecialMethod != null)
@@ -1756,10 +1682,6 @@ namespace IKVM.Internal
 
 			private static MethodWrapper GetInterfaceMethod(TypeWrapper wrapper, string name, string sig)
 			{
-				if(wrapper.IsUnloadable)
-				{
-					return null;
-				}
 				MethodWrapper method = wrapper.GetMethodWrapper(name, sig, false);
 				if(method != null)
 				{
@@ -1781,7 +1703,7 @@ namespace IKVM.Internal
 			{
 				base.Link(thisType);
 				TypeWrapper wrapper = GetClassType();
-				if(wrapper != null)
+				if(!wrapper.IsUnloadable)
 				{
 					method = GetInterfaceMethod(wrapper, Name, Signature);
 					if(method == null)
@@ -1877,10 +1799,10 @@ namespace IKVM.Internal
 				descriptor_index = br.ReadUInt16();
 			}
 
-			internal override void Resolve(ClassFile classFile, string[] utf8_cp, ClassFileParseOptions options)
+			internal override void Resolve(ClassFile classFile)
 			{
-				if(classFile.GetConstantPoolUtf8String(utf8_cp, name_index) == null
-					|| classFile.GetConstantPoolUtf8String(utf8_cp, descriptor_index) == null)
+				if(classFile.GetConstantPoolUtf8String(name_index) == null
+					|| classFile.GetConstantPoolUtf8String(descriptor_index) == null)
 				{
 					throw new ClassFormatError("Illegal constant pool index");
 				}
@@ -1899,7 +1821,7 @@ namespace IKVM.Internal
 				method_index = br.ReadUInt16();
 			}
 
-			internal override void Resolve(ClassFile classFile, string[] utf8_cp, ClassFileParseOptions options)
+			internal override void Resolve(ClassFile classFile)
 			{
 				switch ((RefKind)ref_kind)
 				{
@@ -1914,8 +1836,6 @@ namespace IKVM.Internal
 					case RefKind.invokeStatic:
 					case RefKind.newInvokeSpecial:
 						cpi = classFile.GetConstantPoolItem(method_index) as ConstantPoolItemMethodref;
-						if (cpi == null && classFile.MajorVersion >= 52 && (RefKind)ref_kind == RefKind.invokeStatic)
-							goto case RefKind.invokeInterface;
 						break;
 					case RefKind.invokeInterface:
 						cpi = classFile.GetConstantPoolItem(method_index) as ConstantPoolItemInterfaceMethodref;
@@ -1929,11 +1849,6 @@ namespace IKVM.Internal
 				{
 					throw new ClassFormatError("Bad method name");
 				}
-			}
-
-			internal override void MarkLinkRequired()
-			{
-				cpi.MarkLinkRequired();
 			}
 
 			internal string Class
@@ -1994,9 +1909,9 @@ namespace IKVM.Internal
 				signature_index = br.ReadUInt16();
 			}
 
-			internal override void Resolve(ClassFile classFile, string[] utf8_cp, ClassFileParseOptions options)
+			internal override void Resolve(ClassFile classFile)
 			{
-				string descriptor = classFile.GetConstantPoolUtf8String(utf8_cp, signature_index);
+				string descriptor = classFile.GetConstantPoolUtf8String(signature_index);
 				if (descriptor == null || !IsValidMethodSig(descriptor))
 				{
 					throw new ClassFormatError("Invalid MethodType signature");
@@ -2024,11 +1939,6 @@ namespace IKVM.Internal
 						retTypeWrapper = ret;
 					}
 				}
-			}
-
-			internal string Signature
-			{
-				get { return descriptor; }
 			}
 
 			internal TypeWrapper[] GetArgTypes()
@@ -2062,7 +1972,7 @@ namespace IKVM.Internal
 				name_and_type_index = br.ReadUInt16();
 			}
 
-			internal override void Resolve(ClassFile classFile, string[] utf8_cp, ClassFileParseOptions options)
+			internal override void Resolve(ClassFile classFile)
 			{
 				ConstantPoolItemNameAndType name_and_type = (ConstantPoolItemNameAndType)classFile.GetConstantPoolItem(name_and_type_index);
 				// if the constant pool items referred to were strings, GetConstantPoolItem returns null
@@ -2070,8 +1980,8 @@ namespace IKVM.Internal
 				{
 					throw new ClassFormatError("Bad index in constant pool");
 				}
-				name = String.Intern(classFile.GetConstantPoolUtf8String(utf8_cp, name_and_type.name_index));
-				descriptor = String.Intern(classFile.GetConstantPoolUtf8String(utf8_cp, name_and_type.descriptor_index).Replace('/', '.'));
+				name = String.Intern(classFile.GetConstantPoolUtf8String(name_and_type.name_index));
+				descriptor = String.Intern(classFile.GetConstantPoolUtf8String(name_and_type.descriptor_index).Replace('/', '.'));
 			}
 
 			internal override void Link(TypeWrapper thisType)
@@ -2127,9 +2037,9 @@ namespace IKVM.Internal
 				string_index = br.ReadUInt16();
 			}
 
-			internal override void Resolve(ClassFile classFile, string[] utf8_cp, ClassFileParseOptions options)
+			internal override void Resolve(ClassFile classFile)
 			{
-				s = classFile.GetConstantPoolUtf8String(utf8_cp, string_index);
+				s = classFile.GetConstantPoolUtf8String(string_index);
 			}
 
 			internal override ConstantType GetConstantType()
@@ -2164,7 +2074,7 @@ namespace IKVM.Internal
 			InvokeDynamic = 18,
 		}
 
-		internal abstract class FieldOrMethod : IEquatable<FieldOrMethod>
+		internal abstract class FieldOrMethod
 		{
 			// Note that Modifiers is a ushort, so it combines nicely with the following ushort field
 			protected Modifiers access_flags;
@@ -2174,11 +2084,11 @@ namespace IKVM.Internal
 			protected string signature;
 			protected object[] annotations;
 
-			internal FieldOrMethod(ClassFile classFile, string[] utf8_cp, BigEndianBinaryReader br)
+			internal FieldOrMethod(ClassFile classFile, BigEndianBinaryReader br)
 			{
 				access_flags = (Modifiers)br.ReadUInt16();
-				name = String.Intern(classFile.GetConstantPoolUtf8String(utf8_cp, br.ReadUInt16()));
-				descriptor = classFile.GetConstantPoolUtf8String(utf8_cp, br.ReadUInt16());
+				name = String.Intern(classFile.GetConstantPoolUtf8String(br.ReadUInt16()));
+				descriptor = classFile.GetConstantPoolUtf8String(br.ReadUInt16());
 				ValidateSig(classFile, descriptor);
 				descriptor = String.Intern(descriptor.Replace('/', '.'));
 			}
@@ -2328,16 +2238,6 @@ namespace IKVM.Internal
 					return (flags & FLAG_MASK_INTERNAL) != 0;
 				}
 			}
-
-			public sealed override int GetHashCode()
-			{
-				return name.GetHashCode() ^ descriptor.GetHashCode();
-			}
-
-			public bool Equals(FieldOrMethod other)
-			{
-				return ReferenceEquals(name, other.name) && ReferenceEquals(descriptor, other.descriptor);
-			}
 		}
 
 		internal sealed class Field : FieldOrMethod
@@ -2345,7 +2245,7 @@ namespace IKVM.Internal
 			private object constantValue;
 			private string[] propertyGetterSetter;
 
-			internal Field(ClassFile classFile, string[] utf8_cp, BigEndianBinaryReader br) : base(classFile, utf8_cp, br)
+			internal Field(ClassFile classFile, BigEndianBinaryReader br) : base(classFile, br)
 			{
 				if((IsPrivate && IsPublic) || (IsPrivate && IsProtected) || (IsPublic && IsProtected)
 					|| (IsFinal && IsVolatile)
@@ -2356,7 +2256,7 @@ namespace IKVM.Internal
 				int attributes_count = br.ReadUInt16();
 				for(int i = 0; i < attributes_count; i++)
 				{
-					switch(classFile.GetConstantPoolUtf8String(utf8_cp, br.ReadUInt16()))
+					switch(classFile.GetConstantPoolUtf8String(br.ReadUInt16()))
 					{
 						case "Deprecated":
 							if(br.ReadUInt32() != 0)
@@ -2434,21 +2334,21 @@ namespace IKVM.Internal
 							{
 								throw new ClassFormatError("Signature attribute has incorrect length");
 							}
-							signature = classFile.GetConstantPoolUtf8String(utf8_cp, br.ReadUInt16());
+							signature = classFile.GetConstantPoolUtf8String(br.ReadUInt16());
 							break;
 						case "RuntimeVisibleAnnotations":
 							if(classFile.MajorVersion < 49)
 							{
 								goto default;
 							}
-							annotations = ReadAnnotations(br, classFile, utf8_cp);
+							annotations = ReadAnnotations(br, classFile);
 							break;
 						case "RuntimeInvisibleAnnotations":
 							if(classFile.MajorVersion < 49)
 							{
 								goto default;
 							}
-							foreach(object[] annot in ReadAnnotations(br, classFile, utf8_cp))
+							foreach(object[] annot in ReadAnnotations(br, classFile))
 							{
 								if(annot[1].Equals("Likvm/lang/Property;"))
 								{
@@ -2524,11 +2424,6 @@ namespace IKVM.Internal
 				}
 			}
 
-			internal bool IsStaticFinalConstant
-			{
-				get { return (access_flags & (Modifiers.Final | Modifiers.Static)) == (Modifiers.Final | Modifiers.Static) && constantValue != null; }
-			}
-
 			internal bool IsProperty
 			{
 				get
@@ -2558,20 +2453,10 @@ namespace IKVM.Internal
 		{
 			private Code code;
 			private string[] exceptions;
-			private LowFreqData low;
-			private MethodParametersEntry[] parameters;
+			private object annotationDefault;
+			private object[][] parameterAnnotations;
 
-			sealed class LowFreqData
-			{
-				internal object annotationDefault;
-				internal object[][] parameterAnnotations;
-#if STATIC_COMPILER
-				internal string DllExportName;
-				internal int DllExportOrdinal;
-#endif
-			}
-
-			internal Method(ClassFile classFile, string[] utf8_cp, ClassFileParseOptions options, BigEndianBinaryReader br) : base(classFile, utf8_cp, br)
+			internal Method(ClassFile classFile, ClassFileParseOptions options, BigEndianBinaryReader br) : base(classFile, br)
 			{
 				// vmspec 4.6 says that all flags, except ACC_STRICT are ignored on <clinit>
 				// however, since Java 7 it does need to be marked static
@@ -2587,16 +2472,15 @@ namespace IKVM.Internal
 					if((ReferenceEquals(Name, StringConstants.INIT) && (IsStatic || IsSynchronized || IsFinal || IsAbstract || IsNative))
 						|| (IsPrivate && IsPublic) || (IsPrivate && IsProtected) || (IsPublic && IsProtected)
 						|| (IsAbstract && (IsFinal || IsNative || IsPrivate || IsStatic || IsSynchronized))
-						|| (classFile.IsInterface && classFile.MajorVersion <= 51 && (!IsPublic || IsFinal || IsNative || IsSynchronized || !IsAbstract))
-						|| (classFile.IsInterface && classFile.MajorVersion >= 52 && (!(IsPublic || IsPrivate) || IsFinal || IsNative || IsSynchronized)))
+						|| (classFile.IsInterface && (!IsPublic || !IsAbstract)))
 					{
-						throw new ClassFormatError("Method {0} in class {1} has illegal modifiers: 0x{2:X}", Name, classFile.Name, (int)access_flags);
+						throw new ClassFormatError("{0} (Illegal method modifiers: 0x{1:X})", classFile.Name, access_flags);
 					}
 				}
 				int attributes_count = br.ReadUInt16();
 				for(int i = 0; i < attributes_count; i++)
 				{
-					switch(classFile.GetConstantPoolUtf8String(utf8_cp, br.ReadUInt16()))
+					switch(classFile.GetConstantPoolUtf8String(br.ReadUInt16()))
 					{
 						case "Deprecated":
 							if(br.ReadUInt32() != 0)
@@ -2612,7 +2496,7 @@ namespace IKVM.Internal
 								throw new ClassFormatError("{0} (Duplicate Code attribute)", classFile.Name);
 							}
 							BigEndianBinaryReader rdr = br.Section(br.ReadUInt32());
-							code.Read(classFile, utf8_cp, this, rdr, options);
+							code.Read(classFile, this, rdr, options);
 							if(!rdr.IsAtEnd)
 							{
 								throw new ClassFormatError("{0} (Code attribute has wrong length)", classFile.Name);
@@ -2647,23 +2531,14 @@ namespace IKVM.Internal
 							{
 								throw new ClassFormatError("Signature attribute has incorrect length");
 							}
-							signature = classFile.GetConstantPoolUtf8String(utf8_cp, br.ReadUInt16());
+							signature = classFile.GetConstantPoolUtf8String(br.ReadUInt16());
 							break;
 						case "RuntimeVisibleAnnotations":
 							if(classFile.MajorVersion < 49)
 							{
 								goto default;
 							}
-							annotations = ReadAnnotations(br, classFile, utf8_cp);
-#if STATIC_COMPILER
-							foreach(object[] annot in annotations)
-							{
-								if(annot[1].Equals("Lsun/reflect/CallerSensitive;"))
-								{
-									flags |= FLAG_CALLERSENSITIVE;
-								}
-							}
-#endif
+							annotations = ReadAnnotations(br, classFile);
 							break;
 						case "RuntimeVisibleParameterAnnotations":
 						{
@@ -2671,20 +2546,16 @@ namespace IKVM.Internal
 							{
 								goto default;
 							}
-							if(low == null)
-							{
-								low = new LowFreqData();
-							}
 							BigEndianBinaryReader rdr = br.Section(br.ReadUInt32());
 							byte num_parameters = rdr.ReadByte();
-							low.parameterAnnotations = new object[num_parameters][];
+							parameterAnnotations = new object[num_parameters][];
 							for(int j = 0; j < num_parameters; j++)
 							{
 								ushort num_annotations = rdr.ReadUInt16();
-								low.parameterAnnotations[j] = new object[num_annotations];
+								parameterAnnotations[j] = new object[num_annotations];
 								for(int k = 0; k < num_annotations; k++)
 								{
-									low.parameterAnnotations[j][k] = ReadAnnotation(rdr, classFile, utf8_cp);
+									parameterAnnotations[j][k] = ReadAnnotation(rdr, classFile);
 								}
 							}
 							if(!rdr.IsAtEnd)
@@ -2699,12 +2570,8 @@ namespace IKVM.Internal
 							{
 								goto default;
 							}
-							if(low == null)
-							{
-								low = new LowFreqData();
-							}
 							BigEndianBinaryReader rdr = br.Section(br.ReadUInt32());
-							low.annotationDefault = ReadAnnotationElementValue(rdr, classFile, utf8_cp);
+							annotationDefault = ReadAnnotationElementValue(rdr, classFile);
 							if(!rdr.IsAtEnd)
 							{
 								throw new ClassFormatError("{0} (AnnotationDefault attribute has wrong length)", classFile.Name);
@@ -2717,7 +2584,7 @@ namespace IKVM.Internal
 							{
 								goto default;
 							}
-							foreach(object[] annot in ReadAnnotations(br, classFile, utf8_cp))
+							foreach(object[] annot in ReadAnnotations(br, classFile))
 							{
 								if(annot[1].Equals("Likvm/lang/Internal;"))
 								{
@@ -2731,65 +2598,13 @@ namespace IKVM.Internal
 										flags |= FLAG_MASK_INTERNAL;
 									}
 								}
-								if(annot[1].Equals("Likvm/lang/DllExport;"))
+								if(annot[1].Equals("Likvm/internal/HasCallerID;"))
 								{
-									string name = null;
-									int? ordinal = null;
-									for (int j = 2; j < annot.Length; j += 2)
-									{
-										if (annot[j].Equals("name") && annot[j + 1] is string)
-										{
-											name = (string)annot[j + 1];
-										}
-										else if (annot[j].Equals("ordinal") && annot[j + 1] is int)
-										{
-											ordinal = (int)annot[j + 1];
-										}
-									}
-									if (name != null && ordinal != null)
-									{
-										if (!IsStatic)
-										{
-											StaticCompiler.IssueMessage(Message.DllExportMustBeStaticMethod, classFile.Name, this.Name, this.Signature);
-										}
-										else
-										{
-											if (low == null)
-											{
-												low = new LowFreqData();
-											}
-											low.DllExportName = name;
-											low.DllExportOrdinal = ordinal.Value;
-										}
-									}
+									flags |= FLAG_HAS_CALLERID;
 								}
 							}
 							break;
 #endif
-						case "MethodParameters":
-						{
-							if(classFile.MajorVersion < 52)
-							{
-								goto default;
-							}
-							if(parameters != null)
-							{
-								throw new ClassFormatError("{0} (Duplicate MethodParameters attribute)", classFile.Name);
-							}
-							BigEndianBinaryReader rdr = br.Section(br.ReadUInt32());
-							byte parameters_count = rdr.ReadByte();
-							parameters = new MethodParametersEntry[parameters_count];
-							for(int j = 0; j < parameters_count; j++)
-							{
-								parameters[j].name = classFile.GetConstantPoolUtf8String(utf8_cp, rdr.ReadUInt16());
-								parameters[j].flags = rdr.ReadUInt16();
-							}
-							if(!rdr.IsAtEnd)
-							{
-								throw new ClassFormatError("{0} (MethodParameters attribute has wrong length)", classFile.Name);
-							}
-							break;
-						}
 						default:
 							br.Skip(br.ReadUInt32());
 							break;
@@ -2811,7 +2626,7 @@ namespace IKVM.Internal
 							code.verifyError = string.Format("Class {0}, method {1} signature {2}: No Code attribute", classFile.Name, this.Name, this.Signature);
 							return;
 						}
-						throw new ClassFormatError("Absent Code attribute in method that is not native or abstract in class file " + classFile.Name);
+						throw new ClassFormatError("Method has no Code attribute");
 					}
 				}
 			}
@@ -2841,23 +2656,14 @@ namespace IKVM.Internal
 				}
 			}
 
-			internal bool IsConstructor
+			// for use by ikvmc only
+			internal bool HasCallerIDAnnotation
 			{
 				get
 				{
-					return ReferenceEquals(Name, StringConstants.INIT);
+					return (flags & FLAG_HAS_CALLERID) != 0;
 				}
 			}
-
-#if STATIC_COMPILER
-			internal bool IsCallerSensitive
-			{
-				get
-				{
-					return (flags & FLAG_CALLERSENSITIVE) != 0;
-				}
-			}
-#endif
 
 			internal string[] ExceptionsAttribute
 			{
@@ -2871,7 +2677,7 @@ namespace IKVM.Internal
 			{
 				get
 				{
-					return low == null ? null : low.parameterAnnotations;
+					return parameterAnnotations;
 				}
 			}
 
@@ -2879,27 +2685,9 @@ namespace IKVM.Internal
 			{
 				get
 				{
-					return low == null ? null : low.annotationDefault;
+					return annotationDefault;
 				}
 			}
-
-#if STATIC_COMPILER
-			internal string DllExportName
-			{
-				get
-				{
-					return low == null ? null : low.DllExportName;
-				}
-			}
-
-			internal int DllExportOrdinal
-			{
-				get
-				{
-					return low == null ? -1 : low.DllExportOrdinal;
-				}
-			}
-#endif
 
 			internal string VerifyError
 			{
@@ -2974,14 +2762,6 @@ namespace IKVM.Internal
 				}
 			}
 
-			internal MethodParametersEntry[] MethodParameters
-			{
-				get
-				{
-					return parameters;
-				}
-			}
-
 			internal bool HasJsr
 			{
 				get
@@ -3002,7 +2782,7 @@ namespace IKVM.Internal
 				internal LineNumberTableEntry[] lineNumberTable;
 				internal LocalVariableTableEntry[] localVariableTable;
 
-				internal void Read(ClassFile classFile, string[] utf8_cp, Method method, BigEndianBinaryReader br, ClassFileParseOptions options)
+				internal void Read(ClassFile classFile, Method method, BigEndianBinaryReader br, ClassFileParseOptions options)
 				{
 					max_stack = br.ReadUInt16();
 					max_locals = br.ReadUInt16();
@@ -3019,7 +2799,7 @@ namespace IKVM.Internal
 						BigEndianBinaryReader rdr = br.Section(code_length);
 						while(!rdr.IsAtEnd)
 						{
-							instructions[instructionIndex].Read((ushort)(rdr.Position - basePosition), rdr, classFile);
+							instructions[instructionIndex].Read((ushort)(rdr.Position - basePosition), rdr);
 							hasJsr |= instructions[instructionIndex].NormalizedOpCode == NormalizedByteCode.__jsr;
 							instructionIndex++;
 						}
@@ -3090,7 +2870,6 @@ namespace IKVM.Internal
 						{
 							throw new ClassFormatError("Illegal exception table: {0}.{1}{2}", classFile.Name, method.Name, method.Signature);
 						}
-						classFile.MarkLinkRequiredConstantPoolItem(catch_type);
 						// if start_pc, end_pc or handler_pc is invalid (i.e. doesn't point to the start of an instruction),
 						// the index will be -1 and this will be handled by the verifier
 						int startIndex = pcIndexMap[start_pc];
@@ -3112,7 +2891,7 @@ namespace IKVM.Internal
 					ushort attributes_count = br.ReadUInt16();
 					for(int i = 0; i < attributes_count; i++)
 					{
-						switch(classFile.GetConstantPoolUtf8String(utf8_cp, br.ReadUInt16()))
+						switch(classFile.GetConstantPoolUtf8String(br.ReadUInt16()))
 						{
 							case "LineNumberTable":
 								if((options & ClassFileParseOptions.LineNumberTable) != 0)
@@ -3149,8 +2928,8 @@ namespace IKVM.Internal
 									{
 										localVariableTable[j].start_pc = rdr.ReadUInt16();
 										localVariableTable[j].length = rdr.ReadUInt16();
-										localVariableTable[j].name = classFile.GetConstantPoolUtf8String(utf8_cp, rdr.ReadUInt16());
-										localVariableTable[j].descriptor = classFile.GetConstantPoolUtf8String(utf8_cp, rdr.ReadUInt16()).Replace('/', '.');
+										localVariableTable[j].name = classFile.GetConstantPoolUtf8String(rdr.ReadUInt16());
+										localVariableTable[j].descriptor = classFile.GetConstantPoolUtf8String(rdr.ReadUInt16()).Replace('/', '.');
 										localVariableTable[j].index = rdr.ReadUInt16();
 									}
 									// NOTE we're intentionally not checking that we're at the end of the section
@@ -3335,7 +3114,7 @@ namespace IKVM.Internal
 					}
 				}
 
-				internal void Read(ushort pc, BigEndianBinaryReader br, ClassFile classFile)
+				internal void Read(ushort pc, BigEndianBinaryReader br)
 				{
 					this.pc = pc;
 					ByteCode bc = (ByteCode)br.ReadByte();
@@ -3344,15 +3123,11 @@ namespace IKVM.Internal
 						case ByteCodeMode.Simple:
 							break;
 						case ByteCodeMode.Constant_1:
-							arg1 = br.ReadByte();
-							classFile.MarkLinkRequiredConstantPoolItem(arg1);
-							break;
 						case ByteCodeMode.Local_1:
 							arg1 = br.ReadByte();
 							break;
 						case ByteCodeMode.Constant_2:
 							arg1 = br.ReadUInt16();
-							classFile.MarkLinkRequiredConstantPoolItem(arg1);
 							break;
 						case ByteCodeMode.Branch_2:
 							arg1 = br.ReadInt16();
@@ -3362,7 +3137,6 @@ namespace IKVM.Internal
 							break;
 						case ByteCodeMode.Constant_2_1_1:
 							arg1 = br.ReadUInt16();
-							classFile.MarkLinkRequiredConstantPoolItem(arg1);
 							arg2 = br.ReadByte();
 							if(br.ReadByte() != 0)
 							{
@@ -3381,7 +3155,6 @@ namespace IKVM.Internal
 							break;
 						case ByteCodeMode.Constant_2_Immediate_1:
 							arg1 = br.ReadUInt16();
-							classFile.MarkLinkRequiredConstantPoolItem(arg1);
 							arg2 = br.ReadSByte();
 							break;
 						case ByteCodeMode.Tableswitch:
@@ -3562,12 +3335,6 @@ namespace IKVM.Internal
 				internal string name;
 				internal string descriptor;
 				internal ushort index;
-			}
-
-			internal struct MethodParametersEntry
-			{
-				internal string name;
-				internal ushort flags;
 			}
 		}
 
