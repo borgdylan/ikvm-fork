@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2000, 2006, Oracle and/or its affiliates. All rights reserved.
- * Copyright (C) 2009, 2012 Volker Berlin (i-net software)
+ * Copyright (C) 2009 Volker Berlin (i-net software)
  * Copyright (C) 2010, 2011 Karsten Heinrich (i-net software)
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
@@ -30,9 +30,7 @@ import java.io.File;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashSet;
-import java.util.Hashtable;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -85,7 +83,6 @@ import cli.System.Drawing.Printing.PrintDocument;
 import cli.System.Drawing.Printing.PrinterSettings;
 import cli.System.Drawing.Printing.PrinterSettings.PaperSizeCollection;
 import cli.System.Drawing.Printing.PrinterSettings.PaperSourceCollection;
-import cli.System.Drawing.Printing.PrinterSettings.PrinterResolutionCollection;
 import cli.System.Net.Mime.MediaTypeNames;
 
 /**
@@ -101,9 +98,7 @@ public class Win32PrintService implements PrintService {
     };
     
     /** Mapping for PageSize.RawKind to predefined MediaSizeName */ 
-    private static final MediaSizeName[] MEDIA_NAMES = new MediaSizeName[70];
-    
-    private static final Hashtable<String, MediaSizeName> CUSTOM_MEDIA_NAME = new Hashtable<>();
+    private static final MediaSizeName[] MEDIA_NAMES = new MediaSizeName[44];
     
     /*  it turns out to be inconvenient to store the other categories
      *  separately because many attributes are in multiple categories.
@@ -173,10 +168,6 @@ public class Win32PrintService implements PrintService {
     	MEDIA_NAMES[41] =  MediaSizeName.ISO_B4 ;
     	MEDIA_NAMES[42] =  MediaSizeName.JAPANESE_POSTCARD ;
     	MEDIA_NAMES[43] =  MediaSizeName.NA_9X11_ENVELOPE ;
-    	
-    	MEDIA_NAMES[65] =  MediaSizeName.ISO_A2 ;
-    	
-    	MEDIA_NAMES[69] =  MediaSizeName.ISO_A6 ;
 
 //    	// augment the media size with the .NET default sizes available on the printer 
 //    	PrinterSettings ps = new PrinterSettings();
@@ -366,9 +357,9 @@ public class Win32PrintService implements PrintService {
     	} else if (category == PageRanges.class) {
     		return new PageRanges(1, Integer.MAX_VALUE );
     	} else if (category == Media.class) {
-            int rawKind = settings.get_DefaultPageSettings().get_PaperSize().get_RawKind();
+    		int rawKind = settings.get_DefaultPageSettings().get_PaperSize().get_RawKind();
     		if( rawKind > MEDIA_NAMES.length || rawKind < 1 || MEDIA_NAMES[ rawKind - 1 ] == null ){ // custom page format
-    			return findMatchingMedia( settings.get_DefaultPageSettings().get_PaperSize() );
+    			return settings.get_DefaultPageSettings().get_PaperSize().get_PaperName();
     		} else {
     			return MEDIA_NAMES[ rawKind - 1 ];
     		}
@@ -616,150 +607,10 @@ public class Win32PrintService implements PrintService {
     }
 
 
-    private boolean isPostScriptFlavor(DocFlavor flavor) {
-        if (flavor.equals(DocFlavor.BYTE_ARRAY.POSTSCRIPT) ||
-            flavor.equals(DocFlavor.INPUT_STREAM.POSTSCRIPT) ||
-            flavor.equals(DocFlavor.URL.POSTSCRIPT)) {
-            return true;
-        }
-        else {
-            return false;
-        }
-    }
-
-    private boolean isPSDocAttr(Class category) {
-        if (category == OrientationRequested.class || category == Copies.class) {
-                return true;
-        }
-        else {
-            return false;
-        }
-    }
-
-    private boolean isAutoSense(DocFlavor flavor) {
-        if (flavor.equals(DocFlavor.BYTE_ARRAY.AUTOSENSE) ||
-            flavor.equals(DocFlavor.INPUT_STREAM.AUTOSENSE) ||
-            flavor.equals(DocFlavor.URL.AUTOSENSE)) {
-            return true;
-        }
-        else {
-            return false;
-        }
-    }
-
     @Override
-    public boolean isAttributeValueSupported(Attribute attr, DocFlavor flavor, AttributeSet attributes){
-        if (attr == null) {
-            throw new NullPointerException("null attribute");
-        }
-        Class category = attr.getCategory();
-        if (flavor != null) {
-            if (!isDocFlavorSupported(flavor)) {
-                throw new IllegalArgumentException(flavor +
-                                                   " is an unsupported flavor");
-                // if postscript & category is already specified within the PostScript data
-                // we return false
-            } else if (isAutoSense(flavor) || (isPostScriptFlavor(flavor) &&
-                       (isPSDocAttr(category)))) {
-                return false;
-            }
-        }
-
-        if (!isAttributeCategorySupported(category)) {
-            return false;
-        }
-        else if (category == Chromaticity.class) {
-            if ((flavor == null) ||
-                flavor.equals(DocFlavor.SERVICE_FORMATTED.PAGEABLE) ||
-                flavor.equals(DocFlavor.SERVICE_FORMATTED.PRINTABLE) ||
-                flavor.equals(DocFlavor.BYTE_ARRAY.GIF) ||
-                flavor.equals(DocFlavor.INPUT_STREAM.GIF) ||
-                flavor.equals(DocFlavor.URL.GIF) ||
-                flavor.equals(DocFlavor.BYTE_ARRAY.JPEG) ||
-                flavor.equals(DocFlavor.INPUT_STREAM.JPEG) ||
-                flavor.equals(DocFlavor.URL.JPEG) ||
-                flavor.equals(DocFlavor.BYTE_ARRAY.PNG) ||
-                flavor.equals(DocFlavor.INPUT_STREAM.PNG) ||
-                flavor.equals(DocFlavor.URL.PNG)) {
-                if (settings.get_DefaultPageSettings().get_Color()) {
-                    return true;
-                } else {
-                    return attr == Chromaticity.MONOCHROME;
-                }
-            } else {
-                return false;
-            }
-        } else if (category == Copies.class) {
-            return ((Copies)attr).getValue() >= 1 && ((Copies)attr).getValue() <= settings.get_MaximumCopies();
-
-        } else if (category == Destination.class) {
-            URI uri = ((Destination)attr).getURI();
-            if ("file".equals(uri.getScheme()) &&
-                !(uri.getSchemeSpecificPart().equals(""))) {
-                return true;
-            } else {
-            return false;
-            }
-
-        } else if (category == Media.class) {
-            Media[] medias = (Media[])getSupportedAttributeValues( Media.class, flavor, attributes );
-            if( medias != null ) {
-                return Arrays.asList( medias ).contains( attr );
-            }
-
-        } else if (category == MediaPrintableArea.class) {
-            //TODO
-            return true;
-
-        } else if (category == SunAlternateMedia.class) {
-            Media media = ((SunAlternateMedia)attr).getMedia();
-            return isAttributeValueSupported(media, flavor, attributes);
-
-        } else if (category == PageRanges.class ||
-                   category == SheetCollate.class ||
-                   category == Sides.class) {
-            if (flavor != null &&
-                !(flavor.equals(DocFlavor.SERVICE_FORMATTED.PAGEABLE) ||
-                flavor.equals(DocFlavor.SERVICE_FORMATTED.PRINTABLE))) {
-                return false;
-            }
-        } else if (category == PrinterResolution.class) {
-            if (attr instanceof PrinterResolution) {
-                int[] jRes = ((PrinterResolution)attr).getResolution( PrinterResolution.DPI );
-                PrinterResolutionCollection resolutions = settings.get_PrinterResolutions();
-                for( int i=0; i< resolutions.get_Count(); i++ ) {
-                    cli.System.Drawing.Printing.PrinterResolution nRes = resolutions.get_Item( i );
-                    if( nRes.get_X() == jRes[0] && nRes.get_Y() == jRes[1] ) {
-                        return true;
-                    }
-                }
-                return false;
-            }
-        } else if (category == OrientationRequested.class) {
-            if (attr == OrientationRequested.REVERSE_PORTRAIT ||
-                (flavor != null) &&
-                !(flavor.equals(DocFlavor.SERVICE_FORMATTED.PAGEABLE) ||
-                flavor.equals(DocFlavor.SERVICE_FORMATTED.PRINTABLE) ||
-                flavor.equals(DocFlavor.INPUT_STREAM.GIF) ||
-                flavor.equals(DocFlavor.INPUT_STREAM.JPEG) ||
-                flavor.equals(DocFlavor.INPUT_STREAM.PNG) ||
-                flavor.equals(DocFlavor.BYTE_ARRAY.GIF) ||
-                flavor.equals(DocFlavor.BYTE_ARRAY.JPEG) ||
-                flavor.equals(DocFlavor.BYTE_ARRAY.PNG) ||
-                flavor.equals(DocFlavor.URL.GIF) ||
-                flavor.equals(DocFlavor.URL.JPEG) ||
-                flavor.equals(DocFlavor.URL.PNG))) {
-                return false;
-            }
-
-        } else if (category == ColorSupported.class) {
-            boolean isColorSup = settings.get_DefaultPageSettings().get_Color();
-            if  ((!isColorSup && (attr == ColorSupported.SUPPORTED)) ||
-                (isColorSup && (attr == ColorSupported.NOT_SUPPORTED))) {
-                return false;
-            }
-        }
-        return true;
+    public boolean isAttributeValueSupported(Attribute attrval, DocFlavor flavor, AttributeSet attributes){
+        // TODO Auto-generated method stub
+        return false;
     }
 
 
@@ -798,13 +649,9 @@ public class Win32PrintService implements PrintService {
      * @return
      */
     private MediaSizeName findMatchingMedia( PaperSize paper ){
-    	int rawKind = paper.get_RawKind();
-		if( rawKind > 0 && rawKind <= MEDIA_NAMES.length ){
+    	if( paper.get_RawKind() > 0 && paper.get_RawKind() <= MEDIA_NAMES.length ){
     		// match to predefined size
-    		MediaSizeName media = MEDIA_NAMES[ rawKind - 1 ];
-    		if( media != null ) {
-    			return media;
-    		}
+    		return MEDIA_NAMES[ paper.get_RawKind() - 1 ];
     	}
     	int x = paper.get_Width() * INCH100_TO_MYM;
     	int y = paper.get_Height() * INCH100_TO_MYM;
@@ -821,13 +668,7 @@ public class Win32PrintService implements PrintService {
     			}
     		}
     	}
-    	MediaSizeName media = CUSTOM_MEDIA_NAME.get(paper.get_PaperName());
-		if (media == null) {
-			media = new CustomMediaSizeName(paper.get_PaperName());
-			CUSTOM_MEDIA_NAME.put(paper.get_PaperName(), media);
-			new MediaSize( x, y, MediaSize.INCH/100, media);
-		}
-    	return media;
+    	return null;
     }
     
     /**
