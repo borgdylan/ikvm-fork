@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2009-2013 Jeroen Frijters
+  Copyright (C) 2009-2012 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -77,57 +77,12 @@ namespace IKVM.Reflection
 
 	public delegate Assembly ResolveEventHandler(object sender, ResolveEventArgs args);
 
-	public delegate void ResolvedMissingMemberHandler(Module requestingModule, MemberInfo member);
-
-	/*
-	 * UniverseOptions:
-	 *
-	 *   None
-	 *		Default behavior, most compatible with System.Reflection[.Emit]
-	 *
-	 *   EnableFunctionPointers
-	 *		Normally function pointers in signatures are replaced by System.IntPtr
-	 *		(for compatibility with System.Reflection), when this option is enabled
-	 *		they are represented as first class types (Type.__IsFunctionPointer will
-	 *		return true for them).
-	 *
-	 *   DisableFusion
-	 *      Don't use native Fusion API to resolve assembly names.
-	 *
-	 *   DisablePseudoCustomAttributeRetrieval
-	 *      Set this option to disable the generaton of pseudo-custom attributes
-	 *      when querying custom attributes.
-	 *
-	 *   DontProvideAutomaticDefaultConstructor
-	 *      Normally TypeBuilder, like System.Reflection.Emit, will provide a default
-	 *      constructor for types that meet the requirements. By enabling this
-	 *      option this behavior is disabled.
-	 *
-	 *   MetadataOnly
-	 *      By default, when a module is read in, the stream is kept open to satisfy
-	 *      subsequent lazy loading. In MetadataOnly mode only the metadata is read in
-	 *      and after that the stream is closed immediately. Subsequent lazy loading
-	 *      attempts will fail with an InvalidOperationException.
-	 *      APIs that are not available is MetadataOnly mode are:
-	 *      - Module.ResolveString()
-	 *      - Module.GetSignerCertificate()
-	 *      - Module.GetManifestResourceStream()
-	 *      - Module.__ReadDataFromRVA()
-	 *      - MethodBase.GetMethodBody()
-	 *      - FieldInfo.__GetDataFromRVA()
-	 */
-
 	[Flags]
 	public enum UniverseOptions
 	{
 		None = 0,
 		EnableFunctionPointers = 1,
 		DisableFusion = 2,
-		DisablePseudoCustomAttributeRetrieval = 4,
-		DontProvideAutomaticDefaultConstructor = 8,
-		MetadataOnly = 16,
-		ResolveMissingMembers = 32,
-		DisableWindowsRuntimeProjection = 64,
 	}
 
 	public sealed class Universe : IDisposable
@@ -142,9 +97,6 @@ namespace IKVM.Reflection
 		private bool resolveMissingMembers;
 		private readonly bool enableFunctionPointers;
 		private readonly bool useNativeFusion;
-		private readonly bool returnPseudoCustomAttributes;
-		private readonly bool automaticallyProvideDefaultConstructor;
-		private readonly UniverseOptions options;
 		private Type typeof_System_Object;
 		private Type typeof_System_ValueType;
 		private Type typeof_System_Enum;
@@ -211,12 +163,8 @@ namespace IKVM.Reflection
 
 		public Universe(UniverseOptions options)
 		{
-			this.options = options;
 			enableFunctionPointers = (options & UniverseOptions.EnableFunctionPointers) != 0;
 			useNativeFusion = (options & UniverseOptions.DisableFusion) == 0 && GetUseNativeFusion();
-			returnPseudoCustomAttributes = (options & UniverseOptions.DisablePseudoCustomAttributeRetrieval) == 0;
-			automaticallyProvideDefaultConstructor = (options & UniverseOptions.DontProvideAutomaticDefaultConstructor) == 0;
-			resolveMissingMembers = (options & UniverseOptions.ResolveMissingMembers) != 0;
 		}
 
 		private static bool GetUseNativeFusion()
@@ -238,25 +186,26 @@ namespace IKVM.Reflection
 			get { return Load("mscorlib"); }
 		}
 
-		private Type ImportMscorlibType(string ns, string name)
+		private Type ImportMscorlibType(System.Type type)
 		{
 			if (Mscorlib.__IsMissing)
 			{
-				return Mscorlib.ResolveType(null, new TypeName(ns, name));
+				return Mscorlib.ResolveType(new TypeName(type.Namespace, type.Name));
 			}
 			// We use FindType instead of ResolveType here, because on some versions of mscorlib some of
 			// the special types we use/support are missing and the type properties are defined to
 			// return null in that case.
 			// Note that we don't have to unescape type.Name here, because none of the names contain special characters.
-			return Mscorlib.FindType(new TypeName(ns, name));
+			return Mscorlib.FindType(new TypeName(type.Namespace, type.Name));
 		}
 
 		private Type ResolvePrimitive(string name)
 		{
 			// Primitive here means that these types have a special metadata encoding, which means that
 			// there can be references to them without referring to them by name explicitly.
-			// We want these types to be usable even when they don't exist in mscorlib or there is no mscorlib loaded.
-			return Mscorlib.FindType(new TypeName("System", name)) ?? GetMissingType(null, Mscorlib.ManifestModule, null, new TypeName("System", name));
+			// When 'resolve missing type' mode is enabled, we want these types to be usable even when
+			// they don't exist in mscorlib or there is no mscorlib loaded.
+			return Mscorlib.ResolveType(new TypeName("System", name));
 		}
 
 		internal Type System_Object
@@ -376,172 +325,172 @@ namespace IKVM.Reflection
 
 		internal Type System_DateTime
 		{
-			get { return typeof_System_DateTime ?? (typeof_System_DateTime = ImportMscorlibType("System", "DateTime")); }
+			get { return typeof_System_DateTime ?? (typeof_System_DateTime = ImportMscorlibType(typeof(System.DateTime))); }
 		}
 
 		internal Type System_DBNull
 		{
-			get { return typeof_System_DBNull ?? (typeof_System_DBNull = ImportMscorlibType("System", "DBNull")); }
+			get { return typeof_System_DBNull ?? (typeof_System_DBNull = ImportMscorlibType(typeof(System.DBNull))); }
 		}
 
 		internal Type System_Decimal
 		{
-			get { return typeof_System_Decimal ?? (typeof_System_Decimal = ImportMscorlibType("System", "Decimal")); }
+			get { return typeof_System_Decimal ?? (typeof_System_Decimal = ImportMscorlibType(typeof(System.Decimal))); }
 		}
 
 		internal Type System_NonSerializedAttribute
 		{
-			get { return typeof_System_NonSerializedAttribute ?? (typeof_System_NonSerializedAttribute = ImportMscorlibType("System", "NonSerializedAttribute")); }
+			get { return typeof_System_NonSerializedAttribute ?? (typeof_System_NonSerializedAttribute = ImportMscorlibType(typeof(System.NonSerializedAttribute))); }
 		}
 
 		internal Type System_SerializableAttribute
 		{
-			get { return typeof_System_SerializableAttribute ?? (typeof_System_SerializableAttribute = ImportMscorlibType("System", "SerializableAttribute")); }
+			get { return typeof_System_SerializableAttribute ?? (typeof_System_SerializableAttribute = ImportMscorlibType(typeof(System.SerializableAttribute))); }
 		}
 
 		internal Type System_AttributeUsageAttribute
 		{
-			get { return typeof_System_AttributeUsageAttribute ?? (typeof_System_AttributeUsageAttribute = ImportMscorlibType("System", "AttributeUsageAttribute")); }
+			get { return typeof_System_AttributeUsageAttribute ?? (typeof_System_AttributeUsageAttribute = ImportMscorlibType(typeof(System.AttributeUsageAttribute))); }
 		}
 
 		internal Type System_Runtime_InteropServices_DllImportAttribute
 		{
-			get { return typeof_System_Runtime_InteropServices_DllImportAttribute ?? (typeof_System_Runtime_InteropServices_DllImportAttribute = ImportMscorlibType("System.Runtime.InteropServices", "DllImportAttribute")); }
+			get { return typeof_System_Runtime_InteropServices_DllImportAttribute ?? (typeof_System_Runtime_InteropServices_DllImportAttribute = ImportMscorlibType(typeof(System.Runtime.InteropServices.DllImportAttribute))); }
 		}
 
 		internal Type System_Runtime_InteropServices_FieldOffsetAttribute
 		{
-			get { return typeof_System_Runtime_InteropServices_FieldOffsetAttribute ?? (typeof_System_Runtime_InteropServices_FieldOffsetAttribute = ImportMscorlibType("System.Runtime.InteropServices", "FieldOffsetAttribute")); }
+			get { return typeof_System_Runtime_InteropServices_FieldOffsetAttribute ?? (typeof_System_Runtime_InteropServices_FieldOffsetAttribute = ImportMscorlibType(typeof(System.Runtime.InteropServices.FieldOffsetAttribute))); }
 		}
 
 		internal Type System_Runtime_InteropServices_InAttribute
 		{
-			get { return typeof_System_Runtime_InteropServices_InAttribute ?? (typeof_System_Runtime_InteropServices_InAttribute = ImportMscorlibType("System.Runtime.InteropServices", "InAttribute")); }
+			get { return typeof_System_Runtime_InteropServices_InAttribute ?? (typeof_System_Runtime_InteropServices_InAttribute = ImportMscorlibType(typeof(System.Runtime.InteropServices.InAttribute))); }
 		}
 
 		internal Type System_Runtime_InteropServices_MarshalAsAttribute
 		{
-			get { return typeof_System_Runtime_InteropServices_MarshalAsAttribute ?? (typeof_System_Runtime_InteropServices_MarshalAsAttribute = ImportMscorlibType("System.Runtime.InteropServices", "MarshalAsAttribute")); }
+			get { return typeof_System_Runtime_InteropServices_MarshalAsAttribute ?? (typeof_System_Runtime_InteropServices_MarshalAsAttribute = ImportMscorlibType(typeof(System.Runtime.InteropServices.MarshalAsAttribute))); }
 		}
 
 		internal Type System_Runtime_InteropServices_UnmanagedType
 		{
-			get { return typeof_System_Runtime_InteropServices_UnmanagedType ?? (typeof_System_Runtime_InteropServices_UnmanagedType = ImportMscorlibType("System.Runtime.InteropServices", "UnmanagedType")); }
+			get { return typeof_System_Runtime_InteropServices_UnmanagedType ?? (typeof_System_Runtime_InteropServices_UnmanagedType = ImportMscorlibType(typeof(System.Runtime.InteropServices.UnmanagedType))); }
 		}
 
 		internal Type System_Runtime_InteropServices_VarEnum
 		{
-			get { return typeof_System_Runtime_InteropServices_VarEnum ?? (typeof_System_Runtime_InteropServices_VarEnum = ImportMscorlibType("System.Runtime.InteropServices", "VarEnum")); }
+			get { return typeof_System_Runtime_InteropServices_VarEnum ?? (typeof_System_Runtime_InteropServices_VarEnum = ImportMscorlibType(typeof(System.Runtime.InteropServices.VarEnum))); }
 		}
 
 		internal Type System_Runtime_InteropServices_OutAttribute
 		{
-			get { return typeof_System_Runtime_InteropServices_OutAttribute ?? (typeof_System_Runtime_InteropServices_OutAttribute = ImportMscorlibType("System.Runtime.InteropServices", "OutAttribute")); }
+			get { return typeof_System_Runtime_InteropServices_OutAttribute ?? (typeof_System_Runtime_InteropServices_OutAttribute = ImportMscorlibType(typeof(System.Runtime.InteropServices.OutAttribute))); }
 		}
 
 		internal Type System_Runtime_InteropServices_StructLayoutAttribute
 		{
-			get { return typeof_System_Runtime_InteropServices_StructLayoutAttribute ?? (typeof_System_Runtime_InteropServices_StructLayoutAttribute = ImportMscorlibType("System.Runtime.InteropServices", "StructLayoutAttribute")); }
+			get { return typeof_System_Runtime_InteropServices_StructLayoutAttribute ?? (typeof_System_Runtime_InteropServices_StructLayoutAttribute = ImportMscorlibType(typeof(System.Runtime.InteropServices.StructLayoutAttribute))); }
 		}
 
 		internal Type System_Runtime_InteropServices_OptionalAttribute
 		{
-			get { return typeof_System_Runtime_InteropServices_OptionalAttribute ?? (typeof_System_Runtime_InteropServices_OptionalAttribute = ImportMscorlibType("System.Runtime.InteropServices", "OptionalAttribute")); }
+			get { return typeof_System_Runtime_InteropServices_OptionalAttribute ?? (typeof_System_Runtime_InteropServices_OptionalAttribute = ImportMscorlibType(typeof(System.Runtime.InteropServices.OptionalAttribute))); }
 		}
 
 		internal Type System_Runtime_InteropServices_PreserveSigAttribute
 		{
-			get { return typeof_System_Runtime_InteropServices_PreserveSigAttribute ?? (typeof_System_Runtime_InteropServices_PreserveSigAttribute = ImportMscorlibType("System.Runtime.InteropServices", "PreserveSigAttribute")); }
+			get { return typeof_System_Runtime_InteropServices_PreserveSigAttribute ?? (typeof_System_Runtime_InteropServices_PreserveSigAttribute = ImportMscorlibType(typeof(System.Runtime.InteropServices.PreserveSigAttribute))); }
 		}
 
 		internal Type System_Runtime_InteropServices_CallingConvention
 		{
-			get { return typeof_System_Runtime_InteropServices_CallingConvention ?? (typeof_System_Runtime_InteropServices_CallingConvention = ImportMscorlibType("System.Runtime.InteropServices", "CallingConvention")); }
+			get { return typeof_System_Runtime_InteropServices_CallingConvention ?? (typeof_System_Runtime_InteropServices_CallingConvention = ImportMscorlibType(typeof(System.Runtime.InteropServices.CallingConvention))); }
 		}
 
 		internal Type System_Runtime_InteropServices_CharSet
 		{
-			get { return typeof_System_Runtime_InteropServices_CharSet ?? (typeof_System_Runtime_InteropServices_CharSet = ImportMscorlibType("System.Runtime.InteropServices", "CharSet")); }
+			get { return typeof_System_Runtime_InteropServices_CharSet ?? (typeof_System_Runtime_InteropServices_CharSet = ImportMscorlibType(typeof(System.Runtime.InteropServices.CharSet))); }
 		}
 
 		internal Type System_Runtime_InteropServices_ComImportAttribute
 		{
-			get { return typeof_System_Runtime_InteropServices_ComImportAttribute ?? (typeof_System_Runtime_InteropServices_ComImportAttribute = ImportMscorlibType("System.Runtime.InteropServices", "ComImportAttribute")); }
+			get { return typeof_System_Runtime_InteropServices_ComImportAttribute ?? (typeof_System_Runtime_InteropServices_ComImportAttribute = ImportMscorlibType(typeof(System.Runtime.InteropServices.ComImportAttribute))); }
 		}
 
 		internal Type System_Runtime_CompilerServices_DecimalConstantAttribute
 		{
-			get { return typeof_System_Runtime_CompilerServices_DecimalConstantAttribute ?? (typeof_System_Runtime_CompilerServices_DecimalConstantAttribute = ImportMscorlibType("System.Runtime.CompilerServices", "DecimalConstantAttribute")); }
+			get { return typeof_System_Runtime_CompilerServices_DecimalConstantAttribute ?? (typeof_System_Runtime_CompilerServices_DecimalConstantAttribute = ImportMscorlibType(typeof(System.Runtime.CompilerServices.DecimalConstantAttribute))); }
 		}
 
 		internal Type System_Runtime_CompilerServices_SpecialNameAttribute
 		{
-			get { return typeof_System_Runtime_CompilerServices_SpecialNameAttribute ?? (typeof_System_Runtime_CompilerServices_SpecialNameAttribute = ImportMscorlibType("System.Runtime.CompilerServices", "SpecialNameAttribute")); }
+			get { return typeof_System_Runtime_CompilerServices_SpecialNameAttribute ?? (typeof_System_Runtime_CompilerServices_SpecialNameAttribute = ImportMscorlibType(typeof(System.Runtime.CompilerServices.SpecialNameAttribute))); }
 		}
 
 		internal Type System_Runtime_CompilerServices_MethodImplAttribute
 		{
-			get { return typeof_System_Runtime_CompilerServices_MethodImplAttribute ?? (typeof_System_Runtime_CompilerServices_MethodImplAttribute = ImportMscorlibType("System.Runtime.CompilerServices", "MethodImplAttribute")); }
+			get { return typeof_System_Runtime_CompilerServices_MethodImplAttribute ?? (typeof_System_Runtime_CompilerServices_MethodImplAttribute = ImportMscorlibType(typeof(System.Runtime.CompilerServices.MethodImplAttribute))); }
 		}
 
 		internal Type System_Security_SuppressUnmanagedCodeSecurityAttribute
 		{
-			get { return typeof_System_Security_SuppressUnmanagedCodeSecurityAttribute ?? (typeof_System_Security_SuppressUnmanagedCodeSecurityAttribute = ImportMscorlibType("System.Security", "SuppressUnmanagedCodeSecurityAttribute")); }
+			get { return typeof_System_Security_SuppressUnmanagedCodeSecurityAttribute ?? (typeof_System_Security_SuppressUnmanagedCodeSecurityAttribute = ImportMscorlibType(typeof(System.Security.SuppressUnmanagedCodeSecurityAttribute))); }
 		}
 
 		internal Type System_Reflection_AssemblyCopyrightAttribute
 		{
-			get { return typeof_System_Reflection_AssemblyCopyrightAttribute ?? (typeof_System_Reflection_AssemblyCopyrightAttribute = ImportMscorlibType("System.Reflection", "AssemblyCopyrightAttribute")); }
+			get { return typeof_System_Reflection_AssemblyCopyrightAttribute ?? (typeof_System_Reflection_AssemblyCopyrightAttribute = ImportMscorlibType(typeof(System.Reflection.AssemblyCopyrightAttribute))); }
 		}
 
 		internal Type System_Reflection_AssemblyTrademarkAttribute
 		{
-			get { return typeof_System_Reflection_AssemblyTrademarkAttribute ?? (typeof_System_Reflection_AssemblyTrademarkAttribute = ImportMscorlibType("System.Reflection", "AssemblyTrademarkAttribute")); }
+			get { return typeof_System_Reflection_AssemblyTrademarkAttribute ?? (typeof_System_Reflection_AssemblyTrademarkAttribute = ImportMscorlibType(typeof(System.Reflection.AssemblyTrademarkAttribute))); }
 		}
 
 		internal Type System_Reflection_AssemblyProductAttribute
 		{
-			get { return typeof_System_Reflection_AssemblyProductAttribute ?? (typeof_System_Reflection_AssemblyProductAttribute = ImportMscorlibType("System.Reflection", "AssemblyProductAttribute")); }
+			get { return typeof_System_Reflection_AssemblyProductAttribute ?? (typeof_System_Reflection_AssemblyProductAttribute = ImportMscorlibType(typeof(System.Reflection.AssemblyProductAttribute))); }
 		}
 
 		internal Type System_Reflection_AssemblyCompanyAttribute
 		{
-			get { return typeof_System_Reflection_AssemblyCompanyAttribute ?? (typeof_System_Reflection_AssemblyCompanyAttribute = ImportMscorlibType("System.Reflection", "AssemblyCompanyAttribute")); }
+			get { return typeof_System_Reflection_AssemblyCompanyAttribute ?? (typeof_System_Reflection_AssemblyCompanyAttribute = ImportMscorlibType(typeof(System.Reflection.AssemblyCompanyAttribute))); }
 		}
 
 		internal Type System_Reflection_AssemblyDescriptionAttribute
 		{
-			get { return typeof_System_Reflection_AssemblyDescriptionAttribute ?? (typeof_System_Reflection_AssemblyDescriptionAttribute = ImportMscorlibType("System.Reflection", "AssemblyDescriptionAttribute")); }
+			get { return typeof_System_Reflection_AssemblyDescriptionAttribute ?? (typeof_System_Reflection_AssemblyDescriptionAttribute = ImportMscorlibType(typeof(System.Reflection.AssemblyDescriptionAttribute))); }
 		}
 
 		internal Type System_Reflection_AssemblyTitleAttribute
 		{
-			get { return typeof_System_Reflection_AssemblyTitleAttribute ?? (typeof_System_Reflection_AssemblyTitleAttribute = ImportMscorlibType("System.Reflection", "AssemblyTitleAttribute")); }
+			get { return typeof_System_Reflection_AssemblyTitleAttribute ?? (typeof_System_Reflection_AssemblyTitleAttribute = ImportMscorlibType(typeof(System.Reflection.AssemblyTitleAttribute))); }
 		}
 
 		internal Type System_Reflection_AssemblyInformationalVersionAttribute
 		{
-			get { return typeof_System_Reflection_AssemblyInformationalVersionAttribute ?? (typeof_System_Reflection_AssemblyInformationalVersionAttribute = ImportMscorlibType("System.Reflection", "AssemblyInformationalVersionAttribute")); }
+			get { return typeof_System_Reflection_AssemblyInformationalVersionAttribute ?? (typeof_System_Reflection_AssemblyInformationalVersionAttribute = ImportMscorlibType(typeof(System.Reflection.AssemblyInformationalVersionAttribute))); }
 		}
 
 		internal Type System_Reflection_AssemblyFileVersionAttribute
 		{
-			get { return typeof_System_Reflection_AssemblyFileVersionAttribute ?? (typeof_System_Reflection_AssemblyFileVersionAttribute = ImportMscorlibType("System.Reflection", "AssemblyFileVersionAttribute")); }
+			get { return typeof_System_Reflection_AssemblyFileVersionAttribute ?? (typeof_System_Reflection_AssemblyFileVersionAttribute = ImportMscorlibType(typeof(System.Reflection.AssemblyFileVersionAttribute))); }
 		}
 
 		internal Type System_Security_Permissions_CodeAccessSecurityAttribute
 		{
-			get { return typeof_System_Security_Permissions_CodeAccessSecurityAttribute ?? (typeof_System_Security_Permissions_CodeAccessSecurityAttribute = ImportMscorlibType("System.Security.Permissions", "CodeAccessSecurityAttribute")); }
+			get { return typeof_System_Security_Permissions_CodeAccessSecurityAttribute ?? (typeof_System_Security_Permissions_CodeAccessSecurityAttribute = ImportMscorlibType(typeof(System.Security.Permissions.CodeAccessSecurityAttribute))); }
 		}
 
 		internal Type System_Security_Permissions_PermissionSetAttribute
 		{
-			get { return typeof_System_Security_Permissions_PermissionSetAttribute ?? (typeof_System_Security_Permissions_PermissionSetAttribute = ImportMscorlibType("System.Security.Permissions", "PermissionSetAttribute")); }
+			get { return typeof_System_Security_Permissions_PermissionSetAttribute ?? (typeof_System_Security_Permissions_PermissionSetAttribute = ImportMscorlibType(typeof(System.Security.Permissions.PermissionSetAttribute))); }
 		}
 
 		internal Type System_Security_Permissions_SecurityAction
 		{
-			get { return typeof_System_Security_Permissions_SecurityAction ?? (typeof_System_Security_Permissions_SecurityAction = ImportMscorlibType("System.Security.Permissions", "SecurityAction")); }
+			get { return typeof_System_Security_Permissions_SecurityAction ?? (typeof_System_Security_Permissions_SecurityAction = ImportMscorlibType(typeof(System.Security.Permissions.SecurityAction))); }
 		}
 
 		internal bool HasMscorlib
@@ -622,15 +571,20 @@ namespace IKVM.Reflection
 				}
 				return Import(type.GetGenericTypeDefinition()).MakeGenericType(importedArgs);
 			}
+			else if (type.IsNested)
+			{
+				// note that we can't pass in the namespace here, because .NET's Type.Namespace implementation is broken for nested types
+				// (it returns the namespace of the declaring type)
+				return Import(type.DeclaringType).ResolveNestedType(new TypeName(null, type.Name));
+			}
 			else if (type.Assembly == typeof(object).Assembly)
 			{
 				// make sure mscorlib types always end up in our mscorlib
-				return ResolveType(Mscorlib, type.FullName);
+				return Mscorlib.ResolveType(new TypeName(type.Namespace, type.Name));
 			}
 			else
 			{
-				// FXBUG we parse the FullName here, because type.Namespace and type.Name are both broken on the CLR
-				return ResolveType(Import(type.Assembly), type.FullName);
+				return Import(type.Assembly).ResolveType(new TypeName(type.Namespace, type.Name));
 			}
 		}
 
@@ -642,44 +596,16 @@ namespace IKVM.Reflection
 		public RawModule OpenRawModule(string path)
 		{
 			path = Path.GetFullPath(path);
-			FileStream fs = null;
-			RawModule module;
-			try
-			{
-				fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-				module = OpenRawModule(fs, path);
-				if (!MetadataOnly)
-				{
-					fs = null;
-				}
-			}
-			finally
-			{
-				if (fs != null)
-				{
-					fs.Close();
-				}
-			}
-			return module;
+			return OpenRawModule(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read), path);
 		}
 
 		public RawModule OpenRawModule(Stream stream, string location)
-		{
-			return OpenRawModule(stream, location, false);
-		}
-
-		public RawModule OpenMappedRawModule(Stream stream, string location)
-		{
-			return OpenRawModule(stream, location, true);
-		}
-
-		private RawModule OpenRawModule(Stream stream, string location, bool mapped)
 		{
 			if (!stream.CanRead || !stream.CanSeek || stream.Position != 0)
 			{
 				throw new ArgumentException("Stream must support read/seek and current position must be zero.", "stream");
 			}
-			return new RawModule(new ModuleReader(null, this, stream, location, mapped));
+			return new RawModule(new ModuleReader(null, this, stream, location));
 		}
 
 		public Assembly LoadAssembly(RawModule module)
@@ -734,7 +660,7 @@ namespace IKVM.Reflection
 				for (int i = 0; i < assemblies.Count; i++)
 				{
 					AssemblyComparisonResult result;
-					if (simpleName.Equals(assemblies[i].Name, StringComparison.OrdinalIgnoreCase)
+					if (simpleName.Equals(assemblies[i].Name, StringComparison.InvariantCultureIgnoreCase)
 						&& CompareAssemblyIdentity(refname, false, assemblies[i].FullName, false, out result))
 					{
 						asm = assemblies[i];
@@ -752,7 +678,7 @@ namespace IKVM.Reflection
 			foreach (AssemblyBuilder asm in dynamicAssemblies)
 			{
 				AssemblyComparisonResult result;
-				if (simpleName.Equals(asm.Name, StringComparison.OrdinalIgnoreCase)
+				if (simpleName.Equals(asm.Name, StringComparison.InvariantCultureIgnoreCase)
 					&& CompareAssemblyIdentity(refname, false, asm.FullName, false, out result))
 				{
 					return asm;
@@ -766,7 +692,7 @@ namespace IKVM.Reflection
 			return Load(refname, null, true);
 		}
 
-		internal Assembly Load(string refname, Module requestingModule, bool throwOnError)
+		internal Assembly Load(string refname, Assembly requestingAssembly, bool throwOnError)
 		{
 			Assembly asm = GetLoadedAssembly(refname);
 			if (asm != null)
@@ -779,7 +705,7 @@ namespace IKVM.Reflection
 			}
 			else
 			{
-				ResolveEventArgs args = new ResolveEventArgs(refname, requestingModule == null ? null : requestingModule.Assembly);
+				ResolveEventArgs args = new ResolveEventArgs(refname, requestingAssembly);
 				foreach (ResolveEventHandler evt in resolvers)
 				{
 					asm = evt(this, args);
@@ -885,7 +811,7 @@ namespace IKVM.Reflection
 			{
 				return null;
 			}
-			return parser.GetType(this, context == null ? null : context.ManifestModule, throwOnError, assemblyQualifiedTypeName, false, ignoreCase);
+			return parser.GetType(this, context, throwOnError, assemblyQualifiedTypeName, false, ignoreCase);
 		}
 
 		// this is similar to GetType(Assembly context, string assemblyQualifiedTypeName, bool throwOnError),
@@ -898,7 +824,7 @@ namespace IKVM.Reflection
 			{
 				return null;
 			}
-			return parser.GetType(this, context == null ? null : context.ManifestModule, false, assemblyQualifiedTypeName, true, false);
+			return parser.GetType(this, context, false, assemblyQualifiedTypeName, true, false);
 		}
 
 		public Assembly[] GetAssemblies()
@@ -925,17 +851,12 @@ namespace IKVM.Reflection
 
 		public AssemblyBuilder DefineDynamicAssembly(AssemblyName name, AssemblyBuilderAccess access)
 		{
-			return new AssemblyBuilder(this, name, null, null);
-		}
-
-		public AssemblyBuilder DefineDynamicAssembly(AssemblyName name, AssemblyBuilderAccess access, IEnumerable<CustomAttributeBuilder> assemblyAttributes)
-		{
-			return new AssemblyBuilder(this, name, null, assemblyAttributes);
+			return DefineDynamicAssemblyImpl(name, access, null, null, null, null);
 		}
 
 		public AssemblyBuilder DefineDynamicAssembly(AssemblyName name, AssemblyBuilderAccess access, string dir)
 		{
-			return new AssemblyBuilder(this, name, dir, null);
+			return DefineDynamicAssemblyImpl(name, access, dir, null, null, null);
 		}
 
 #if NET_4_0
@@ -943,24 +864,14 @@ namespace IKVM.Reflection
 #endif
 		public AssemblyBuilder DefineDynamicAssembly(AssemblyName name, AssemblyBuilderAccess access, string dir, PermissionSet requiredPermissions, PermissionSet optionalPermissions, PermissionSet refusedPermissions)
 		{
-			AssemblyBuilder ab = new AssemblyBuilder(this, name, dir, null);
-			AddLegacyPermissionSet(ab, requiredPermissions, System.Security.Permissions.SecurityAction.RequestMinimum);
-			AddLegacyPermissionSet(ab, optionalPermissions, System.Security.Permissions.SecurityAction.RequestOptional);
-			AddLegacyPermissionSet(ab, refusedPermissions, System.Security.Permissions.SecurityAction.RequestRefuse);
-			return ab;
+			return DefineDynamicAssemblyImpl(name, access, dir, requiredPermissions, optionalPermissions, refusedPermissions);
 		}
 
-		private static void AddLegacyPermissionSet(AssemblyBuilder ab, PermissionSet permissionSet, System.Security.Permissions.SecurityAction action)
+		private AssemblyBuilder DefineDynamicAssemblyImpl(AssemblyName name, AssemblyBuilderAccess access, string dir, PermissionSet requiredPermissions, PermissionSet optionalPermissions, PermissionSet refusedPermissions)
 		{
-			if (permissionSet != null)
-			{
-				ab.__AddDeclarativeSecurity(CustomAttributeBuilder.__FromBlob(CustomAttributeBuilder.LegacyPermissionSet, (int)action, Encoding.Unicode.GetBytes(permissionSet.ToXml().ToString())));
-			}
-		}
-
-		internal void RegisterDynamicAssembly(AssemblyBuilder asm)
-		{
+			AssemblyBuilder asm = new AssemblyBuilder(this, name, dir, requiredPermissions, optionalPermissions, refusedPermissions);
 			dynamicAssemblies.Add(asm);
+			return asm;
  		}
 
 		internal void RenameAssembly(Assembly assembly, AssemblyName oldName)
@@ -1008,7 +919,6 @@ namespace IKVM.Reflection
 			return asm;
 		}
 
-		[Obsolete("Please set UniverseOptions.ResolveMissingMembers instead.")]
 		public void EnableMissingMemberResolution()
 		{
 			resolveMissingMembers = true;
@@ -1052,31 +962,22 @@ namespace IKVM.Reflection
 			}
 		}
 
-		private Type GetMissingType(Module requester, Module module, Type declaringType, TypeName typeName)
-		{
-			if (missingTypes == null)
-			{
-				missingTypes = new Dictionary<ScopedTypeName, Type>();
-			}
-			ScopedTypeName stn = new ScopedTypeName(declaringType ?? (object)module, typeName);
-			Type type;
-			if (!missingTypes.TryGetValue(stn, out type))
-			{
-				type = new MissingType(module, declaringType, typeName.Namespace, typeName.Name);
-				missingTypes.Add(stn, type);
-			}
-			if (ResolvedMissingMember != null && !module.Assembly.__IsMissing)
-			{
-				ResolvedMissingMember(requester, type);
-			}
-			return type;
-		}
-
-		internal Type GetMissingTypeOrThrow(Module requester, Module module, Type declaringType, TypeName typeName)
+		internal Type GetMissingTypeOrThrow(Module module, Type declaringType, TypeName typeName)
 		{
 			if (resolveMissingMembers || module.Assembly.__IsMissing)
 			{
-				return GetMissingType(requester, module, declaringType, typeName);
+				if (missingTypes == null)
+				{
+					missingTypes = new Dictionary<ScopedTypeName, Type>();
+				}
+				ScopedTypeName stn = new ScopedTypeName(declaringType ?? (object)module, typeName);
+				Type type;
+				if (!missingTypes.TryGetValue(stn, out type))
+				{
+					type = new MissingType(module, declaringType, typeName.Namespace, typeName.Name);
+					missingTypes.Add(stn, type);
+				}
+				return type;
 			}
 			string fullName = TypeNameParser.Escape(typeName.ToString());
 			if (declaringType != null)
@@ -1086,50 +987,36 @@ namespace IKVM.Reflection
 			throw new TypeLoadException(String.Format("Type '{0}' not found in assembly '{1}'", fullName, module.Assembly.FullName));
 		}
 
-		internal MethodBase GetMissingMethodOrThrow(Module requester, Type declaringType, string name, MethodSignature signature)
+		internal MethodBase GetMissingMethodOrThrow(Type declaringType, string name, MethodSignature signature)
 		{
 			if (resolveMissingMembers)
 			{
-				MethodBase method = new MissingMethod(declaringType, name, signature);
+				MethodInfo method = new MissingMethod(declaringType, name, signature);
 				if (name == ".ctor")
 				{
-					method = new ConstructorInfoImpl((MethodInfo)method);
-				}
-				if (ResolvedMissingMember != null)
-				{
-					ResolvedMissingMember(requester, method);
+					return new ConstructorInfoImpl(method);
 				}
 				return method;
 			}
 			throw new MissingMethodException(declaringType.ToString(), name);
 		}
 
-		internal FieldInfo GetMissingFieldOrThrow(Module requester, Type declaringType, string name, FieldSignature signature)
+		internal FieldInfo GetMissingFieldOrThrow(Type declaringType, string name, FieldSignature signature)
 		{
 			if (resolveMissingMembers)
 			{
-				FieldInfo field = new MissingField(declaringType, name, signature);
-				if (ResolvedMissingMember != null)
-				{
-					ResolvedMissingMember(requester, field);
-				}
-				return field;
+				return new MissingField(declaringType, name, signature);
 			}
 			throw new MissingFieldException(declaringType.ToString(), name);
 		}
 
-		internal PropertyInfo GetMissingPropertyOrThrow(Module requester, Type declaringType, string name, PropertySignature propertySignature)
+		internal PropertyInfo GetMissingPropertyOrThrow(Type declaringType, string name, PropertySignature propertySignature)
 		{
 			// HACK we need to check __IsMissing here, because Type doesn't have a FindProperty API
 			// since properties are never resolved, except by custom attributes
 			if (resolveMissingMembers || declaringType.__IsMissing)
 			{
-				PropertyInfo property = new MissingProperty(declaringType, name, propertySignature);
-				if (ResolvedMissingMember != null && !declaringType.__IsMissing)
-				{
-					ResolvedMissingMember(requester, property);
-				}
-				return property;
+				return new MissingProperty(declaringType, name, propertySignature);
 			}
 			throw new System.MissingMemberException(declaringType.ToString(), name);
 		}
@@ -1162,8 +1049,6 @@ namespace IKVM.Reflection
 				PackedCustomModifiers.CreateFromExternal(returnTypeCustomModifiers, parameterTypeCustomModifiers, Util.NullSafeLength(parameterTypes) + Util.NullSafeLength(optionalParameterTypes)));
 		}
 
-		public event ResolvedMissingMemberHandler ResolvedMissingMember;
-
 		public event Predicate<Type> MissingTypeIsValueType
 		{
 			add
@@ -1183,11 +1068,6 @@ namespace IKVM.Reflection
 			}
 		}
 
-		public static Universe FromAssembly(Assembly assembly)
-		{
-			return assembly.universe;
-		}
-
 		internal bool ResolveMissingTypeIsValueType(MissingType missingType)
 		{
 			if (missingTypeIsValueType != null)
@@ -1195,26 +1075,6 @@ namespace IKVM.Reflection
 				return missingTypeIsValueType(missingType);
 			}
 			throw new MissingMemberException(missingType);
-		}
-
-		internal bool ReturnPseudoCustomAttributes
-		{
-			get { return returnPseudoCustomAttributes; }
-		}
-
-		internal bool AutomaticallyProvideDefaultConstructor
-		{
-			get { return automaticallyProvideDefaultConstructor; }
-		}
-
-		internal bool MetadataOnly
-		{
-			get { return (options & UniverseOptions.MetadataOnly) != 0; }
-		}
-
-		internal bool WindowsRuntimeProjection
-		{
-			get { return (options & UniverseOptions.DisableWindowsRuntimeProjection) == 0; }
 		}
 	}
 }
