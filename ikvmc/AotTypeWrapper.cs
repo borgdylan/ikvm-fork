@@ -48,7 +48,7 @@ namespace IKVM.Internal
 		private WorkaroundBaseClass workaroundBaseClass;
 
 		internal AotTypeWrapper(ClassFile f, CompilerClassLoader loader)
-			: base(f, loader, null)
+			: base(f, loader)
 		{
 		}
 
@@ -117,7 +117,7 @@ namespace IKVM.Internal
 			private readonly AotTypeWrapper wrapper;
 			private readonly TypeBuilder typeBuilder;
 			private readonly MethodWrapper[] methods;
-			private MethodBuilder baseSerializationCtor;
+			private ConstructorInfo baseSerializationCtor;
 
 			internal WorkaroundBaseClass(AotTypeWrapper wrapper, TypeBuilder typeBuilder, MethodWrapper[] methods)
 			{
@@ -126,7 +126,7 @@ namespace IKVM.Internal
 				this.methods = methods;
 			}
 
-			internal MethodBuilder GetSerializationConstructor()
+			internal ConstructorInfo GetSerializationConstructor()
 			{
 				if (baseSerializationCtor == null)
 				{
@@ -229,7 +229,7 @@ namespace IKVM.Internal
 			}
 		}
 
-		internal void AddXmlMapParameterAttributes(MethodBuilder method, string className, string methodName, string methodSig, ref ParameterBuilder[] pbs)
+		internal void AddXmlMapParameterAttributes(MethodBase method, string className, string methodName, string methodSig, ref ParameterBuilder[] pbs)
 		{
 			IKVM.Internal.MapXml.Param[] parameters = classLoader.GetXmlMapParameters(className, methodName, methodSig);
 			if(parameters != null)
@@ -580,10 +580,7 @@ namespace IKVM.Internal
 				}
 				else
 				{
-					if((modifiers & Modifiers.Private) == 0)
-					{
-						attribs |= MethodAttributes.Virtual;
-					}
+					attribs |= MethodAttributes.Virtual;
 					if((modifiers & Modifiers.Final) != 0)
 					{
 						attribs |= MethodAttributes.Final;
@@ -1121,7 +1118,7 @@ namespace IKVM.Internal
 			}
 		}
 
-		internal override void EmitCheckcast(CodeEmitter ilgen)
+		internal override void EmitCheckcast(TypeWrapper context, CodeEmitter ilgen)
 		{
 			if(IsGhost)
 			{
@@ -1145,11 +1142,11 @@ namespace IKVM.Internal
 			}
 			else
 			{
-				base.EmitCheckcast(ilgen);
+				base.EmitCheckcast(context, ilgen);
 			}
 		}
 
-		internal override void EmitInstanceOf(CodeEmitter ilgen)
+		internal override void EmitInstanceOf(TypeWrapper context, CodeEmitter ilgen)
 		{
 			if(IsGhost)
 			{
@@ -1161,7 +1158,7 @@ namespace IKVM.Internal
 			}
 			else
 			{
-				base.EmitInstanceOf(ilgen);
+				base.EmitInstanceOf(context, ilgen);
 			}
 		}
 
@@ -1286,7 +1283,7 @@ namespace IKVM.Internal
 			return mw;
 		}
 
-		internal override MethodBase GetBaseSerializationConstructor()
+		internal override ConstructorInfo GetBaseSerializationConstructor()
 		{
 			if (workaroundBaseClass != null)
 			{

@@ -1,5 +1,5 @@
 ﻿/*
-  Copyright (C) 2008-2012 Jeroen Frijters
+  Copyright (C) 2008-2011 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -200,47 +200,5 @@ namespace IKVM.Internal
 		{
 			return tb.DefineMethod(ConstructorInfo.ConstructorName, attribs | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName, null, parameterTypes);
 		}
-
-		internal static bool CanOwnDynamicMethod(Type type)
-		{
-			return type != null
-				&& !type.IsInterface
-				&& !type.HasElementType
-				&& !type.IsGenericTypeDefinition
-				&& !type.IsGenericParameter;
-		}
-
-#if STATIC_COMPILER
-		internal static Type GetMissingType(Type type)
-		{
-			while (type.HasElementType)
-			{
-				type = type.GetElementType();
-			}
-			if (type.__IsMissing)
-			{
-				return type;
-			}
-			else if (type.__ContainsMissingType)
-			{
-				if (type.IsGenericType)
-				{
-					foreach (Type arg in type.GetGenericArguments())
-					{
-						Type t1 = GetMissingType(arg);
-						if (t1.__IsMissing)
-						{
-							return t1;
-						}
-					}
-				}
-				throw new NotImplementedException(type.FullName);
-			}
-			else
-			{
-				return type;
-			}
-		}
-#endif
 	}
 }

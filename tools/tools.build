@@ -37,11 +37,5 @@
             </sources>
         </csc>
         <exec program="writeappconfig.exe" useruntimeengine="true" />
-
-        <csc target="exe" output="SourceLicenseAnalyzer.exe" rebuild="true">
-            <sources>
-                <include name="SourceLicenseAnalyzer.cs" />
-            </sources>
-        </csc>
     </target>
 </project>
