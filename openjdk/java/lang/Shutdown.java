@@ -25,10 +25,10 @@
 
 package java.lang;
 
+import java.util.ArrayList;
 import cli.System.AppDomain;
 import cli.System.EventArgs;
 import cli.System.EventHandler;
-import cli.System.Threading.Monitor;
 
 /**
  * Package-private utility class containing data structures and logic
@@ -37,8 +37,8 @@ import cli.System.Threading.Monitor;
  * @author   Mark Reinhold
  * @since    1.3
  */
-
-class Shutdown {
+@ikvm.lang.Internal
+public final class Shutdown {
 
     /* Shutdown state */
     private static final int RUNNING = 0;
@@ -49,19 +49,8 @@ class Shutdown {
     /* Should we run all finalizers upon exit? */
     static volatile boolean runFinalizersOnExit = false;
 
-    // The system shutdown hooks are registered with a predefined slot.
-    // The list of shutdown hooks is as follows:
-    // (0) Console restore hook
-    // (1) Application hooks
-    // (2) DeleteOnExit hook
-    private static final int MAX_SYSTEM_HOOKS = 10;
-    private static final Runnable[] hooks = new Runnable[MAX_SYSTEM_HOOKS];
-
-    // the index of the currently running shutdown hook to the hooks array
-    private static int currentRunningHook = 0;
-
-    // [IKVM] have we registered the AppDomain.ProcessExit event handler?
-    private static boolean registeredProcessExit;
+    /* The set of registered, wrapped hooks, or null if there aren't any */
+    private static ArrayList<Runnable> hooks = new ArrayList<Runnable>();
 
     /* The preceding static fields are protected by this lock */
     private static class Lock { };
@@ -77,18 +66,34 @@ class Shutdown {
         }
     }
     
-    private static void registerProcessExit() {
-        try {
-            // MONOBUG Mono doesn't support starting a new thread during ProcessExit
-            // (and application shutdown hooks are based on threads)
-            // see https://bugzilla.xamarin.com/show_bug.cgi?id=5650
-            if (!ikvm.internal.Util.MONO) {
-                // AppDomain.ProcessExit has a LinkDemand, so we have to have a separate method
-                registerShutdownHook();
-                if (false) throw new cli.System.Security.SecurityException();
+    private static boolean initialized;
+    
+    public static void init() {
+        synchronized (lock) {
+            if (initialized || state > RUNNING)
+                return;
+            initialized = true;
+            try
+            {
+                // MONOBUG Mono doesn't support starting a new thread during ProcessExit
+                // (and application shutdown hooks are based on threads)
+                // see https://bugzilla.xamarin.com/show_bug.cgi?id=5650
+                if (!ikvm.internal.Util.MONO) {
+                    // AppDomain.ProcessExit has a LinkDemand, so we have to have a separate method
+                    registerShutdownHook();
+                    if (false) throw new cli.System.Security.SecurityException();
+                }
             }
-        }
-        catch (cli.System.Security.SecurityException _) {
+            catch (cli.System.Security.SecurityException _)
+            {
+            }
+            // The order in with the hooks are added here is important as it
+            // determines the order in which they are run. 
+            // (1)Console restore hook needs to be called first.
+            // (2)Application hooks must be run before calling deleteOnExitHook.
+            hooks.add(sun.misc.SharedSecrets.getJavaIOAccess().consoleRestoreHook());
+            hooks.add(ApplicationShutdownHooks.hook());
+            hooks.add(sun.misc.SharedSecrets.getJavaIODeleteOnExitAccess());
         }
     }
 
@@ -101,61 +106,46 @@ class Shutdown {
         }));
     }
 
-    /**
-     * Add a new shutdown hook.  Checks the shutdown state and the hook itself,
+    /* Add a new shutdown hook.  Checks the shutdown state and the hook itself,
      * but does not do any security checks.
-     *
-     * The registerShutdownInProgress parameter should be false except
-     * registering the DeleteOnExitHook since the first file may
-     * be added to the delete on exit list by the application shutdown
-     * hooks.
-     *
-     * @params slot  the slot in the shutdown hook array, whose element
-     *               will be invoked in order during shutdown
-     * @params registerShutdownInProgress true to allow the hook
-     *               to be registered even if the shutdown is in progress.
-     * @params hook  the hook to be registered
-     *
-     * @throw IllegalStateException
-     *        if registerShutdownInProgress is false and shutdown is in progress; or
-     *        if registerShutdownInProgress is true and the shutdown process
-     *           already passes the given slot
      */
-    static void add(int slot, boolean registerShutdownInProgress, Runnable hook) {
+    static void add(Runnable hook) {
         synchronized (lock) {
-            if (hooks[slot] != null)
-                throw new InternalError("Shutdown hook at slot " + slot + " already registered");
+            if (state > RUNNING)
+                throw new IllegalStateException("Shutdown in progress");
 
-            if (!registerShutdownInProgress) {
-                if (state > RUNNING)
-                    throw new IllegalStateException("Shutdown in progress");
-            } else {
-                if (state > HOOKS || (state == HOOKS && slot <= currentRunningHook))
-                    throw new IllegalStateException("Shutdown in progress");
-            }
-
-            if (!registeredProcessExit) {
-                registeredProcessExit = true;
-                registerProcessExit();
-            }
-
-            hooks[slot] = hook;
+            init();
+            hooks.add(hook);
         }
     }
+
+
+    /* Remove a previously-registered hook.  Like the add method, this method
+     * does not do any security checks.
+     */
+    static boolean remove(Runnable hook) {
+        synchronized (lock) {
+            if (state > RUNNING)
+                throw new IllegalStateException("Shutdown in progress");
+            if (hook == null) throw new NullPointerException();
+            if (hooks == null) {
+                return false;
+            } else {
+                return hooks.remove(hook);
+            }
+        }
+    }
+
 
     /* Run all registered shutdown hooks
      */
     private static void runHooks() {
-        for (int i=0; i < MAX_SYSTEM_HOOKS; i++) {
+        /* We needn't bother acquiring the lock just to read the hooks field,
+         * since the hooks can't be modified once shutdown is in progress
+         */
+        for (Runnable hook : hooks) {
             try {
-                Runnable hook;
-                synchronized (lock) {
-                    // acquire the lock to make sure the hook registered during
-                    // shutdown is visible here.
-                    currentRunningHook = i;
-                    hook = hooks[i];
-                }
-                if (hook != null) hook.run();
+                hook.run();
             } catch(Throwable t) {
                 if (t instanceof ThreadDeath) {
                     ThreadDeath td = (ThreadDeath)t;
@@ -267,17 +257,8 @@ class Shutdown {
                 break;
             }
         }
-        // [IKVM] We don't block here, because we're being called
-        // from the AppDomain.ProcessExit event and we don't want to
-        // deadlock with the thread that called exit.
-        // Note that our JNI DestroyJavaVM implementation doesn't
-        // call this method.
-        if (Monitor.TryEnter(Shutdown.class)) {
-            try {
-                sequence();
-            } finally {
-                Monitor.Exit(Shutdown.class);
-            }
+        synchronized (Shutdown.class) {
+            sequence();
         }
     }
 

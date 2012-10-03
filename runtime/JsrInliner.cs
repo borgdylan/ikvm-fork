@@ -429,9 +429,27 @@ namespace IKVM.Internal
 								// mark the exception handlers reachable from this instruction
 								for (int j = 0; j < method.ExceptionTable.Length; j++)
 								{
-									if (method.ExceptionTable[j].startIndex <= i && i < method.ExceptionTable[j].endIndex)
+									// if we're currently inside an exception block, we need to merge our current state with the exception handler
+									// and if we right after the exception block (i == method.ExceptionTable[j].endIndex) and the block ends in
+									// an instruction that simply falls through, we need to merge our current state with the exception handler as
+									// well (because the last instruction may be a store to a local variable that affects the type of the local variable)
+									// (note that we can legally access instructions[i - 1] because an empty exception block is illegal)
+									if (method.ExceptionTable[j].startIndex <= i
+										&& (i < method.ExceptionTable[j].endIndex
+											|| (i == method.ExceptionTable[j].endIndex
+												&& ByteCodeMetaData.GetFlowControl(instructions[i - 1].NormalizedOpCode) == ByteCodeFlowControl.Next)))
 									{
-										MergeExceptionHandler(method.ExceptionTable[j].handlerIndex, state[i]);
+										// NOTE this used to be CopyLocalsAndSubroutines, but it doesn't (always) make
+										// sense to copy the subroutine state
+										// TODO figure out if there are circumstances under which it does make sense
+										// to copy the active subroutine state
+										// UPDATE subroutines must be copied as well, but I think I now have a better
+										// understanding of subroutine merges, so the problems that triggered the previous
+										// change here hopefully won't arise anymore
+										InstructionState ex = state[i].CopyLocalsAndSubroutines();
+										ex.PushObject();
+										int idx = method.ExceptionTable[j].handlerIndex;
+										state[idx] += ex;
 									}
 								}
 								state[i].CopyTo(s);
@@ -1040,22 +1058,12 @@ namespace IKVM.Internal
 											throw new VerifyError("Falling off the end of the code");
 										}
 										break;
-									case NormalizedByteCode.__invokedynamic:
-										// it is impossible to have a valid invokedynamic in a pre-7.0 class file
-										throw new VerifyError("Illegal type in constant pool");
 									default:
 										throw new NotImplementedException(instr.NormalizedOpCode.ToString());
 								}
 								if (s.GetStackHeight() > method.MaxStack)
 								{
 									throw new VerifyError("Stack size too large");
-								}
-								for (int j = 0; j < method.ExceptionTable.Length; j++)
-								{
-									if (method.ExceptionTable[j].endIndex == i + 1)
-									{
-										MergeExceptionHandler(method.ExceptionTable[j].handlerIndex, s);
-									}
 								}
 								try
 								{
@@ -1273,20 +1281,6 @@ namespace IKVM.Internal
 						}
 					}
 				}
-			}
-
-			private void MergeExceptionHandler(int handlerIndex, InstructionState curr)
-			{
-				// NOTE this used to be CopyLocalsAndSubroutines, but it doesn't (always) make
-				// sense to copy the subroutine state
-				// TODO figure out if there are circumstances under which it does make sense
-				// to copy the active subroutine state
-				// UPDATE subroutines must be copied as well, but I think I now have a better
-				// understanding of subroutine merges, so the problems that triggered the previous
-				// change here hopefully won't arise anymore
-				InstructionState ex = curr.CopyLocalsAndSubroutines();
-				ex.PushObject();
-				state[handlerIndex] += ex;
 			}
 
 			private ClassFile.ConstantPoolItemMI GetMethodref(int index)
