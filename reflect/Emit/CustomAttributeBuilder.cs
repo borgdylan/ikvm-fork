@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2008-2013 Jeroen Frijters
+  Copyright (C) 2008-2011 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -32,7 +32,6 @@ namespace IKVM.Reflection.Emit
 {
 	public sealed class CustomAttributeBuilder
 	{
-		internal static readonly ConstructorInfo LegacyPermissionSet = new ConstructorBuilder(null);
 		private readonly ConstructorInfo con;
 		private readonly byte[] blob;
 		private readonly object[] constructorArgs;
@@ -461,6 +460,11 @@ namespace IKVM.Reflection.Emit
 			}
 		}
 
+		internal bool IsPseudoCustomAttribute
+		{
+			get { return con.DeclaringType.IsPseudoCustomAttribute; }
+		}
+
 		internal ConstructorInfo Constructor
 		{
 			get { return con; }
@@ -533,31 +537,18 @@ namespace IKVM.Reflection.Emit
 			return null;
 		}
 
-		internal bool IsLegacyDeclSecurity
+		internal string GetLegacyDeclSecurity()
 		{
-			get
+			if (con.DeclaringType == con.Module.universe.System_Security_Permissions_PermissionSetAttribute
+				&& blob == null
+				&& (namedFields == null || namedFields.Length == 0)
+				&& namedProperties != null
+				&& namedProperties.Length == 1
+				&& namedProperties[0].Name == "XML")
 			{
-				return ReferenceEquals(con, LegacyPermissionSet)
-					|| (con.DeclaringType == con.Module.universe.System_Security_Permissions_PermissionSetAttribute
-						&& blob == null
-						&& (namedFields == null || namedFields.Length == 0)
-						&& namedProperties != null
-						&& namedProperties.Length == 1
-						&& namedProperties[0].Name == "XML"
-						&& propertyValues[0] is string);
+				return propertyValues[0] as string;
 			}
-		}
-
-		internal int WriteLegacyDeclSecurityBlob(ModuleBuilder moduleBuilder)
-		{
-			if (blob != null)
-			{
-				return moduleBuilder.Blobs.Add(ByteBuffer.Wrap(blob));
-			}
-			else
-			{
-				return moduleBuilder.Blobs.Add(ByteBuffer.Wrap(Encoding.Unicode.GetBytes((string)propertyValues[0])));
-			}
+			return null;
 		}
 
 		internal void WriteNamedArgumentsForDeclSecurity(ModuleBuilder moduleBuilder, ByteBuffer bb)

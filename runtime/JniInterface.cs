@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2002-2013 Jeroen Frijters
+  Copyright (C) 2002-2009 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -350,7 +350,7 @@ namespace IKVM.Runtime
 		{
 			private const string library = "ikvm-native-win32-x86";
 
-			[DllImport(library, SetLastError = true)]
+			[DllImport(library)]
 			private static extern IntPtr ikvm_LoadLibrary(string filename);
 			[DllImport(library)]
 			private static extern void ikvm_FreeLibrary(IntPtr handle);
@@ -398,7 +398,7 @@ namespace IKVM.Runtime
 		{
 			private const string library = "ikvm-native-win32-x64";
 
-			[DllImport(library, SetLastError = true)]
+			[DllImport(library)]
 			private static extern IntPtr ikvm_LoadLibrary(string filename);
 			[DllImport(library)]
 			private static extern void ikvm_FreeLibrary(IntPtr handle);
@@ -446,7 +446,7 @@ namespace IKVM.Runtime
 		{
 			private const string library = "ikvm-native";
 
-			[DllImport(library, SetLastError = true)]
+			[DllImport(library)]
 			private static extern IntPtr ikvm_LoadLibrary(string filename);
 			[DllImport(library)]
 			private static extern void ikvm_FreeLibrary(IntPtr handle);
@@ -553,8 +553,7 @@ namespace IKVM.Runtime
 				IntPtr p = NativeLibrary.LoadLibrary(filename);
 				if(p == IntPtr.Zero)
 				{
-					Tracer.Info(Tracer.Jni, "Failed to load library: path = '{0}', error = {1}, message = {2}", filename,
-						Marshal.GetLastWin32Error(), new System.ComponentModel.Win32Exception().Message);
+					Tracer.Info(Tracer.Jni, "Library not found: {0}", filename);
 					return 0;
 				}
 				try
@@ -1128,7 +1127,7 @@ namespace IKVM.Runtime
 				return JNIEnv.JNI_ERR;
 			}
 			JNI.jvmDestroyed = true;
-			Java_java_lang_Thread.WaitUntilLastJniThread();
+			IKVM.NativeCode.java.lang.Thread.WaitUntilLastJniThread();
 			return JNIEnv.JNI_OK;
 		}
 
@@ -1173,7 +1172,7 @@ namespace IKVM.Runtime
 				object threadGroup = GlobalRefs.Unwrap(pAttachArgs->group.ToInt32());
 				if(threadGroup != null)
 				{
-					Java_java_lang_Thread.AttachThreadFromJni(threadGroup);
+					IKVM.NativeCode.java.lang.Thread.AttachThreadFromJni(threadGroup);
 				}
 			}
 			*penv = JNIEnv.CreateJNIEnv();
@@ -1189,7 +1188,7 @@ namespace IKVM.Runtime
 			}
 			// TODO if we set Thread.IsBackground to false when we attached, now might be a good time to set it back to true.
 			JNIEnv.FreeJNIEnv();
-			Java_ikvm_runtime_Startup.jniDetach();
+			IKVM.NativeCode.ikvm.runtime.Startup.jniDetach();
 			return JNIEnv.JNI_OK;
 		}
 
@@ -1244,7 +1243,7 @@ namespace IKVM.Runtime
 		static JNIEnv()
 		{
 			// we set the field here so that IKVM.Runtime.dll doesn't have to load us if we're not otherwise needed
-			Java_java_lang_SecurityManager.jniAssembly = typeof(JNIEnv).Assembly;
+			IKVM.NativeCode.java.lang.SecurityManager.jniAssembly = typeof(JNIEnv).Assembly;
 		}
 
 		internal ManagedJNIEnv GetManagedJNIEnv()
@@ -1623,7 +1622,7 @@ namespace IKVM.Runtime
 				// TODO what should the protection domain be?
 				// NOTE I'm assuming name is platform encoded (as opposed to UTF-8), but the Sun JVM only seems to work for ASCII.
 				global::java.lang.ClassLoader classLoader = (global::java.lang.ClassLoader)pEnv->UnwrapRef(loader);
-				return pEnv->MakeLocalRef(Java_java_lang_ClassLoader.defineClass0(classLoader, name != null ? StringFromOEM(name) : null, buf, 0, buf.Length, null));
+				return pEnv->MakeLocalRef(IKVM.NativeCode.java.lang.ClassLoader.defineClass0(classLoader, name != null ? StringFromOEM(name) : null, buf, 0, buf.Length, null));
 			}
 			catch(Exception x)
 			{
@@ -1691,7 +1690,7 @@ namespace IKVM.Runtime
 
 		internal static jfieldID FromReflectedField(JNIEnv* pEnv, jobject field)
 		{
-			return FieldWrapper.FromField((java.lang.reflect.Field)pEnv->UnwrapRef(field)).Cookie;
+			return FieldWrapper.FromField(pEnv->UnwrapRef(field)).Cookie;
 		}
 
 		internal static jobject ToReflectedMethod(JNIEnv* pEnv, jclass clazz_ignored, jmethodID method, jboolean isStatic)
@@ -1726,10 +1725,7 @@ namespace IKVM.Runtime
 		{
 			ManagedJNIEnv env = pEnv->GetManagedJNIEnv();
 			Exception x = UnwrapRef(env, throwable) as Exception;
-			if (x != null)
-			{
-				env.pendingException = x;
-			}
+			env.pendingException = x;
 			return JNI_OK;
 		}
 
@@ -1737,7 +1733,7 @@ namespace IKVM.Runtime
 		{
 			ManagedJNIEnv env = pEnv->GetManagedJNIEnv();
 			TypeWrapper wrapper = TypeWrapper.FromClass((java.lang.Class)UnwrapRef(env, clazz));
-			MethodWrapper mw = wrapper.GetMethodWrapper("<init>", msg == null ? "()V" : "(Ljava.lang.String;)V", false);
+			MethodWrapper mw = wrapper.GetMethodWrapper("<init>", "(Ljava.lang.String;)V", false);
 			if(mw != null)
 			{
 				jint rc;
@@ -1746,7 +1742,7 @@ namespace IKVM.Runtime
 				{
 					wrapper.Finish();
 					java.lang.reflect.Constructor cons = (java.lang.reflect.Constructor)mw.ToMethodOrConstructor(false);
-					exception = (Exception)cons.newInstance(msg == null ? new object[0] : new object[] { StringFromOEM(msg) }, env.callerID);
+					exception = (Exception)cons.newInstance(new object[] { StringFromOEM(msg) }, env.callerID);
 					rc = JNI_OK;
 				}
 				catch(RetargetableJavaException x)
@@ -1929,101 +1925,47 @@ namespace IKVM.Runtime
 			public jobject l;
 		}
 
-		private static object InvokeHelper(JNIEnv* pEnv, jobject objHandle, jmethodID methodID, jvalue* pArgs, bool nonVirtual)
+		private static object InvokeHelper(JNIEnv* pEnv, jobject obj, jmethodID methodID, jvalue *args, bool nonVirtual)
 		{
 			ManagedJNIEnv env = pEnv->GetManagedJNIEnv();
-			object obj = UnwrapRef(env, objHandle);
 			MethodWrapper mw = MethodWrapper.FromCookie(methodID);
-			mw.Link();
-			mw.ResolveMethod();
 			TypeWrapper[] argTypes = mw.GetParameters();
-			object[] args = new object[argTypes.Length + (mw.HasCallerID ? 1 : 0)];
-			for (int i = 0; i < argTypes.Length; i++)
+			object[] argarray = new object[argTypes.Length];
+			for (int i = 0; i < argarray.Length; i++)
 			{
 				TypeWrapper type = argTypes[i];
 				if (type == PrimitiveTypeWrapper.BOOLEAN)
-					args[i] = pArgs[i].z != JNI_FALSE;
+					argarray[i] = java.lang.Boolean.valueOf(args[i].z != JNI_FALSE);
 				else if (type == PrimitiveTypeWrapper.BYTE)
-					args[i] = (byte)pArgs[i].b;
+					argarray[i] = java.lang.Byte.valueOf((byte)args[i].b);
 				else if (type == PrimitiveTypeWrapper.CHAR)
-					args[i] = (char)pArgs[i].c;
+					argarray[i] = java.lang.Character.valueOf((char)args[i].c);
 				else if (type == PrimitiveTypeWrapper.SHORT)
-					args[i] = pArgs[i].s;
+					argarray[i] = java.lang.Short.valueOf(args[i].s);
 				else if (type == PrimitiveTypeWrapper.INT)
-					args[i] = pArgs[i].i;
+					argarray[i] = java.lang.Integer.valueOf(args[i].i);
 				else if (type == PrimitiveTypeWrapper.LONG)
-					args[i] = pArgs[i].j;
+					argarray[i] = java.lang.Long.valueOf(args[i].j);
 				else if (type == PrimitiveTypeWrapper.FLOAT)
-					args[i] = pArgs[i].f;
+					argarray[i] = java.lang.Float.valueOf(args[i].f);
 				else if (type == PrimitiveTypeWrapper.DOUBLE)
-					args[i] = pArgs[i].d;
+					argarray[i] = java.lang.Double.valueOf(args[i].d);
 				else
-					args[i] = argTypes[i].GhostWrap(UnwrapRef(env, pArgs[i].l));
-			}
-			if (mw.HasCallerID)
-			{
-				args[args.Length - 1] = env.callerID;
+					argarray[i] = UnwrapRef(env, args[i].l);
 			}
 			try
 			{
-				if (nonVirtual && mw.RequiresNonVirtualDispatcher)
-				{
-					return InvokeNonVirtual(env, mw, obj, args);
-				}
-				if (mw.IsConstructor)
-				{
-					if (obj == null)
-					{
-						return mw.CreateInstance(args);
-					}
-					else
-					{
-						MethodBase mb = mw.GetMethod();
-						if (mb.IsStatic)
-						{
-							// we're dealing with a constructor on a remapped type, if obj is supplied, it means
-							// that we should call the constructor on an already existing instance, but that isn't
-							// possible with remapped types
-							throw new NotSupportedException(string.Format("Remapped type {0} doesn't support constructor invocation on an existing instance", mw.DeclaringType.Name));
-						}
-						else if (!mb.DeclaringType.IsInstanceOfType(obj))
-						{
-							// we're trying to initialize an existing instance of a remapped type
-							throw new NotSupportedException("Unable to partially construct object of type " + obj.GetType().FullName + " to type " + mb.DeclaringType.FullName);
-						}
-					}
-				}
-				return mw.Invoke(obj, args);
+				return mw.InvokeJNI(UnwrapRef(env, obj), argarray, nonVirtual, env.callerID);
 			}
-			catch (Exception x)
+			catch(java.lang.reflect.InvocationTargetException x)
+			{
+				SetPendingException(pEnv, ikvm.runtime.Util.mapException(x.getCause()));
+				return null;
+			}
+			catch(Exception x)
 			{
 				SetPendingException(pEnv, ikvm.runtime.Util.mapException(x));
 				return null;
-			}
-		}
-
-		private static object InvokeNonVirtual(ManagedJNIEnv env, MethodWrapper mw, object obj, object[] argarray)
-		{
-			if (mw.HasCallerID || mw.IsDynamicOnly)
-			{
-				throw new NotSupportedException();
-			}
-			if (mw.DeclaringType.IsRemapped && !mw.DeclaringType.TypeAsBaseType.IsInstanceOfType(obj))
-			{
-				return mw.InvokeNonvirtualRemapped(obj, argarray);
-			}
-			else
-			{
-				Delegate del = (Delegate)Activator.CreateInstance(mw.GetDelegateType(),
-					new object[] { obj, mw.GetMethod().MethodHandle.GetFunctionPointer() });
-				try
-				{
-					return del.DynamicInvoke(argarray);
-				}
-				catch (TargetInvocationException x)
-				{
-					throw ikvm.runtime.Util.mapException(x.InnerException);
-				}
 			}
 		}
 
@@ -2715,11 +2657,6 @@ namespace IKVM.Runtime
 
 		internal static jobject NewStringUTF(JNIEnv* pEnv, byte* psz)
 		{
-			if (psz == null)
-			{
-				// The JNI spec does not explicitly allow a null pointer, but the JDK accepts it
-				return IntPtr.Zero;
-			}
 			return pEnv->MakeLocalRef(StringFromUTF8(psz));
 		}
 

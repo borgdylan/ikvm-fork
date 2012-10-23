@@ -128,7 +128,7 @@ namespace IKVM.Reflection.Emit
 			internal int offset;
 		}
 
-		internal sealed class ExceptionBlock : IComparer<ExceptionBlock>
+		private sealed class ExceptionBlock : IComparer<ExceptionBlock>
 		{
 			internal readonly int ordinal;
 			internal Label labelEnd;
@@ -136,23 +136,12 @@ namespace IKVM.Reflection.Emit
 			internal int tryLength;
 			internal int handlerOffset;
 			internal int handlerLength;
-			internal int filterOffsetOrExceptionTypeToken;
-			internal ExceptionHandlingClauseOptions kind;
+			internal Type exceptionType;	// MarkerType.Finally = finally block, MarkerType.Filter = handler with filter, MarkerType.Fault = fault block
+			internal int filterOffset;
 
 			internal ExceptionBlock(int ordinal)
 			{
 				this.ordinal = ordinal;
-			}
-
-			internal ExceptionBlock(ExceptionHandler h)
-			{
-				this.ordinal = -1;
-				this.tryOffset = h.TryOffset;
-				this.tryLength = h.TryLength;
-				this.handlerOffset = h.HandlerOffset;
-				this.handlerLength = h.HandlerLength;
-				this.kind = h.Kind;
-				this.filterOffsetOrExceptionTypeToken = kind == ExceptionHandlingClauseOptions.Filter ? h.FilterOffset : h.ExceptionTypeToken;
 			}
 
 			int IComparer<ExceptionBlock>.Compare(ExceptionBlock x, ExceptionBlock y)
@@ -254,57 +243,56 @@ namespace IKVM.Reflection.Emit
 
 		public void BeginCatchBlock(Type exceptionType)
 		{
-			if (exceptionType == null)
-			{
-				// this must be a catch block after a filter
-				ExceptionBlock block = exceptionStack.Peek();
-				if (block.kind != ExceptionHandlingClauseOptions.Filter || block.handlerOffset != 0)
-				{
-					throw new ArgumentNullException("exceptionType");
-				}
-				if (exceptionBlockAssistanceMode == EBAM_COMPAT || (exceptionBlockAssistanceMode == EBAM_CLEVER && stackHeight != -1))
-				{
-					Emit(OpCodes.Endfilter);
-				}
-				stackHeight = 0;
-				UpdateStack(1);
-				block.handlerOffset = code.Position;
-			}
-			else
-			{
-				ExceptionBlock block = BeginCatchOrFilterBlock();
-				block.kind = ExceptionHandlingClauseOptions.Clause;
-				block.filterOffsetOrExceptionTypeToken = moduleBuilder.GetTypeTokenForMemberRef(exceptionType);
-				block.handlerOffset = code.Position;
-			}
-		}
-
-		private ExceptionBlock BeginCatchOrFilterBlock()
-		{
 			ExceptionBlock block = exceptionStack.Peek();
 			if (exceptionBlockAssistanceMode == EBAM_COMPAT || (exceptionBlockAssistanceMode == EBAM_CLEVER && stackHeight != -1))
 			{
-				Emit(OpCodes.Leave, block.labelEnd);
+				if (exceptionType == null)
+				{
+					Emit(OpCodes.Endfilter);
+				}
+				else
+				{
+					Emit(OpCodes.Leave, block.labelEnd);
+				}
 			}
 			stackHeight = 0;
 			UpdateStack(1);
-			if (block.tryLength == 0)
+			if (exceptionType == null)
 			{
-				block.tryLength = code.Position - block.tryOffset;
+				if (block.exceptionType != MarkerType.Filter || block.handlerOffset != 0)
+				{
+					throw new ArgumentNullException("exceptionType");
+				}
+				block.handlerOffset = code.Position;
 			}
 			else
 			{
-				block.handlerLength = code.Position - block.handlerOffset;
-				exceptionStack.Pop();
-				ExceptionBlock newBlock = new ExceptionBlock(exceptions.Count);
-				newBlock.labelEnd = block.labelEnd;
-				newBlock.tryOffset = block.tryOffset;
-				newBlock.tryLength = block.tryLength;
-				block = newBlock;
-				exceptions.Add(block);
-				exceptionStack.Push(block);
+				if (block.tryLength == 0)
+				{
+					block.tryLength = code.Position - block.tryOffset;
+				}
+				else
+				{
+					block.handlerLength = code.Position - block.handlerOffset;
+					exceptionStack.Pop();
+					ExceptionBlock newBlock = new ExceptionBlock(exceptions.Count);
+					newBlock.labelEnd = block.labelEnd;
+					newBlock.tryOffset = block.tryOffset;
+					newBlock.tryLength = block.tryLength;
+					block = newBlock;
+					exceptions.Add(block);
+					exceptionStack.Push(block);
+				}
+				block.exceptionType = exceptionType;
+				if (exceptionType == MarkerType.Filter)
+				{
+					block.filterOffset = code.Position;
+				}
+				else
+				{
+					block.handlerOffset = code.Position;
+				}
 			}
-			return block;
 		}
 
 		public Label BeginExceptionBlock()
@@ -320,22 +308,20 @@ namespace IKVM.Reflection.Emit
 
 		public void BeginExceptFilterBlock()
 		{
-			ExceptionBlock block = BeginCatchOrFilterBlock();
-			block.kind = ExceptionHandlingClauseOptions.Filter;
-			block.filterOffsetOrExceptionTypeToken = code.Position;
+			BeginCatchBlock(MarkerType.Filter);
 		}
 
 		public void BeginFaultBlock()
 		{
-			BeginFinallyFaultBlock(ExceptionHandlingClauseOptions.Fault);
+			BeginFinallyFaultBlock(MarkerType.Fault);
 		}
 
 		public void BeginFinallyBlock()
 		{
-			BeginFinallyFaultBlock(ExceptionHandlingClauseOptions.Finally);
+			BeginFinallyFaultBlock(MarkerType.Finally);
 		}
 
-		private void BeginFinallyFaultBlock(ExceptionHandlingClauseOptions kind)
+		private void BeginFinallyFaultBlock(Type type)
 		{
 			ExceptionBlock block = exceptionStack.Peek();
 			if (exceptionBlockAssistanceMode == EBAM_COMPAT || (exceptionBlockAssistanceMode == EBAM_CLEVER && stackHeight != -1))
@@ -370,7 +356,7 @@ namespace IKVM.Reflection.Emit
 				exceptionStack.Push(block);
 			}
 			block.handlerOffset = code.Position;
-			block.kind = kind;
+			block.exceptionType = type;
 			stackHeight = 0;
 		}
 
@@ -379,7 +365,7 @@ namespace IKVM.Reflection.Emit
 			ExceptionBlock block = exceptionStack.Pop();
 			if (exceptionBlockAssistanceMode == EBAM_COMPAT || (exceptionBlockAssistanceMode == EBAM_CLEVER && stackHeight != -1))
 			{
-				if (block.kind != ExceptionHandlingClauseOptions.Finally && block.kind != ExceptionHandlingClauseOptions.Fault)
+				if (block.filterOffset != 0 || (block.exceptionType != MarkerType.Finally && block.exceptionType != MarkerType.Fault))
 				{
 					Emit(OpCodes.Leave, block.labelEnd);
 				}
@@ -426,7 +412,7 @@ namespace IKVM.Reflection.Emit
 
 		public LocalBuilder __DeclareLocal(Type localType, bool pinned, CustomModifiers customModifiers)
 		{
-			LocalBuilder local = new LocalBuilder(localType, localsCount++, pinned, customModifiers);
+			LocalBuilder local = new LocalBuilder(localType, localsCount++, pinned);
 			locals.__AddArgument(localType, pinned, customModifiers);
 			if (scope != null)
 			{
@@ -493,7 +479,7 @@ namespace IKVM.Reflection.Emit
 		public void Emit(OpCode opc, FieldInfo field)
 		{
 			Emit(opc);
-			WriteToken(moduleBuilder.GetFieldToken(field).Token);
+			WriteToken(moduleBuilder.GetFieldToken(field));
 		}
 
 		public void Emit(OpCode opc, short arg)
@@ -670,13 +656,22 @@ namespace IKVM.Reflection.Emit
 			}
 		}
 
-		private void WriteToken(int token)
+		private void WriteToken(FieldToken token)
 		{
-			if (ModuleBuilder.IsPseudoToken(token))
+			if (token.IsPseudoToken)
 			{
 				tokenFixups.Add(code.Position);
 			}
-			code.Write(token);
+			code.Write(token.Token);
+		}
+
+		private void WriteToken(MethodToken token)
+		{
+			if (token.IsPseudoToken)
+			{
+				tokenFixups.Add(code.Position);
+			}
+			code.Write(token.Token);
 		}
 
 		private void UpdateStack(OpCode opc, bool hasthis, Type returnType, int parameterCount)
@@ -708,7 +703,7 @@ namespace IKVM.Reflection.Emit
 		{
 			UpdateStack(opc, method.HasThis, method.ReturnType, method.ParameterCount);
 			Emit(opc);
-			WriteToken(moduleBuilder.GetMethodTokenForIL(method).Token);
+			WriteToken(moduleBuilder.GetMethodTokenForIL(method));
 		}
 
 		public void Emit(OpCode opc, ConstructorInfo constructor)
@@ -794,11 +789,8 @@ namespace IKVM.Reflection.Emit
 		{
 			SignatureHelper sig = SignatureHelper.GetMethodSigHelper(moduleBuilder, callingConvention, returnType);
 			sig.AddArguments(parameterTypes, null, null);
-			if (optionalParameterTypes != null && optionalParameterTypes.Length != 0)
-			{
-				sig.AddSentinel();
-				sig.AddArguments(optionalParameterTypes, null, null);
-			}
+			sig.AddSentinel();
+			sig.AddArguments(optionalParameterTypes, null, null);
 			Emit(opc, sig);
 		}
 
@@ -921,11 +913,7 @@ namespace IKVM.Reflection.Emit
 			}
 			else
 			{
-				if (localsCount != 0)
-				{
-					localVarSigTok = moduleBuilder.GetSignatureToken(locals).Token;
-				}
-				rva = WriteFatHeaderAndCode(bb, localVarSigTok, initLocals);
+				rva = WriteFatHeaderAndCode(bb, ref localVarSigTok, initLocals);
 			}
 
 			if (moduleBuilder.symbolWriter != null)
@@ -992,23 +980,26 @@ namespace IKVM.Reflection.Emit
 			}
 		}
 
-		internal static void WriteTinyHeader(ByteBuffer bb, int length)
-		{
-			const byte CorILMethod_TinyFormat = 0x2;
-			bb.Write((byte)(CorILMethod_TinyFormat | (length << 2)));
-		}
-
 		private int WriteTinyHeaderAndCode(ByteBuffer bb)
 		{
 			int rva = bb.Position;
-			WriteTinyHeader(bb, code.Length);
-			AddTokenFixups(bb.Position, moduleBuilder.tokenFixupOffsets, tokenFixups);
-			bb.Write(code);
+			const byte CorILMethod_TinyFormat = 0x2;
+			bb.Write((byte)(CorILMethod_TinyFormat | (code.Length << 2)));
+			WriteCode(bb);
 			return rva;
 		}
 
-		internal static void WriteFatHeader(ByteBuffer bb, bool initLocals, bool exceptions, ushort maxStack, int codeLength, int localVarSigTok)
+		private int WriteFatHeaderAndCode(ByteBuffer bb, ref int localVarSigTok, bool initLocals)
 		{
+			// fat headers require 4-byte alignment
+			bb.Align(4);
+			int rva = bb.Position;
+
+			if (localsCount != 0)
+			{
+				localVarSigTok = moduleBuilder.GetSignatureToken(locals).Token;
+			}
+
 			const byte CorILMethod_FatFormat = 0x03;
 			const byte CorILMethod_MoreSects = 0x08;
 			const byte CorILMethod_InitLocals = 0x10;
@@ -1019,44 +1010,23 @@ namespace IKVM.Reflection.Emit
 				flagsAndSize |= CorILMethod_InitLocals;
 			}
 
-			if (exceptions)
+			if (exceptions.Count > 0)
 			{
 				flagsAndSize |= CorILMethod_MoreSects;
 			}
 
 			bb.Write(flagsAndSize);
 			bb.Write(maxStack);
-			bb.Write(codeLength);
+			bb.Write(code.Length);
 			bb.Write(localVarSigTok);
-		}
 
-		private int WriteFatHeaderAndCode(ByteBuffer bb, int localVarSigTok, bool initLocals)
-		{
-			// fat headers require 4-byte alignment
-			bb.Align(4);
-			int rva = bb.Position;
-			WriteFatHeader(bb, initLocals, exceptions.Count > 0, maxStack, code.Length, localVarSigTok);
-			AddTokenFixups(bb.Position, moduleBuilder.tokenFixupOffsets, tokenFixups);
-			bb.Write(code);
+			WriteCode(bb);
+
 			if (exceptions.Count > 0)
 			{
-				exceptions.Sort(exceptions[0]);
-				WriteExceptionHandlers(bb, exceptions);
-			}
-			return rva;
-		}
+				bb.Align(4);
 
-		internal static void WriteExceptionHandlers(ByteBuffer bb, List<ExceptionBlock> exceptions)
-		{
-			bb.Align(4);
-
-			bool fat = false;
-			if (exceptions.Count * 12 + 4 > 255)
-			{
-				fat = true;
-			}
-			else
-			{
+				bool fat = false;
 				foreach (ExceptionBlock block in exceptions)
 				{
 					if (block.tryOffset > 65535 || block.tryLength > 255 || block.handlerOffset > 65535 || block.handlerLength > 255)
@@ -1065,50 +1035,105 @@ namespace IKVM.Reflection.Emit
 						break;
 					}
 				}
-			}
-
-			const byte CorILMethod_Sect_EHTable = 0x1;
-			const byte CorILMethod_Sect_FatFormat = 0x40;
-
-			if (fat)
-			{
-				bb.Write((byte)(CorILMethod_Sect_EHTable | CorILMethod_Sect_FatFormat));
-				int dataSize = exceptions.Count * 24 + 4;
-				bb.Write((byte)dataSize);
-				bb.Write((short)(dataSize >> 8));
-				foreach (ExceptionBlock block in exceptions)
+				exceptions.Sort(exceptions[0]);
+				if (exceptions.Count * 12 + 4 > 255)
 				{
-					bb.Write((int)block.kind);
-					bb.Write(block.tryOffset);
-					bb.Write(block.tryLength);
-					bb.Write(block.handlerOffset);
-					bb.Write(block.handlerLength);
-					bb.Write(block.filterOffsetOrExceptionTypeToken);
+					fat = true;
+				}
+				const byte CorILMethod_Sect_EHTable = 0x1;
+				const byte CorILMethod_Sect_FatFormat = 0x40;
+				const short COR_ILEXCEPTION_CLAUSE_EXCEPTION = 0x0000;
+				const short COR_ILEXCEPTION_CLAUSE_FILTER = 0x0001;
+				const short COR_ILEXCEPTION_CLAUSE_FINALLY = 0x0002;
+				const short COR_ILEXCEPTION_CLAUSE_FAULT = 0x0004;
+
+				if (fat)
+				{
+					bb.Write((byte)(CorILMethod_Sect_EHTable | CorILMethod_Sect_FatFormat));
+					int dataSize = exceptions.Count * 24 + 4;
+					bb.Write((byte)dataSize);
+					bb.Write((short)(dataSize >> 8));
+					foreach (ExceptionBlock block in exceptions)
+					{
+						if (block.exceptionType == MarkerType.Fault)
+						{
+							bb.Write((int)COR_ILEXCEPTION_CLAUSE_FAULT);
+						}
+						else if (block.exceptionType == MarkerType.Filter)
+						{
+							bb.Write((int)COR_ILEXCEPTION_CLAUSE_FILTER);
+						}
+						else if (block.exceptionType == MarkerType.Finally)
+						{
+							bb.Write((int)COR_ILEXCEPTION_CLAUSE_FINALLY);
+						}
+						else
+						{
+							bb.Write((int)COR_ILEXCEPTION_CLAUSE_EXCEPTION);
+						}
+						bb.Write(block.tryOffset);
+						bb.Write(block.tryLength);
+						bb.Write(block.handlerOffset);
+						bb.Write(block.handlerLength);
+						if (block.exceptionType != MarkerType.Fault && block.exceptionType != MarkerType.Filter && block.exceptionType != MarkerType.Finally)
+						{
+							bb.Write(moduleBuilder.GetTypeTokenForMemberRef(block.exceptionType));
+						}
+						else
+						{
+							bb.Write(block.filterOffset);
+						}
+					}
+				}
+				else
+				{
+					bb.Write(CorILMethod_Sect_EHTable);
+					bb.Write((byte)(exceptions.Count * 12 + 4));
+					bb.Write((short)0);
+					foreach (ExceptionBlock block in exceptions)
+					{
+						if (block.exceptionType == MarkerType.Fault)
+						{
+							bb.Write(COR_ILEXCEPTION_CLAUSE_FAULT);
+						}
+						else if (block.exceptionType == MarkerType.Filter)
+						{
+							bb.Write(COR_ILEXCEPTION_CLAUSE_FILTER);
+						}
+						else if (block.exceptionType == MarkerType.Finally)
+						{
+							bb.Write(COR_ILEXCEPTION_CLAUSE_FINALLY);
+						}
+						else
+						{
+							bb.Write(COR_ILEXCEPTION_CLAUSE_EXCEPTION);
+						}
+						bb.Write((short)block.tryOffset);
+						bb.Write((byte)block.tryLength);
+						bb.Write((short)block.handlerOffset);
+						bb.Write((byte)block.handlerLength);
+						if (block.exceptionType != MarkerType.Fault && block.exceptionType != MarkerType.Filter && block.exceptionType != MarkerType.Finally)
+						{
+							bb.Write(moduleBuilder.GetTypeTokenForMemberRef(block.exceptionType));
+						}
+						else
+						{
+							bb.Write(block.filterOffset);
+						}
+					}
 				}
 			}
-			else
-			{
-				bb.Write(CorILMethod_Sect_EHTable);
-				bb.Write((byte)(exceptions.Count * 12 + 4));
-				bb.Write((short)0);
-				foreach (ExceptionBlock block in exceptions)
-				{
-					bb.Write((short)block.kind);
-					bb.Write((short)block.tryOffset);
-					bb.Write((byte)block.tryLength);
-					bb.Write((short)block.handlerOffset);
-					bb.Write((byte)block.handlerLength);
-					bb.Write(block.filterOffsetOrExceptionTypeToken);
-				}
-			}
+			return rva;
 		}
 
-		internal static void AddTokenFixups(int codeOffset, List<int> tokenFixupOffsets, IEnumerable<int> tokenFixups)
+		private void WriteCode(ByteBuffer bb)
 		{
-			foreach (int fixup in tokenFixups)
+			int codeOffset = bb.Position;
+			foreach (int fixup in this.tokenFixups)
 			{
-				tokenFixupOffsets.Add(fixup + codeOffset);
+				moduleBuilder.tokenFixupOffsets.Add(fixup + codeOffset);
 			}
+			bb.Write(code);
 		}
 
 		private void WriteScope(Scope scope, int localVarSigTok)
