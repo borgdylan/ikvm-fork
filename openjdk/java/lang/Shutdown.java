@@ -60,9 +60,6 @@ class Shutdown {
     // the index of the currently running shutdown hook to the hooks array
     private static int currentRunningHook = 0;
 
-    // [IKVM] have we registered the AppDomain.ProcessExit event handler?
-    private static boolean registeredProcessExit;
-
     /* The preceding static fields are protected by this lock */
     private static class Lock { };
     private static Object lock = new Lock();
@@ -77,7 +74,7 @@ class Shutdown {
         }
     }
     
-    private static void registerProcessExit() {
+    static {
         try {
             // MONOBUG Mono doesn't support starting a new thread during ProcessExit
             // (and application shutdown hooks are based on threads)
@@ -132,11 +129,6 @@ class Shutdown {
             } else {
                 if (state > HOOKS || (state == HOOKS && slot <= currentRunningHook))
                     throw new IllegalStateException("Shutdown in progress");
-            }
-
-            if (!registeredProcessExit) {
-                registeredProcessExit = true;
-                registerProcessExit();
             }
 
             hooks[slot] = hook;
