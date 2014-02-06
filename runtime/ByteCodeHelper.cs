@@ -146,142 +146,67 @@ namespace IKVM.Runtime
 			return obj;
 		}
 
-#if !FIRST_PASS
 		[DebuggerStepThroughAttribute]
-		public static object DynamicMultianewarray(string clazz, int[] lengths, ikvm.@internal.CallerID callerId)
+		public static object DynamicMultianewarray(int[] lengths, java.lang.Class clazz)
 		{
+#if FIRST_PASS
+			return null;
+#else
 			Profiler.Count("DynamicMultianewarray");
-			TypeWrapper wrapper = LoadTypeWrapper(clazz, callerId);
+			TypeWrapper wrapper = TypeWrapper.FromClass(clazz);
 			return multianewarray(wrapper.TypeAsArrayType.TypeHandle, lengths);
+#endif
 		}
 
 		[DebuggerStepThroughAttribute]
-		public static object DynamicNewarray(int length, string clazz, ikvm.@internal.CallerID callerId)
+		public static object DynamicNewarray(int length, java.lang.Class clazz)
 		{
+#if FIRST_PASS
+			return null;
+#else
 			Profiler.Count("DynamicNewarray");
 			if(length < 0)
 			{
 				throw new java.lang.NegativeArraySizeException();
 			}
-			TypeWrapper wrapper = LoadTypeWrapper(clazz, callerId);
+			TypeWrapper wrapper = TypeWrapper.FromClass(clazz);
 			return Array.CreateInstance(wrapper.TypeAsArrayType, length);
+#endif
 		}
 
 		[DebuggerStepThroughAttribute]
-		public static void DynamicAastore(object arrayref, int index, object val, RuntimeTypeHandle type, string clazz)
+		public static void DynamicAastore(object arrayref, int index, object val)
 		{
+#if !FIRST_PASS
 			Profiler.Count("DynamicAastore");
-			// TODO do we need to load the type here?
 			((Array)arrayref).SetValue(val, index);
+#endif
 		}
 
 		[DebuggerStepThroughAttribute]
-		public static object DynamicAaload(object arrayref, int index, RuntimeTypeHandle type, string clazz)
+		public static object DynamicAaload(object arrayref, int index)
 		{
+#if FIRST_PASS
+			return null;
+#else
 			Profiler.Count("DynamicAaload");
-			// TODO do we need to load the type here?
 			return ((Array)arrayref).GetValue(index);
-		}
-
-		private static FieldWrapper GetFieldWrapper(object thisObj, string clazz, string name, string sig, bool isStatic, ikvm.@internal.CallerID callerId)
-		{
-			TypeWrapper caller = TypeWrapper.FromClass(callerId.getCallerClass());
-			TypeWrapper wrapper = LoadTypeWrapper(clazz, callerId);
-			FieldWrapper field = wrapper.GetFieldWrapper(name, sig);
-			if(field == null)
-			{
-				throw new java.lang.NoSuchFieldError(clazz + "." + name);
-			}
-			// TODO check loader constraints
-			if(field.IsStatic != isStatic)
-			{
-				throw new java.lang.IncompatibleClassChangeError(clazz + "." + name);
-			}
-			TypeWrapper objType = null;
-			if(thisObj != null)
-			{
-				objType = ClassLoaderWrapper.GetWrapperFromType(thisObj.GetType());
-			}
-			if(field.IsAccessibleFrom(wrapper, caller, objType))
-			{
-				return field;
-			}
-			throw new java.lang.IllegalAccessError(field.DeclaringType.Name + "." + name);
-		}
-
-		[DebuggerStepThroughAttribute]
-		public static object DynamicGetfield(object obj, string name, string sig, string clazz, ikvm.@internal.CallerID callerID)
-		{
-			Profiler.Count("DynamicGetfield");
-			FieldWrapper fw = GetFieldWrapper(obj, clazz, name, sig, false, callerID);
-			java.lang.reflect.Field field = (java.lang.reflect.Field)fw.ToField(false);
-			object val = field.get(obj, callerID);
-			if(fw.FieldTypeWrapper.IsPrimitive)
-			{
-				val = JVM.Unbox(val);
-			}
-			return val;
-		}
-
-		[DebuggerStepThroughAttribute]
-		public static object DynamicGetstatic(string name, string sig, string clazz, ikvm.@internal.CallerID callerID)
-		{
-			Profiler.Count("DynamicGetstatic");
-			FieldWrapper fw = GetFieldWrapper(null, clazz, name, sig, true, callerID);
-			java.lang.reflect.Field field = (java.lang.reflect.Field)fw.ToField(false);
-			object val = field.get(null, callerID);
-			if(fw.FieldTypeWrapper.IsPrimitive)
-			{
-				val = JVM.Unbox(val);
-			}
-			return val;
-		}
-
-		[DebuggerStepThroughAttribute]
-		public static void DynamicPutfield(object obj, object val, string name, string sig, string clazz, ikvm.@internal.CallerID callerID)
-		{
-			Profiler.Count("DynamicPutfield");
-			FieldWrapper fw = GetFieldWrapper(obj, clazz, name, sig, false, callerID);
-			if(fw.IsFinal)
-			{
-				throw new java.lang.IllegalAccessError("Field " + fw.DeclaringType.Name + "." + fw.Name + " is final");
-			}
-			java.lang.reflect.Field field = (java.lang.reflect.Field)fw.ToField(false);
-			if(fw.FieldTypeWrapper.IsPrimitive)
-			{
-				val = JVM.Box(val);
-			}
-			field.set(obj, val, callerID);
-		}
-
-		[DebuggerStepThroughAttribute]
-		public static void DynamicPutstatic(object val, string name, string sig, string clazz, ikvm.@internal.CallerID callerID)
-		{
-			Profiler.Count("DynamicPutstatic");
-			FieldWrapper fw = GetFieldWrapper(null, clazz, name, sig, true, callerID);
-			if(fw.IsFinal)
-			{
-				throw new java.lang.IllegalAccessError("Field " + fw.DeclaringType.Name + "." + fw.Name + " is final");
-			}
-			java.lang.reflect.Field field = (java.lang.reflect.Field)fw.ToField(false);
-			if(fw.FieldTypeWrapper.IsPrimitive)
-			{
-				val = JVM.Box(val);
-			}
-			field.set(null, val, callerID);
+#endif
 		}
 
 		// the sole purpose of this method is to check whether the clazz can be instantiated (but not to actually do it)
 		[DebuggerStepThroughAttribute]
-		public static void DynamicNewCheckOnly(string clazz, ikvm.@internal.CallerID callerId)
+		public static void DynamicNewCheckOnly(java.lang.Class clazz)
 		{
+#if !FIRST_PASS
 			Profiler.Count("DynamicNewCheckOnly");
-			TypeWrapper wrapper = LoadTypeWrapper(clazz, callerId);
+			TypeWrapper wrapper = TypeWrapper.FromClass(clazz);
 			if(wrapper.IsAbstract)
 			{
-				throw new java.lang.InstantiationError(clazz);
+				throw new java.lang.InstantiationError(wrapper.Name);
 			}
 			wrapper.RunClassInit();
+#endif
 		}
 
 		private static TypeWrapper LoadTypeWrapper(string clazz, ikvm.@internal.CallerID callerId)
@@ -311,35 +236,40 @@ namespace IKVM.Runtime
 		[DebuggerStepThroughAttribute]
 		public static java.lang.Class DynamicClassLiteral(string clazz, ikvm.@internal.CallerID callerId)
 		{
+#if FIRST_PASS
+			return null;
+#else
 			Profiler.Count("DynamicClassLiteral");
 			return LoadTypeWrapper(clazz, callerId).ClassObject;
+#endif
 		}
 
 		[DebuggerStepThroughAttribute]
-		public static object DynamicCast(object obj, string clazz, ikvm.@internal.CallerID callerId)
+		public static object DynamicCast(object obj, java.lang.Class clazz)
 		{
+#if FIRST_PASS
+			return null;
+#else
+			Debug.Assert(obj != null);
 			Profiler.Count("DynamicCast");
-			// NOTE it's important that we don't try to load the class if obj == null
-			// (to be compatible with Sun)
-			if(obj != null && !DynamicInstanceOf(obj, clazz, callerId))
+			if (!DynamicInstanceOf(obj, clazz))
 			{
-				throw new java.lang.ClassCastException(NativeCode.ikvm.runtime.Util.GetTypeWrapperFromObject(obj).Name);
+				throw new java.lang.ClassCastException(NativeCode.ikvm.runtime.Util.GetTypeWrapperFromObject(obj).Name + " cannot be cast to " + clazz.getName());
 			}
 			return obj;
+#endif
 		}
 
 		[DebuggerStepThroughAttribute]
-		public static bool DynamicInstanceOf(object obj, string clazz, ikvm.@internal.CallerID callerId)
+		public static bool DynamicInstanceOf(object obj, java.lang.Class clazz)
 		{
+#if FIRST_PASS
+			return false;
+#else
+			Debug.Assert(obj != null);
 			Profiler.Count("DynamicInstanceOf");
-			// NOTE it's important that we don't try to load the class if obj == null
-			// (to be compatible with Sun)
-			if(obj == null)
-			{
-				return false;
-			}
-			TypeWrapper wrapper = LoadTypeWrapper(clazz, callerId);
-			return wrapper.IsInstance(obj);
+			return TypeWrapper.FromClass(clazz).IsInstance(obj);
+#endif
 		}
 
 		[DebuggerStepThrough]
@@ -483,10 +413,28 @@ namespace IKVM.Runtime
 		[DebuggerStepThrough]
 		public static Delegate DynamicCreateDelegate(object obj, Type delegateType, string name, string sig)
 		{
+#if FIRST_PASS
+			return null;
+#else
 			TypeWrapper tw = TypeWrapper.FromClass(ikvm.runtime.Util.getClassFromObject(obj));
 			MethodWrapper mw = tw.GetMethodWrapper(name, sig, true);
 			if (mw == null || mw.IsStatic || !mw.IsPublic)
 			{
+#if NO_REF_EMIT
+				java.lang.invoke.MethodType methodType = MethodHandleUtil.GetDelegateMethodType(delegateType);
+				if (methodType.parameterCount() > MethodHandleUtil.MaxArity)
+				{
+					throw new NotImplementedException();
+				}
+				java.lang.invoke.MethodHandle exception = java.lang.invoke.MethodHandles.publicLookup()
+					.findConstructor(mw == null || mw.IsStatic ? typeof(java.lang.AbstractMethodError) : typeof(java.lang.IllegalAccessError),
+						java.lang.invoke.MethodType.methodType(typeof(void), typeof(string)))
+					.bindTo(tw.Name + ".Invoke" + sig);
+				return Delegate.CreateDelegate(delegateType,
+						java.lang.invoke.MethodHandles.dropArguments(
+							java.lang.invoke.MethodHandles.foldArguments(java.lang.invoke.MethodHandles.throwException(methodType.returnType(), exception.type().returnType()), exception),
+							0, methodType.parameterArray()).vmtarget, "Invoke");
+#else
 				MethodInfo invoke = delegateType.GetMethod("Invoke");
 				ParameterInfo[] parameters = invoke.GetParameters();
 				Type[] parameterTypes = new Type[parameters.Length + 1];
@@ -505,103 +453,86 @@ namespace IKVM.Runtime
 				ilgen.Emit(System.Reflection.Emit.OpCodes.Throw);
 				ilgen.DoEmit();
 				return dm.CreateDelegate(delegateType, obj);
+#endif
 			}
 			else
 			{
 				mw.ResolveMethod();
 				return Delegate.CreateDelegate(delegateType, obj, (MethodInfo)mw.GetMethod());
 			}
+#endif
 		}
-#else
-		[DebuggerStepThroughAttribute]
-		public static object DynamicCast(object obj, RuntimeTypeHandle type, string clazz)
-		{
-			return null;
-		}
-
-		[DebuggerStepThroughAttribute]
-		public static bool DynamicInstanceOf(object obj, RuntimeTypeHandle type, string clazz)
-		{
-			return false;
-		}
-
-		[DebuggerStepThrough]
-		public static Delegate DynamicCreateDelegate(object obj, Type delegateType)
-		{
-			return null;
-		}
-#endif //!FIRST_PASS
 
 		[DebuggerStepThroughAttribute]
 		public static int f2i(float f)
 		{
-			if(f <= int.MinValue)
+			if (f > int.MinValue && f < int.MaxValue)
+			{
+				return (int)f;
+			}
+			if (f <= int.MinValue)
 			{
 				return int.MinValue;
 			}
-			if(f >= int.MaxValue)
+			if (f >= int.MaxValue)
 			{
 				return int.MaxValue;
 			}
-			if(float.IsNaN(f))
-			{
-				return 0;
-			}
-			return (int)f;
+			return 0;
 		}
 
 		[DebuggerStepThroughAttribute]
 		public static long f2l(float f)
 		{
-			if(f <= long.MinValue)
+			if (f > long.MinValue && f < long.MaxValue)
+			{
+				return (long)f;
+			}
+			if (f <= long.MinValue)
 			{
 				return long.MinValue;
 			}
-			if(f >= long.MaxValue)
+			if (f >= long.MaxValue)
 			{
 				return long.MaxValue;
 			}
-			if(float.IsNaN(f))
-			{
-				return 0;
-			}
-			return (long)f;
+			return 0;
 		}
 
 		[DebuggerStepThroughAttribute]
 		public static int d2i(double d)
 		{
-			if(d <= int.MinValue)
+			if (d > int.MinValue && d < int.MaxValue)
+			{
+				return (int)d;
+			}
+			if (d <= int.MinValue)
 			{
 				return int.MinValue;
 			}
-			if(d >= int.MaxValue)
+			if (d >= int.MaxValue)
 			{
 				return int.MaxValue;
 			}
-			if(double.IsNaN(d))
-			{
-				return 0;
-			}
-			return (int)d;
+			return 0;
 		}
 
 		[DebuggerStepThroughAttribute]
 		public static long d2l(double d)
 		{
-			if(d <= long.MinValue)
+			if (d > long.MinValue && d < long.MaxValue)
+			{
+				return (long)d;
+			}
+			if (d <= long.MinValue)
 			{
 				return long.MinValue;
 			}
-			if(d >= long.MaxValue)
+			if (d >= long.MaxValue)
 			{
 				return long.MaxValue;
 			}
-			if(double.IsNaN(d))
-			{
-				return 0;
-			}
-			return (long)d;
+			return 0;
 		}
 
 		// This is used by static JNI and synchronized methods that need a class object
@@ -851,22 +782,50 @@ namespace IKVM.Runtime
 
 		public static long VolatileRead(ref long v)
 		{
+#if NO_REF_EMIT && !FIRST_PASS
+			lock (VolatileLongDoubleFieldWrapper.lockObject)
+			{
+				return v;
+			}
+#else
 			return Interlocked.Read(ref v);
+#endif
 		}
 
 		public static void VolatileWrite(ref long v, long newValue)
 		{
+#if NO_REF_EMIT && !FIRST_PASS
+			lock (VolatileLongDoubleFieldWrapper.lockObject)
+			{
+				v = newValue;
+			}
+#else
 			Interlocked.Exchange(ref v, newValue);
+#endif
 		}
 
 		public static double VolatileRead(ref double v)
 		{
+#if NO_REF_EMIT && !FIRST_PASS
+			lock (VolatileLongDoubleFieldWrapper.lockObject)
+			{
+				return v;
+			}
+#else
 			return Interlocked.CompareExchange(ref v, 0.0, 0.0);
+#endif
 		}
 
 		public static void VolatileWrite(ref double v, double newValue)
 		{
+#if NO_REF_EMIT && !FIRST_PASS
+			lock (VolatileLongDoubleFieldWrapper.lockObject)
+			{
+				v = newValue;
+			}
+#else
 			Interlocked.Exchange(ref v, newValue);
+#endif
 		}
 
 		[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]

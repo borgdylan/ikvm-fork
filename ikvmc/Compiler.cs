@@ -156,6 +156,8 @@ sealed class FatalCompilerErrorException : Exception
 				return "The type '{0}' is defined in an assembly that is not referenced. You must add a reference to assembly '{1}'";
 			case IKVM.Internal.Message.FileNotFound:
 				return "File not found: {0}";
+			case IKVM.Internal.Message.RuntimeMethodMissing:
+				return "Runtime method '{0}' not found";
 			default:
 				return "Missing Error Message. Please file a bug.";
 		}
@@ -977,7 +979,8 @@ sealed class IkvmcCompiler
 				}
 				else if(s == "-static")
 				{
-					options.codegenoptions |= CodeGenOptions.DisableDynamicBinding;
+					// we abuse -static to also enable support for NoRefEmit scenarios
+					options.codegenoptions |= CodeGenOptions.DisableDynamicBinding | CodeGenOptions.NoRefEmitHelpers;
 				}
 				else if(s == "-nojarstubs")	// undocumented temporary option to mitigate risk
 				{
@@ -1180,7 +1183,7 @@ sealed class IkvmcCompiler
 				{
 					foreach (CompilerOptions peer in targets)
 					{
-						if (peer.assembly.Equals(reference, StringComparison.InvariantCultureIgnoreCase))
+						if (peer.assembly.Equals(reference, StringComparison.OrdinalIgnoreCase))
 						{
 							ArrayAppend(ref target.peerReferences, peer.assembly);
 							goto next_reference;
@@ -1238,10 +1241,7 @@ sealed class IkvmcCompiler
 		}
 		else
 		{
-			T[] temp = new T[array.Length + 1];
-			Array.Copy(array, 0, temp, 0, array.Length);
-			temp[temp.Length - 1] = element;
-			array = temp;
+			array = ArrayUtil.Concat(array, element);
 		}
 	}
 
