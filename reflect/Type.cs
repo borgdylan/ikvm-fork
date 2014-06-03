@@ -2070,6 +2070,7 @@ namespace IKVM.Reflection
 		{
 			if (this.Assembly == this.Universe.Mscorlib
 				|| this.Assembly.GetName().Name.Equals("mscorlib", StringComparison.OrdinalIgnoreCase)
+				|| this.Assembly.GetName().Name.Equals("System.Runtime", StringComparison.OrdinalIgnoreCase)
 				// check if mscorlib forwards the type (.NETCore profile reference mscorlib forwards System.Enum and System.ValueType to System.Runtime.dll)
 				|| this.Universe.Mscorlib.FindType(new TypeName(__Namespace, __Name)) == this)
 			{
@@ -2691,6 +2692,8 @@ namespace IKVM.Reflection
 
 		internal static Type Make(Type type, Type[] typeArguments, CustomModifiers[] mods)
 		{
+			if (type.Universe.SupressReferenceTypeIdentityConversion)
+				return type.Universe.CanonicalizeType(new GenericTypeInstance(type, typeArguments, mods));
 			bool identity = true;
 			if (type is TypeBuilder || type is BakedType || type.__IsMissing)
 			{
