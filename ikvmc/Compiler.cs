@@ -158,14 +158,11 @@ sealed class FatalCompilerErrorException : Exception
 				return "File not found: {0}";
 			case IKVM.Internal.Message.RuntimeMethodMissing:
 				return "Runtime method '{0}' not found";
-<<<<<<< HEAD
-=======
 			case IKVM.Internal.Message.MapFileFieldNotFound:
 				return "Field '{0}' referenced in remap file was not found in class '{1}'";
 			case IKVM.Internal.Message.GhostInterfaceMethodMissing:
 				return "Remapped class '{0}' does not implement ghost interface method\n" + 
 					"\t({1}.{2}{3})";
->>>>>>> origin/master
 			default:
 				return "Missing Error Message. Please file a bug.";
 		}
@@ -1261,8 +1258,6 @@ sealed class IkvmcCompiler
 		else
 		{
 			array = ArrayUtil.Concat(array, element);
-<<<<<<< HEAD
-=======
 		}
 	}
 
@@ -1278,7 +1273,6 @@ sealed class IkvmcCompiler
 			Array.Copy(array, tmp, array.Length);
 			Array.Copy(append, 0, tmp, array.Length, append.Length);
 			array = tmp;
->>>>>>> origin/master
 		}
 	}
 
