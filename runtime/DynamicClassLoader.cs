@@ -223,7 +223,7 @@ namespace IKVM.Internal
 			return mangledTypeName;
 		}
 
-		internal sealed override TypeWrapper DefineClassImpl(Dictionary<string, TypeWrapper> types, ClassFile f, ClassLoaderWrapper classLoader, ProtectionDomain protectionDomain)
+		internal sealed override TypeWrapper DefineClassImpl(Dictionary<string, TypeWrapper> types, TypeWrapper host, ClassFile f, ClassLoaderWrapper classLoader, ProtectionDomain protectionDomain)
 		{
 #if STATIC_COMPILER
 			AotTypeWrapper type = new AotTypeWrapper(f, (CompilerClassLoader)classLoader);
@@ -234,7 +234,7 @@ namespace IKVM.Internal
 			return null;
 #else
 			// this step can throw a retargettable exception, if the class is incorrect
-			DynamicTypeWrapper type = new DynamicTypeWrapper(f, classLoader, protectionDomain);
+			DynamicTypeWrapper type = new DynamicTypeWrapper(host, f, classLoader, protectionDomain);
 			// This step actually creates the TypeBuilder. It is not allowed to throw any exceptions,
 			// if an exception does occur, it is due to a programming error in the IKVM or CLR runtime
 			// and will cause a CriticalFailure and exit the process.
@@ -243,10 +243,7 @@ namespace IKVM.Internal
 			if(types == null)
 			{
 				// we're defining an anonymous class, so we don't need any locking
-				java.lang.Class clazz = TieClassAndWrapper(type, protectionDomain);
-				// for OpenJDK compatibility and debugging convenience we modify the class name to
-				// include the identity hashcode of the class object
-				clazz.name = f.Name + "/" + java.lang.System.identityHashCode(clazz);
+				TieClassAndWrapper(type, protectionDomain);
 				return type;
 			}
 			lock(types)
@@ -287,7 +284,7 @@ namespace IKVM.Internal
 #endif
 
 #if STATIC_COMPILER
-		internal TypeBuilder DefineProxy(TypeWrapper proxyClass, TypeWrapper[] interfaces)
+		internal TypeBuilder DefineProxy(string name, TypeAttributes typeAttributes, Type parent, Type[] interfaces)
 		{
 			if (proxiesContainer == null)
 			{
@@ -296,12 +293,7 @@ namespace IKVM.Internal
 				AttributeHelper.SetEditorBrowsableNever(proxiesContainer);
 				proxies = new List<TypeBuilder>();
 			}
-			Type[] ifaces = new Type[interfaces.Length];
-			for (int i = 0; i < ifaces.Length; i++)
-			{
-				ifaces[i] = interfaces[i].TypeAsBaseType;
-			}
-			TypeBuilder tb = proxiesContainer.DefineNestedType(TypeNameUtil.GetProxyNestedName(interfaces), TypeAttributes.NestedPublic | TypeAttributes.Class | TypeAttributes.Sealed, proxyClass.TypeAsBaseType, ifaces);
+			TypeBuilder tb = proxiesContainer.DefineNestedType(name, typeAttributes, parent, interfaces);
 			proxies.Add(tb);
 			return tb;
 		}

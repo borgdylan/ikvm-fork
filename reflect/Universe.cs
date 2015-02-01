@@ -128,6 +128,7 @@ namespace IKVM.Reflection
 		MetadataOnly = 16,
 		ResolveMissingMembers = 32,
 		DisableWindowsRuntimeProjection = 64,
+		DecodeVersionInfoAttributeBlobs = 128,
 		SupressReferenceTypeIdentityConversion = 1 << 20
 	}
 
@@ -1216,6 +1217,11 @@ namespace IKVM.Reflection
 		internal bool WindowsRuntimeProjection
 		{
 			get { return (options & UniverseOptions.DisableWindowsRuntimeProjection) == 0; }
+		}
+
+		internal bool DecodeVersionInfoAttributeBlobs
+		{
+			get { return (options & UniverseOptions.DecodeVersionInfoAttributeBlobs) != 0; }
 		}
 
 		internal bool SupressReferenceTypeIdentityConversion

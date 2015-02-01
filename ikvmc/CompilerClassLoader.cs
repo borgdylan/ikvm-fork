@@ -64,7 +64,6 @@ namespace IKVM.Internal
 		private Dictionary<MethodKey, IKVM.Internal.MapXml.ReplaceMethodCall[]> mapxml_ReplacedMethods;
 		private Dictionary<MethodKey, IKVM.Internal.MapXml.InstructionList> mapxml_MethodPrologues;
 		private IKVM.Internal.MapXml.Root map;
-		private List<object> assemblyAnnotations;
 		private List<string> classesToCompile;
 		private List<CompilerClassLoader> peerReferences = new List<CompilerClassLoader>();
 		private Dictionary<string, string> peerLoading = new Dictionary<string, string>();
@@ -72,8 +71,9 @@ namespace IKVM.Internal
 		private List<TypeWrapper> dynamicallyImportedTypes = new List<TypeWrapper>();
 		private List<string> jarList = new List<string>();
 		private List<TypeWrapper> allwrappers;
+		private bool compilingCoreAssembly;
 
-		internal CompilerClassLoader(AssemblyClassLoader[] referencedAssemblies, CompilerOptions options, FileInfo assemblyPath, bool targetIsModule, string assemblyName, Dictionary<string, Jar.Item> classes)
+		internal CompilerClassLoader(AssemblyClassLoader[] referencedAssemblies, CompilerOptions options, FileInfo assemblyPath, bool targetIsModule, string assemblyName, Dictionary<string, Jar.Item> classes, bool compilingCoreAssembly)
 			: base(options.codegenoptions, null)
 		{
 			this.referencedAssemblies = referencedAssemblies;
@@ -83,6 +83,7 @@ namespace IKVM.Internal
 			this.assemblyFile = assemblyPath.Name;
 			this.assemblyDir = assemblyPath.DirectoryName;
 			this.targetIsModule = targetIsModule;
+			this.compilingCoreAssembly = compilingCoreAssembly;
 			Tracer.Info(Tracer.Compiler, "Instantiate CompilerClassLoader for {0}", assemblyName);
 		}
 
@@ -561,8 +562,12 @@ namespace IKVM.Internal
 			// add a package list and export map
 			if(options.sharedclassloader == null || options.sharedclassloader[0] == this)
 			{
-				string[][] list = packages.ToArray();
-				mb.SetCustomAttribute(new CustomAttributeBuilder(JVM.LoadType(typeof(PackageListAttribute)).GetConstructor(new Type[] { JVM.Import(typeof(string[][])) }), new object[] { list }));
+				ConstructorInfo packageListAttributeCtor = JVM.LoadType(typeof(PackageListAttribute)).GetConstructor(new Type[] { Types.String, Types.String.MakeArrayType() });
+				foreach(object[] args in packages.ToArray())
+				{
+					args[1] = UnicodeUtil.EscapeInvalidSurrogates((string[])args[1]);
+					mb.SetCustomAttribute(new CustomAttributeBuilder(packageListAttributeCtor, args));
+				}
 				// We can't add the resource when we're a module, because a multi-module assembly has a single resource namespace
 				// and since you cannot combine -target:module with -sharedclassloader we don't need an export map
 				// (the wildcard exports have already been added above, by making sure that we statically reference the assemblies).
@@ -624,6 +629,7 @@ namespace IKVM.Internal
 					list[i++] = kv.Key;
 					list[i++] = kv.Value;
 				}
+				list = UnicodeUtil.EscapeInvalidSurrogates(list);
 				CustomAttributeBuilder cab = new CustomAttributeBuilder(typeofJavaModuleAttribute.GetConstructor(new Type[] { JVM.Import(typeof(string[])) }), new object[] { list }, propInfos, propValues);
 				mb.SetCustomAttribute(cab);
 			}
@@ -1385,7 +1391,7 @@ namespace IKVM.Internal
 									}
 								}
 							}
-							mbCore = typeWrapper.typeBuilder.DefineMethod(m.Name, attr, CallingConventions.Standard, retType, paramTypes);
+							mbCore = GetDefineMethodHelper().DefineMethod(DeclaringType.GetClassLoader().GetTypeWrapperFactory(), typeWrapper.typeBuilder, m.Name, attr);
 							if(m.Attributes != null)
 							{
 								foreach(IKVM.Internal.MapXml.Attribute custattr in m.Attributes)
@@ -1850,7 +1856,7 @@ namespace IKVM.Internal
 
 				if(classDef.Clinit != null)
 				{
-					MethodBuilder cb = ReflectUtil.DefineTypeInitializer(typeBuilder);
+					MethodBuilder cb = ReflectUtil.DefineTypeInitializer(typeBuilder, classLoader);
 					CodeEmitter ilgen = CodeEmitter.Create(cb);
 					// TODO emit code to make sure super class is initialized
 					classDef.Clinit.body.Emit(classLoader, ilgen);
@@ -2562,7 +2568,7 @@ namespace IKVM.Internal
 				{
 					if (c.Shadows != null && c.Name == "java.lang.Object")
 					{
-						return true;
+						return compilingCoreAssembly = true;
 					}
 				}
 			}
@@ -2712,7 +2718,6 @@ namespace IKVM.Internal
 					}
 				}
 			}
-			List<object> assemblyAnnotations = new List<object>();
 			Tracer.Info(Tracer.Compiler, "Parsing class files");
 			// map the class names to jar entries
 			Dictionary<string, Jar.Item> h = new Dictionary<string, Jar.Item>();
@@ -2754,25 +2759,29 @@ namespace IKVM.Internal
 				}
 			}
 
-			// look for "assembly" type that acts as a placeholder for assembly attributes
-			Jar.Item assemblyType;
-			if (h.TryGetValue("assembly", out assemblyType))
+			if (options.assemblyAttributeAnnotations == null)
 			{
-				try
+				// look for "assembly" type that acts as a placeholder for assembly attributes
+				Jar.Item assemblyType;
+				if (h.TryGetValue("assembly", out assemblyType))
 				{
-					byte[] buf = assemblyType.GetData();
-					ClassFile f = new ClassFile(buf, 0, buf.Length, null, ClassFileParseOptions.None, null);
-					// NOTE the "assembly" type in the unnamed package is a magic type
-					// that acts as the placeholder for assembly attributes
-					if (f.Name == "assembly" && f.Annotations != null)
+					try
 					{
-						assemblyAnnotations.AddRange(f.Annotations);
-						// HACK remove "assembly" type that exists only as a placeholder for assembly attributes
-						h.Remove(f.Name);
-						assemblyType.Remove();
+						byte[] buf = assemblyType.GetData();
+						ClassFile f = new ClassFile(buf, 0, buf.Length, null, ClassFileParseOptions.None, null);
+						// NOTE the "assembly" type in the unnamed package is a magic type
+						// that acts as the placeholder for assembly attributes
+						if (f.Name == "assembly" && f.Annotations != null)
+						{
+							options.assemblyAttributeAnnotations = f.Annotations;
+							// HACK remove "assembly" type that exists only as a placeholder for assembly attributes
+							h.Remove(f.Name);
+							assemblyType.Remove();
+							StaticCompiler.IssueMessage(Message.LegacyAssemblyAttributesFound);
+						}
 					}
+					catch (ClassFormatError) { }
 				}
-				catch (ClassFormatError) { }
 			}
 
 			// now look for a main method
@@ -2863,8 +2872,7 @@ namespace IKVM.Internal
 				}
 				referencedAssemblies[i] = acl;
 			}
-			loader = new CompilerClassLoader(referencedAssemblies, options, options.path, options.targetIsModule, options.assembly, h);
-			loader.assemblyAnnotations = assemblyAnnotations;
+			loader = new CompilerClassLoader(referencedAssemblies, options, options.path, options.targetIsModule, options.assembly, h, compilingCoreAssembly);
 			loader.classesToCompile = new List<string>(h.Keys);
 			if(options.remapfile != null)
 			{
@@ -3110,12 +3118,15 @@ namespace IKVM.Internal
 				CustomAttributeBuilder filever = new CustomAttributeBuilder(JVM.Import(typeof(System.Reflection.AssemblyFileVersionAttribute)).GetConstructor(new Type[] { Types.String }), new object[] { options.fileversion });
 				assemblyBuilder.SetCustomAttribute(filever);
 			}
-			foreach(object[] def in assemblyAnnotations)
+			if(options.assemblyAttributeAnnotations != null)
 			{
-				Annotation annotation = Annotation.LoadAssemblyCustomAttribute(this, def);
-				if(annotation != null)
+				foreach(object[] def in options.assemblyAttributeAnnotations)
 				{
-					annotation.Apply(this, assemblyBuilder, def);
+					Annotation annotation = Annotation.LoadAssemblyCustomAttribute(this, def);
+					if(annotation != null)
+					{
+						annotation.Apply(this, assemblyBuilder, def);
+					}
 				}
 			}
 			if(options.classLoader != null)
@@ -3309,6 +3320,24 @@ namespace IKVM.Internal
 				return false;
 			}
 		}
+
+		internal override bool WarningLevelHigh
+		{
+			get { return options.warningLevelHigh; }
+		}
+
+		internal override bool NoParameterReflection
+		{
+			get { return options.noParameterReflection; }
+		}
+
+		protected override void CheckProhibitedPackage(string className)
+		{
+			if (!compilingCoreAssembly)
+			{
+				base.CheckProhibitedPackage(className);
+			}
+		}
 	}
 
 	sealed class Jar
@@ -3500,6 +3529,9 @@ namespace IKVM.Internal
 		internal bool warnaserror; // treat all warnings as errors
 		internal FileInfo writeSuppressWarningsFile;
 		internal List<string> proxies = new List<string>();
+		internal object[] assemblyAttributeAnnotations;
+		internal bool warningLevelHigh;
+		internal bool noParameterReflection;
 
 		internal CompilerOptions Copy()
 		{
@@ -3648,6 +3680,8 @@ namespace IKVM.Internal
 		StubsAreDeprecated = 134,
 		WrongClassName = 135,
 		ReflectionCallerClassRequiresCallerID = 136,
+		LegacyAssemblyAttributesFound = 137,
+		UnableToCreateLambdaFactory = 138,
 		UnknownWarning = 999,
 		// This is where the errors start
 		StartErrors = 4000,
@@ -3725,6 +3759,8 @@ namespace IKVM.Internal
 		MissingBaseTypeReference = 5054,
 		FileNotFound = 5055,
 		RuntimeMethodMissing = 5056,
+		MapFileFieldNotFound = 5057,
+		GhostInterfaceMethodMissing = 5058,
 	}
 
 	static class StaticCompiler
@@ -3800,6 +3836,17 @@ namespace IKVM.Internal
 			return tw;
 		}
 
+		internal static FieldWrapper GetFieldForMapXml(ClassLoaderWrapper loader, string clazz, string name, string sig)
+		{
+			FieldWrapper fw = GetClassForMapXml(loader, clazz).GetFieldWrapper(name, sig);
+			if (fw == null)
+			{
+				throw new FatalCompilerErrorException(Message.MapFileFieldNotFound, name, clazz);
+			}
+			fw.Link();
+			return fw;
+		}
+
 		internal static Type GetType(ClassLoaderWrapper loader, string name)
 		{
 			CompilerClassLoader ccl = (CompilerClassLoader)loader;
@@ -3813,7 +3860,7 @@ namespace IKVM.Internal
 
 		internal static void IssueMessage(CompilerOptions options, Message msgId, params string[] values)
 		{
-			if (errorCount != 0 && msgId < Message.StartErrors)
+			if (errorCount != 0 && msgId < Message.StartErrors && !options.warnaserror)
 			{
 				// don't display any warnings after we've emitted an error message
 				return;
@@ -3986,6 +4033,12 @@ namespace IKVM.Internal
 					msg = "Reflection.getCallerClass() called from non-CallerID method" + Environment.NewLine +
 						"    (\"{0}.{1}{2}\")";
 					break;
+				case Message.LegacyAssemblyAttributesFound:
+					msg = "Legacy assembly attributes container found. Please use the -assemblyattributes:<file> option.";
+					break;
+				case Message.UnableToCreateLambdaFactory:
+					msg = "Unable to create static lambda factory.";
+					break;
 				case Message.UnableToCreateProxy:
 					msg = "Unable to create proxy \"{0}\"" + Environment.NewLine +
 						"    (\"{1}\")";
@@ -4112,10 +4165,10 @@ namespace IKVM.Internal
 			}
 		}
 
-		// see PackageListAttribute for the structure of this array
-		internal string[][] ToArray()
+		// returns an array of PackageListAttribute constructor argument arrays
+		internal object[][] ToArray()
 		{
-			List<string[]> list = new List<string[]>();
+			List<object[]> list = new List<object[]>();
 			// we use an empty string to indicate we don't yet have a jar,
 			// because null is used for packages that were defined from
 			// the file system (i.e. don't have a jar to load a manifest from)
@@ -4128,17 +4181,16 @@ namespace IKVM.Internal
 				{
 					if (currentList.Count != 0)
 					{
-						list.Add(currentList.ToArray());
+						list.Add(new object[] { currentJar, currentList.ToArray() });
 						currentList.Clear();
 					}
-					currentList.Add(jar);
 					currentJar = jar;
 				}
 				currentList.Add(package);
 			}
 			if (currentList.Count != 0)
 			{
-				list.Add(currentList.ToArray());
+				list.Add(new object[] { currentJar, currentList.ToArray() });
 			}
 			return list.ToArray();
 		}

@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2002-2007, 2010 Jeroen Frijters
+  Copyright (C) 2002-2014 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -25,6 +25,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using IKVM.Attributes;
 using IKVM.Runtime;
 using IKVM.Internal;
@@ -49,7 +50,7 @@ namespace IKVM.NativeCode.gnu.java.net.protocol.ikvmres
 			MemoryStream mem = new MemoryStream();
 #if !FIRST_PASS
 			bool includeNonPublicInterfaces = !"true".Equals(global::java.lang.Props.props.getProperty("ikvm.stubgen.skipNonPublicInterfaces"), StringComparison.OrdinalIgnoreCase);
-			IKVM.StubGen.StubGenerator.WriteClass(mem, TypeWrapper.FromClass(c), includeNonPublicInterfaces, false, false, false);
+			IKVM.StubGen.StubGenerator.WriteClass(mem, TypeWrapper.FromClass(c), includeNonPublicInterfaces, false, false, true);
 #endif
 			return mem.ToArray();
 		}
@@ -119,6 +120,53 @@ namespace IKVM.NativeCode.java.lang
 		{
 			return VirtualFileSystem.GetAssemblyClassesPath(JVM.CoreAssembly);
 		}
+
+		public static string getStdoutEncoding()
+		{
+			return IsWindowsConsole(true) ? GetConsoleEncoding() : null;
+		}
+
+		public static string getStderrEncoding()
+		{
+			return IsWindowsConsole(false) ? GetConsoleEncoding() : null;
+		}
+
+		private static bool IsWindowsConsole(bool stdout)
+		{
+			if (Environment.OSVersion.Platform != PlatformID.Win32NT)
+			{
+				return false;
+			}
+			// these properties are available starting with .NET 4.5
+			PropertyInfo pi = typeof(Console).GetProperty(stdout ? "IsOutputRedirected" : "IsErrorRedirected");
+			if (pi != null)
+			{
+				return !(bool)pi.GetValue(null, null);
+			}
+			const int STD_OUTPUT_HANDLE = -11;
+			const int STD_ERROR_HANDLE = -12;
+			IntPtr handle = GetStdHandle(stdout ? STD_OUTPUT_HANDLE : STD_ERROR_HANDLE);
+			if (handle == IntPtr.Zero)
+			{
+				return false;
+			}
+			const int FILE_TYPE_CHAR = 2;
+			return GetFileType(handle) == FILE_TYPE_CHAR;
+		}
+
+		private static string GetConsoleEncoding()
+		{
+			int codepage = Console.InputEncoding.CodePage;
+			return codepage >= 847 && codepage <= 950
+				? "ms" + codepage
+				: "cp" + codepage;
+		}
+
+		[DllImport("kernel32")]
+		private static extern int GetFileType(IntPtr hFile);
+
+		[DllImport("kernel32")]
+		private static extern IntPtr GetStdHandle(int nStdHandle);
 	}
 }
 
@@ -144,6 +192,11 @@ namespace IKVM.NativeCode.ikvm.@internal
 
 	static class AnnotationAttributeBase
 	{
+		public static object[] unescapeInvalidSurrogates(object[] def)
+		{
+			return (object[])AnnotationDefaultAttribute.Unescape(def);
+		}
+
 		public static object newAnnotationInvocationHandler(jlClass type, object memberValues)
 		{
 #if FIRST_PASS
@@ -291,22 +344,21 @@ namespace IKVM.NativeCode.ikvm.runtime
 #if !FIRST_PASS
 			AssemblyClassLoader_ wrapper = (AssemblyClassLoader_)ClassLoaderWrapper.GetClassLoaderWrapper(_this);
 			global::java.net.URL sealBase = GetCodeBase(wrapper.MainAssembly);
-			foreach (string[] packages in wrapper.GetPackageInfo())
+			foreach (KeyValuePair<string, string[]> packages in wrapper.GetPackageInfo())
 			{
 				global::java.util.jar.Manifest manifest = null;
 				global::java.util.jar.Attributes attr = null;
-				if (packages[0] != null)
+				if (packages.Key != null)
 				{
-					global::java.util.jar.JarFile jarFile = new global::java.util.jar.JarFile(VirtualFileSystem.GetAssemblyResourcesPath(wrapper.MainAssembly) + packages[0]);
+					global::java.util.jar.JarFile jarFile = new global::java.util.jar.JarFile(VirtualFileSystem.GetAssemblyResourcesPath(wrapper.MainAssembly) + packages.Key);
 					manifest = jarFile.getManifest();
 				}
 				if (manifest != null)
 				{
 					attr = manifest.getMainAttributes();
 				}
-				for (int i = 1; i < packages.Length; i++)
+				foreach (string name in packages.Value)
 				{
-					string name = packages[i];
 					if (_this.getPackage(name) == null)
 					{
 						global::java.util.jar.Attributes entryAttr = null;

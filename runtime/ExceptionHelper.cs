@@ -299,6 +299,14 @@ namespace IKVM.Internal
 			{
 				return mb.Name.Substring(NamePrefix.DefaultMethod.Length);
 			}
+			else if(mb.Name.StartsWith(NamePrefix.Bridge, StringComparison.Ordinal))
+			{
+				return mb.Name.Substring(NamePrefix.Bridge.Length);
+			}
+			else if(mb.IsSpecialName)
+			{
+				return UnicodeUtil.UnescapeInvalidSurrogates(mb.Name);
+			}
 			else
 			{
 				return mb.Name;
@@ -332,6 +340,12 @@ namespace IKVM.Internal
 				{
 					return DotNetTypeWrapper.GetName(type);
 				}
+#if !FIRST_PASS
+				if(tw.IsUnsafeAnonymous)
+				{
+					return tw.ClassObject.getName();
+				}
+#endif
 				return tw.Name;
 			}
 			return type.FullName;
