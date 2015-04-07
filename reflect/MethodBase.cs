@@ -150,7 +150,7 @@ namespace IKVM.Reflection
 
 		internal abstract int ImportTo(Emit.ModuleBuilder module);
 
-		internal abstract MethodBase BindTypeParameters(Type type);
+		public abstract MethodBase BindTypeParameters(Type type);
 
 		internal sealed override bool BindingFlagsMatch(BindingFlags flags)
 		{

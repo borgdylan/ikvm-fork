@@ -40,6 +40,7 @@ namespace IKVM.Reflection.Emit
 		private readonly int position;
 		private int typeToken;
 		private Type baseType;
+		private Type[] interfTypes;
 		private GenericParameterAttributes attr;
 
 		internal GenericTypeParameterBuilder(string name, TypeBuilder type, MethodBuilder method, int position)
@@ -54,6 +55,7 @@ namespace IKVM.Reflection.Emit
 			rec.Owner = type != null ? type.MetadataToken : method.MetadataToken;
 			rec.Name = this.ModuleBuilder.Strings.Add(name);
 			this.paramPseudoIndex = this.ModuleBuilder.GenericParam.AddRecord(rec);
+			this.interfTypes = Type.EmptyTypes;
 		}
 
 		public override string AssemblyQualifiedName
@@ -73,7 +75,7 @@ namespace IKVM.Reflection.Emit
 
 		public override Type[] __GetDeclaredInterfaces()
 		{
-			throw new NotImplementedException();
+			return interfTypes;
 		}
 
 		public override TypeAttributes Attributes
@@ -140,7 +142,7 @@ namespace IKVM.Reflection.Emit
 		{
 			get
 			{
-				CheckBaked();
+				//CheckBaked();
 				return attr;
 			}
 		}
@@ -173,6 +175,7 @@ namespace IKVM.Reflection.Emit
 
 		public void SetInterfaceConstraints(params Type[] interfaceConstraints)
 		{
+			interfTypes = interfaceConstraints;
 			foreach (Type type in interfaceConstraints)
 			{
 				AddConstraint(type);

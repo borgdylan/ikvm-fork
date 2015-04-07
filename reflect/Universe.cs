@@ -233,7 +233,14 @@ namespace IKVM.Reflection
 
 		internal Assembly Mscorlib
 		{
-			get { return Load("mscorlib"); }
+			get {
+				foreach (Assembly asm in assemblies) {
+					if (asm.GetType("System.Object") != null) {
+						return asm;
+					}
+				}
+				return Load("mscorlib");
+			}
 		}
 
 		private Type ImportMscorlibType(string ns, string name)
@@ -691,6 +698,7 @@ namespace IKVM.Reflection
 					}
 				}
 			}
+
 			return asm;
 		}
 
@@ -717,6 +725,7 @@ namespace IKVM.Reflection
 		internal Assembly Load(string refname, Module requestingModule, bool throwOnError)
 		{
 			Assembly asm = GetLoadedAssembly(refname);
+
 			if (asm != null)
 			{
 				return asm;

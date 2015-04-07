@@ -152,7 +152,7 @@ namespace IKVM.Reflection
 			return GetGenericMethodArgument(type.GenericParameterPosition);
 		}
 
-		internal override MethodBase BindTypeParameters(Type type)
+		public override MethodBase BindTypeParameters(Type type)
 		{
 			return new GenericMethodInstance(this.DeclaringType.BindTypeParameters(type), this, null);
 		}
@@ -349,7 +349,7 @@ namespace IKVM.Reflection
 			get { return method.__IsMissing; }
 		}
 
-		internal override MethodBase BindTypeParameters(Type type)
+		public override MethodBase BindTypeParameters(Type type)
 		{
 			return method.BindTypeParameters(type);
 		}

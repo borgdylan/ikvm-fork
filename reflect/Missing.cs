@@ -911,7 +911,7 @@ namespace IKVM.Reflection
 			return declaringType.GetHashCode() ^ name.GetHashCode() ^ signature.GetHashCode();
 		}
 
-		internal override MethodBase BindTypeParameters(Type type)
+		public override MethodBase BindTypeParameters(Type type)
 		{
 			MethodInfo forwarder = TryGetForwarder();
 			if (forwarder != null)
@@ -1101,7 +1101,7 @@ namespace IKVM.Reflection
 			get { return declaringType.Module; }
 		}
 
-		internal override FieldInfo BindTypeParameters(Type type)
+		public override FieldInfo BindTypeParameters(Type type)
 		{
 			FieldInfo forwarder = TryGetForwarder();
 			if (forwarder != null)

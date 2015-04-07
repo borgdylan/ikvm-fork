@@ -2,35 +2,9 @@
   <MonoDevelop.Ide.Workspace ActiveConfiguration="Release" />
   <MonoDevelop.Ide.Workbench ActiveDocument="Reader/Authenticode.cs">
     <Files>
-      <File FileName="Impl/MdbWriter.cs" Line="1" Column="1" />
+      <File FileName="Type.cs" Line="993" Column="1" />
       <File FileName="Reader/Authenticode.cs" Line="67" Column="8" />
-      <File FileName="Emit/ParameterBuilder.cs" Line="1" Column="1" />
-      <File FileName="Emit/MethodBuilder.cs" Line="1" Column="1" />
-      <File FileName="Fusion.cs" Line="1" Column="1" />
-      <File FileName="Enums.cs" Line="1" Column="1" />
-      <File FileName="InterfaceMapping.cs" Line="1" Column="1" />
-      <File FileName="Universe.cs" Line="1" Column="1" />
-      <File FileName="Emit/TypeBuilder.cs" Line="1" Column="1" />
-      <File FileName="TypeInfo.cs" Line="1" Column="1" />
-      <File FileName="Type.cs" Line="1" Column="1" />
-      <File FileName="Util.cs" Line="1" Column="1" />
-      <File FileName="MemberInfo.cs" Line="1" Column="1" />
-      <File FileName="FieldInfo.cs" Line="1" Column="1" />
-      <File FileName="GenericWrappers.cs" Line="1" Column="1" />
-      <File FileName="FieldSignature.cs" Line="1" Column="1" />
-      <File FileName="Missing.cs" Line="1" Column="1" />
-      <File FileName="MethodInfo.cs" Line="1" Column="1" />
-      <File FileName="MethodBase.cs" Line="1" Column="1" />
-      <File FileName="ConstructorInfo.cs" Line="1" Column="1" />
-      <File FileName="MethodSignature.cs" Line="1" Column="1" />
-      <File FileName="EventInfo.cs" Line="1" Column="1" />
-      <File FileName="PropertyInfo.cs" Line="1" Column="1" />
-      <File FileName="ParameterInfo.cs" Line="1" Column="1" />
-      <File FileName="Assembly.cs" Line="1" Column="1" />
-      <File FileName="Reader/ModuleReader.cs" Line="1" Column="1" />
-      <File FileName="Reader/AssemblyReader.cs" Line="1" Column="1" />
-      <File FileName="Module.cs" Line="1" Column="1" />
-      <File FileName="Reader/TypeDefImpl.cs" Line="1" Column="1" />
+      <File FileName="Binder.cs" Line="1" Column="1" />
     </Files>
   </MonoDevelop.Ide.Workbench>
   <MonoDevelop.Ide.DebuggingService.Breakpoints>

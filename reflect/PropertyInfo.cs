@@ -178,7 +178,7 @@ namespace IKVM.Reflection
 			get { return this.PropertySignature.CallingConvention; }
 		}
 
-		internal virtual PropertyInfo BindTypeParameters(Type type)
+		public virtual PropertyInfo BindTypeParameters(Type type)
 		{
 			return new GenericPropertyInfo(this.DeclaringType.BindTypeParameters(type), this);
 		}
@@ -289,7 +289,7 @@ namespace IKVM.Reflection
 			return parameters;
 		}
 
-		internal override PropertyInfo BindTypeParameters(Type type)
+		public override PropertyInfo BindTypeParameters(Type type)
 		{
 			return property.BindTypeParameters(type);
 		}

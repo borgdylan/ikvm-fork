@@ -298,7 +298,12 @@ namespace IKVM.Reflection.Emit
 			this.fileKind = fileKind;
 		}
 
-		public void __Save(Stream stream, PortableExecutableKinds portableExecutableKind, ImageFileMachine imageFileMachine)
+		public void Save(Stream stream)
+		{
+			Save(stream, PortableExecutableKinds.ILOnly, ImageFileMachine.I386);
+		}
+
+		public void Save(Stream stream, PortableExecutableKinds portableExecutableKind, ImageFileMachine imageFileMachine)
 		{
 			if (!stream.CanRead || !stream.CanWrite || !stream.CanSeek || stream.Position != 0)
 			{
@@ -377,7 +382,11 @@ namespace IKVM.Reflection.Emit
 					// .NET doesn't support copying blob custom attributes into the version info
 					if (!cab.HasBlob || universe.DecodeVersionInfoAttributeBlobs)
 					{
-						versionInfo.SetAttribute(this, cab);
+						try {
+							versionInfo.SetAttribute(this, cab);
+						}
+						catch {
+						}
 					}
 				}
 				ByteBuffer versionInfoData = new ByteBuffer(512);
@@ -403,7 +412,11 @@ namespace IKVM.Reflection.Emit
 			foreach (CustomAttributeBuilder cab in customAttributes)
 			{
 				// we intentionally don't filter out the version info (pseudo) custom attributes (to be compatible with .NET)
-				manifestModule.SetCustomAttribute(0x20000001, cab);
+				try {
+					manifestModule.SetCustomAttribute(0x20000001, cab);
+				}
+				catch {
+				}
 			}
 
 			manifestModule.AddDeclarativeSecurity(0x20000001, declarativeSecurity);

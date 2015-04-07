@@ -89,7 +89,7 @@ namespace IKVM.Reflection
 			get { return GetRemoveMethod(true); }
 		}
 
-		internal virtual EventInfo BindTypeParameters(Type type)
+		public virtual EventInfo BindTypeParameters(Type type)
 		{
 			return new GenericEventInfo(this.DeclaringType.BindTypeParameters(type), this);
 		}
@@ -186,7 +186,7 @@ namespace IKVM.Reflection
 			get { return eventInfo.IsStatic; }
 		}
 
-		internal override EventInfo BindTypeParameters(Type type)
+		public override EventInfo BindTypeParameters(Type type)
 		{
 			return eventInfo.BindTypeParameters(type);
 		}
