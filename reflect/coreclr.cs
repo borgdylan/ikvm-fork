@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2008 Jeroen Frijters
+  Copyright (C) 2015 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -21,17 +21,50 @@
   jeroen@frijters.net
   
 */
-using System.Reflection;
+using System;
 
-[assembly: AssemblyConfiguration("")]
-[assembly: AssemblyCompany("Jeroen Frijters")]
-[assembly: AssemblyProduct("IKVM.NET")]
-[assembly: AssemblyCopyright("Copyright (C) 2002-2015 Jeroen Frijters")]
-[assembly: AssemblyTrademark("")]
-[assembly: AssemblyCulture("")]
-[assembly: AssemblyVersion("8.1.@BUILD@.0")]
+#if CORECLR
+namespace System.Diagnostics
+{
+	static class Debug
+	{
+		[Conditional("DEBUG")]
+		internal static void Assert(bool cond)
+		{
+			if (!cond)
+			{
+				Environment.FailFast("assertion failed");
+			}
+		}
+	}
+}
 
-#if SIGNCODE
-	#pragma warning disable 1699
-	[assembly: AssemblyKeyName("ikvm-key")]
+namespace System.Collections.Generic
+{
+	sealed class Stack<T>
+	{
+		private readonly List<T> items = new List<T>();
+
+		internal void Push(T value)
+		{
+			items.Add(value);
+		}
+
+		internal T Peek()
+		{
+			if (items.Count == 0)
+			{
+				throw new InvalidOperationException();
+			}
+			return items[items.Count - 1];
+		}
+
+		internal T Pop()
+		{
+			T value = Peek();
+			items.RemoveAt(items.Count - 1);
+			return value;
+		}
+	}
+}
 #endif

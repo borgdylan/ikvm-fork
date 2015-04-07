@@ -25,7 +25,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Diagnostics;
+#if !NO_SYMBOL_WRITER
 using System.Diagnostics.SymbolStore;
+#endif
 using System.Security.Cryptography;
 using System.Resources;
 using System.Runtime.CompilerServices;
@@ -39,7 +41,8 @@ namespace IKVM.Reflection.Emit
 	public sealed class ModuleBuilder : Module, ITypeOwner
 	{
 		private static readonly bool usePublicKeyAssemblyReference = false;
-		private Guid mvid = Guid.NewGuid();
+		private Guid mvid;
+		private uint timestamp;
 		private long imageBaseAddress = 0x00400000;
 		private long stackReserve = -1;
 		private int fileAlignment = 0x200;
@@ -76,9 +79,24 @@ namespace IKVM.Reflection.Emit
 		private struct ResourceWriterRecord
 		{
 			private readonly string name;
+#if !CORECLR
 			private readonly ResourceWriter rw;
+#endif
 			private readonly Stream stream;
 			private readonly ResourceAttributes attributes;
+
+#if CORECLR
+			internal ResourceWriterRecord(string name, Stream stream, ResourceAttributes attributes)
+			{
+				this.name = name;
+				this.stream = stream;
+				this.attributes = attributes;
+			}
+#else
+			internal ResourceWriterRecord(string name, Stream stream, ResourceAttributes attributes)
+				: this(name, null, stream, attributes)
+			{
+			}
 
 			internal ResourceWriterRecord(string name, ResourceWriter rw, Stream stream, ResourceAttributes attributes)
 			{
@@ -87,13 +105,16 @@ namespace IKVM.Reflection.Emit
 				this.stream = stream;
 				this.attributes = attributes;
 			}
+#endif
 
 			internal void Emit(ModuleBuilder mb, int offset)
 			{
+#if !CORECLR
 				if (rw != null)
 				{
 					rw.Generate();
 				}
+#endif
 				ManifestResourceTable.Record rec = new ManifestResourceTable.Record();
 				rec.Offset = offset;
 				rec.Flags = (int)attributes;
@@ -121,10 +142,12 @@ namespace IKVM.Reflection.Emit
 
 			internal void Close()
 			{
+#if !CORECLR
 				if (rw != null)
 				{
 					rw.Close();
 				}
+#endif
 			}
 		}
 
@@ -228,6 +251,15 @@ namespace IKVM.Reflection.Emit
 			if (emitSymbolInfo)
 			{
 				symbolWriter = SymbolSupport.CreateSymbolWriterFor(this);
+				if (universe.Deterministic && !symbolWriter.IsDeterministic)
+				{
+					throw new NotSupportedException();
+				}
+			}
+			if (!universe.Deterministic)
+			{
+				__PEHeaderTimeDateStamp = DateTime.UtcNow;
+				mvid = Guid.NewGuid();
 			}
 			// <Module> must be the first record in the TypeDef table
 			moduleType = new TypeBuilder(this, null, "<Module>");
@@ -436,9 +468,7 @@ namespace IKVM.Reflection.Emit
 				// HACK we should *not* set the TypeDefId in this case, but 2.0 and 3.5 peverify gives a warning if it is missing (4.5 doesn't)
 				rec.TypeDefId = type.MetadataToken;
 			}
-			rec.TypeName = this.Strings.Add(type.__Name);
-			string ns = type.__Namespace;
-			rec.TypeNamespace = ns == null ? 0 : this.Strings.Add(ns);
+			SetTypeNameAndTypeNamespace(type.TypeName, out rec.TypeName, out rec.TypeNamespace);
 			if (type.IsNested)
 			{
 				rec.Flags = 0;
@@ -450,6 +480,12 @@ namespace IKVM.Reflection.Emit
 				rec.Implementation = ImportAssemblyRef(type.Assembly);
 			}
 			return 0x27000000 | this.ExportedType.FindOrAddRecord(rec);
+		}
+
+		private void SetTypeNameAndTypeNamespace(TypeName name, out int typeName, out int typeNamespace)
+		{
+			typeName = this.Strings.Add(name.Name);
+			typeNamespace = name.Namespace == null ? 0 : this.Strings.Add(name.Namespace);
 		}
 
 		public void SetCustomAttribute(ConstructorInfo con, byte[] binaryAttribute)
@@ -480,11 +516,13 @@ namespace IKVM.Reflection.Emit
 			this.DeclSecurity.AddRecord(rec);
 		}
 
+#if !CORECLR
 		internal void AddDeclarativeSecurity(int token, System.Security.Permissions.SecurityAction securityAction, System.Security.PermissionSet permissionSet)
 		{
 			// like Ref.Emit, we're using the .NET 1.x xml format
 			AddDeclSecurityRecord(token, (int)securityAction, this.Blobs.Add(ByteBuffer.Wrap(System.Text.Encoding.Unicode.GetBytes(permissionSet.ToXml().ToString()))));
 		}
+#endif
 
 		internal void AddDeclarativeSecurity(int token, List<CustomAttributeBuilder> declarativeSecurity)
 		{
@@ -539,9 +577,10 @@ namespace IKVM.Reflection.Emit
 
 		public void DefineManifestResource(string name, Stream stream, ResourceAttributes attribute)
 		{
-			resourceWriters.Add(new ResourceWriterRecord(name, null, stream, attribute));
+			resourceWriters.Add(new ResourceWriterRecord(name, stream, attribute));
 		}
 
+#if !CORECLR
 		public IResourceWriter DefineResource(string name, string description)
 		{
 			return DefineResource(name, description, ResourceAttributes.Public);
@@ -556,6 +595,7 @@ namespace IKVM.Reflection.Emit
 			resourceWriters.Add(new ResourceWriterRecord(name, rw, mem, attribute));
 			return rw;
 		}
+#endif
 
 		internal void EmitResources()
 		{
@@ -614,7 +654,7 @@ namespace IKVM.Reflection.Emit
 		{
 			foreach (Type type in types)
 			{
-				if (type.__Namespace == name.Namespace && type.__Name == name.Name)
+				if (type.TypeName == name)
 				{
 					return type;
 				}
@@ -626,7 +666,7 @@ namespace IKVM.Reflection.Emit
 		{
 			foreach (Type type in types)
 			{
-				if (new TypeName(type.__Namespace, type.__Name).ToLowerInvariant() == lowerCaseName)
+				if (type.TypeName.ToLowerInvariant() == lowerCaseName)
 				{
 					return type;
 				}
@@ -645,10 +685,12 @@ namespace IKVM.Reflection.Emit
 			}
 		}
 
+#if !NO_SYMBOL_WRITER
 		public ISymbolDocumentWriter DefineDocument(string url, Guid language, Guid languageVendor, Guid documentType)
 		{
 			return symbolWriter.DefineDocument(url, language, languageVendor, documentType);
 		}
+#endif
 
 		public int __GetAssemblyToken(Assembly assembly)
 		{
@@ -870,9 +912,7 @@ namespace IKVM.Reflection.Emit
 					{
 						rec.ResolutionScope = ImportAssemblyRef(type.Assembly);
 					}
-					rec.TypeName = this.Strings.Add(type.__Name);
-					string ns = type.__Namespace;
-					rec.TypeNameSpace = ns == null ? 0 : this.Strings.Add(ns);
+					SetTypeNameAndTypeNamespace(type.TypeName, out rec.TypeName, out rec.TypeNamespace);
 					token = 0x01000000 | this.TypeRef.AddRecord(rec);
 				}
 				typeTokens.Add(type, token);
@@ -1093,7 +1133,7 @@ namespace IKVM.Reflection.Emit
 			}
 		}
 
-		internal void WriteMetadata(MetadataWriter mw)
+		internal void WriteMetadata(MetadataWriter mw, out int guidHeapOffset)
 		{
 			mw.Write(0x424A5342);			// Signature ("BSJB")
 			mw.Write((ushort)1);			// MajorVersion
@@ -1146,6 +1186,7 @@ namespace IKVM.Reflection.Emit
 			Tables.Write(mw);
 			Strings.Write(mw);
 			UserStrings.Write(mw);
+			guidHeapOffset = mw.Position;
 			Guids.Write(mw);
 			if (!Blobs.IsEmpty)
 			{
@@ -1181,9 +1222,7 @@ namespace IKVM.Reflection.Emit
 					rec.Flags = (int)type.Attributes;
 					// LAMESPEC ECMA says that TypeDefId is a row index, but it should be a token
 					rec.TypeDefId = type.MetadataToken;
-					rec.TypeName = this.Strings.Add(type.__Name);
-					string ns = type.__Namespace;
-					rec.TypeNamespace = ns == null ? 0 : this.Strings.Add(ns);
+					SetTypeNameAndTypeNamespace(type.TypeName, out rec.TypeName, out rec.TypeNamespace);
 					if (type.IsNested)
 					{
 						rec.Implementation = declaringTypes[type.DeclaringType];
@@ -1367,14 +1406,50 @@ namespace IKVM.Reflection.Emit
 			get { return fileName; }
 		}
 
+		internal Guid GetModuleVersionIdOrEmpty()
+		{
+			return mvid;
+		}
+
 		public override Guid ModuleVersionId
 		{
-			get { return mvid; }
+			get
+			{
+				if (mvid == Guid.Empty && universe.Deterministic)
+				{
+					// if a deterministic GUID is used, it can't be queried before the assembly has been written
+					throw new InvalidOperationException();
+				}
+				return mvid;
+			}
 		}
 
 		public void __SetModuleVersionId(Guid guid)
 		{
+			if (guid == Guid.Empty && universe.Deterministic)
+			{
+				// if you want to use Guid.Empty, don't set UniverseOptions.DeterministicOutput
+				throw new ArgumentOutOfRangeException();
+			}
 			mvid = guid;
+		}
+
+		internal uint GetTimeDateStamp()
+		{
+			return timestamp;
+		}
+
+		public DateTime __PEHeaderTimeDateStamp
+		{
+			get { return new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(timestamp); }
+			set
+			{
+				if (value < new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc) || value > new DateTime(2106, 2, 7, 6, 28, 15, DateTimeKind.Utc))
+				{
+					throw new ArgumentOutOfRangeException();
+				}
+				timestamp = (uint)(value - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
+			}
 		}
 
 		public override Type[] __ResolveOptionalParameterTypes(int metadataToken, Type[] genericTypeArguments, Type[] genericMethodArguments, out CustomModifiers[] customModifiers)
@@ -1387,10 +1462,12 @@ namespace IKVM.Reflection.Emit
 			get { return moduleName; }
 		}
 
+#if !NO_SYMBOL_WRITER
 		public ISymbolWriter GetSymWriter()
 		{
 			return symbolWriter;
 		}
+#endif
 
 		public void DefineUnmanagedResource(string resourceFileName)
 		{
@@ -1412,10 +1489,12 @@ namespace IKVM.Reflection.Emit
 			{
 				token = -token | 0x06000000;
 			}
+#if !NO_SYMBOL_WRITER
 			if (symbolWriter != null)
 			{
 				symbolWriter.SetUserEntryPoint(new SymbolToken(token));
 			}
+#endif
 		}
 
 		public StringToken GetStringConstant(string str)
@@ -1525,8 +1604,7 @@ namespace IKVM.Reflection.Emit
 		{
 			TypeRefTable.Record rec = new TypeRefTable.Record();
 			rec.ResolutionScope = resolutionScope;
-			rec.TypeName = this.Strings.Add(name);
-			rec.TypeNameSpace = ns == null ? 0 : this.Strings.Add(ns);
+			SetTypeNameAndTypeNamespace(new TypeName(ns, name), out rec.TypeName, out rec.TypeNamespace);
 			return 0x01000000 | this.TypeRef.AddRecord(rec);
 		}
 

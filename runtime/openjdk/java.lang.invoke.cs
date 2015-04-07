@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011-2014 Jeroen Frijters
+  Copyright (C) 2011-2015 Jeroen Frijters
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -50,15 +50,23 @@ static class Java_java_lang_invoke_MethodHandle
 #endif
 	}
 
-	public static object invokeBasic(MethodHandle thisObject, object[] args)
-	{
-		throw new InvalidOperationException();
 	}
-
-	public static object linkToVirtual(object[] args)
+	
+	private static bool IsReferenceKindStatic(int referenceKind)
 	{
-		throw new InvalidOperationException();
-	}
+		{
+			case MethodHandleNatives.Constants.REF_getField:
+			case MethodHandleNatives.Constants.REF_putField:
+			case MethodHandleNatives.Constants.REF_invokeVirtual:
+			case MethodHandleNatives.Constants.REF_invokeSpecial:
+			case MethodHandleNatives.Constants.REF_newInvokeSpecial:
+			case MethodHandleNatives.Constants.REF_invokeInterface:
+				return false;
+			case MethodHandleNatives.Constants.REF_getStatic:
+			case MethodHandleNatives.Constants.REF_putStatic:
+			case MethodHandleNatives.Constants.REF_invokeStatic:
+				return true;
+		}
 
 	public static object linkToStatic(object[] args)
 	{
@@ -78,6 +86,35 @@ static class Java_java_lang_invoke_MethodHandle
 
 static class Java_java_lang_invoke_MethodHandleNatives
 {
+	// called from Lookup.revealDirect() (instead of MethodHandle.internalMemberName()) via map.xml replace-method-call
+	public static MemberName internalMemberName(MethodHandle mh)
+	{
+#if FIRST_PASS
+		return null;
+#else
+		MemberName mn = mh.internalMemberName();
+		if (mn.isStatic() && mn.getName() == "<init>")
+		{
+			// HACK since we convert String constructors into static methods, we have to undo that here
+			// Note that the MemberName we return is only used for a security check and by InfoFromMemberName (a MethodHandleInfo implementation),
+			// so we don't need to make it actually invokable.
+			MemberName alt = new MemberName();
+			typeof(MemberName).GetField("clazz", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(alt, mn.getDeclaringClass());
+			typeof(MemberName).GetField("name", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(alt, mn.getName());
+			typeof(MemberName).GetField("type", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(alt, mn.getMethodType().changeReturnType(typeof(void)));
+			int flags = mn._flags();
+			flags -= MethodHandleNatives.Constants.MN_IS_METHOD;
+			flags += MethodHandleNatives.Constants.MN_IS_CONSTRUCTOR;
+			flags &= ~(MethodHandleNatives.Constants.MN_REFERENCE_KIND_MASK << MethodHandleNatives.Constants.MN_REFERENCE_KIND_SHIFT);
+			flags |= MethodHandleNatives.Constants.REF_newInvokeSpecial << MethodHandleNatives.Constants.MN_REFERENCE_KIND_SHIFT;
+			flags &= ~MethodHandleNatives.Constants.ACC_STATIC;
+			alt._flags(flags);
+			return alt;
+		}
+		return mn;
+#endif
+	}
+
 	public static void init(MemberName self, object refObj)
 	{
 		init(self, refObj, false);
@@ -92,11 +129,11 @@ static class Java_java_lang_invoke_MethodHandleNatives
 		java.lang.reflect.Field field;
 		if ((method = refObj as java.lang.reflect.Method) != null)
 		{
-			InitMethodImpl(self, MethodWrapper.FromMethod(method), wantSpecial);
+			InitMethodImpl(self, MethodWrapper.FromExecutable(method), wantSpecial);
 		}
 		else if ((constructor = refObj as java.lang.reflect.Constructor) != null)
 		{
-			InitMethodImpl(self, MethodWrapper.FromConstructor(constructor), wantSpecial);
+			InitMethodImpl(self, MethodWrapper.FromExecutable(constructor), wantSpecial);
 		}
 		else if ((field = refObj as java.lang.reflect.Field) != null)
 		{
@@ -133,6 +170,29 @@ static class Java_java_lang_invoke_MethodHandleNatives
 		else
 		{
 			flags |= MethodHandleNatives.Constants.REF_invokeVirtual << MethodHandleNatives.Constants.MN_REFERENCE_KIND_SHIFT;
+		}
+		if (mw.HasCallerID || DynamicTypeWrapper.RequiresDynamicReflectionCallerClass(mw.DeclaringType.Name, mw.Name, mw.Signature))
+		{
+			flags |= MemberName.CALLER_SENSITIVE;
+		}
+		if (mw.IsConstructor && mw.DeclaringType == CoreClasses.java.lang.String.Wrapper)
+		{
+			java.lang.Class[] parameters1 = new java.lang.Class[mw.GetParameters().Length];
+			for (int i = 0; i < mw.GetParameters().Length; i++)
+			{
+				parameters1[i] = mw.GetParameters()[i].ClassObject;
+			}
+			MethodType mt = MethodType.methodType(typeof(string), parameters1);
+			typeof(MemberName).GetField("type", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(self, mt);
+			self.vmtarget = CreateMemberNameDelegate(mw, null, false, mt);
+			flags -= MethodHandleNatives.Constants.REF_invokeSpecial << MethodHandleNatives.Constants.MN_REFERENCE_KIND_SHIFT;
+			flags += MethodHandleNatives.Constants.REF_invokeStatic << MethodHandleNatives.Constants.MN_REFERENCE_KIND_SHIFT;
+			flags -= MethodHandleNatives.Constants.MN_IS_CONSTRUCTOR;
+			flags += MethodHandleNatives.Constants.MN_IS_METHOD;
+			flags += MethodHandleNatives.Constants.ACC_STATIC;
+			self._flags(flags);
+			self._clazz(mw.DeclaringType.ClassObject);
+			return;
 		}
 		self._flags(flags);
 		self._clazz(mw.DeclaringType.ClassObject);
@@ -222,13 +282,17 @@ static class Java_java_lang_invoke_MethodHandleNatives
 	{
 		bool invokeSpecial = self.getReferenceKind() == MethodHandleNatives.Constants.REF_invokeSpecial;
 		bool newInvokeSpecial = self.getReferenceKind() == MethodHandleNatives.Constants.REF_newInvokeSpecial;
-		bool searchBaseClasses = !invokeSpecial && !newInvokeSpecial;
+		bool searchBaseClasses = !newInvokeSpecial;
 		MethodWrapper mw = TypeWrapper.FromClass(self.getDeclaringClass()).GetMethodWrapper(self.getName(), self.getSignature().Replace('/', '.'), searchBaseClasses);
 		if (mw == null)
 		{
 			if (self.getReferenceKind() == MethodHandleNatives.Constants.REF_invokeInterface)
 			{
-				mw = CoreClasses.java.lang.Object.Wrapper.GetMethodWrapper(self.getName(), self.getSignature().Replace('/', '.'), false);
+				mw = TypeWrapper.FromClass(self.getDeclaringClass()).GetInterfaceMethod(self.getName(), self.getSignature().Replace('/', '.'));
+				if (mw == null)
+				{
+					mw = CoreClasses.java.lang.Object.Wrapper.GetMethodWrapper(self.getName(), self.getSignature().Replace('/', '.'), false);
+				}
 				if (mw != null && mw.IsConstructor)
 				{
 					throw new java.lang.IncompatibleClassChangeError("Found interface " + self.getDeclaringClass().getName() + ", but class was expected");
@@ -245,7 +309,20 @@ static class Java_java_lang_invoke_MethodHandleNatives
 			string msg = String.Format(mw.IsStatic ? "Expecting non-static method {0}.{1}{2}" : "Expected static method {0}.{1}{2}", mw.DeclaringType.Name, self.getName(), self.getSignature());
 			throw new java.lang.IncompatibleClassChangeError(msg);
 		}
-		if (!mw.IsConstructor || invokeSpecial || newInvokeSpecial)
+		if (self.getReferenceKind() == MethodHandleNatives.Constants.REF_invokeVirtual && mw.DeclaringType.IsInterface)
+		{
+			throw new java.lang.IncompatibleClassChangeError("Found interface " + mw.DeclaringType.Name + ", but class was expected");
+		}
+		if (!mw.IsPublic && self.getReferenceKind() == MethodHandleNatives.Constants.REF_invokeInterface)
+		{
+			throw new java.lang.IncompatibleClassChangeError("private interface method requires invokespecial, not invokeinterface: method " + self.getDeclaringClass().getName() + "." + self.getName() + self.getSignature());
+		}
+		if (mw.IsConstructor && mw.DeclaringType == CoreClasses.java.lang.String.Wrapper)
+		{
+			typeof(MemberName).GetField("type", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(self, self.getMethodType().changeReturnType(typeof(string)));
+			self.vmtarget = CreateMemberNameDelegate(mw, caller, false, self.getMethodType());
+		}
+		else if (!mw.IsConstructor || invokeSpecial || newInvokeSpecial)
 		{
 			MethodType methodType = self.getMethodType();
 			if (!mw.IsStatic)
@@ -267,6 +344,20 @@ static class Java_java_lang_invoke_MethodHandleNatives
 			flags += MethodHandleNatives.Constants.REF_invokeSpecial << MethodHandleNatives.Constants.MN_REFERENCE_KIND_SHIFT;
 			self._flags(flags);
 		}
+		if (mw.HasCallerID || DynamicTypeWrapper.RequiresDynamicReflectionCallerClass(mw.DeclaringType.Name, mw.Name, mw.Signature))
+		{
+			self._flags(self._flags() | MemberName.CALLER_SENSITIVE);
+		}
+		if (mw.IsConstructor && mw.DeclaringType == CoreClasses.java.lang.String.Wrapper)
+		{
+			int flags = self._flags();
+			flags -= MethodHandleNatives.Constants.REF_invokeSpecial << MethodHandleNatives.Constants.MN_REFERENCE_KIND_SHIFT;
+			flags += MethodHandleNatives.Constants.REF_invokeStatic << MethodHandleNatives.Constants.MN_REFERENCE_KIND_SHIFT;
+			flags -= MethodHandleNatives.Constants.MN_IS_CONSTRUCTOR;
+			flags += MethodHandleNatives.Constants.MN_IS_METHOD;
+			flags += MethodHandleNatives.Constants.ACC_STATIC;
+			self._flags(flags);
+		}
 	}
 
 	private static void ResolveField(MemberName self)
@@ -274,7 +365,7 @@ static class Java_java_lang_invoke_MethodHandleNatives
 		FieldWrapper fw = TypeWrapper.FromClass(self.getDeclaringClass()).GetFieldWrapper(self.getName(), self.getSignature().Replace('/', '.'));
 		if (fw == null)
 		{
-			throw new java.lang.NoSuchMethodError("field resolution failed");
+			throw new java.lang.NoSuchFieldError(self.getName());
 		}
 		SetModifiers(self, fw);
 		self._flags(self._flags() | MethodHandleNatives.Constants.MN_IS_FIELD);
@@ -339,17 +430,15 @@ static class Java_java_lang_invoke_MethodHandleNatives
 		if (mw.IsProtected && (mw.DeclaringType == CoreClasses.java.lang.Object.Wrapper || mw.DeclaringType == CoreClasses.java.lang.Throwable.Wrapper))
 		{
 			TypeWrapper thisType = TypeWrapper.FromClass(caller);
-			TypeWrapper cli_System_Object = ClassLoaderWrapper.LoadClassCritical("cli.System.Object");
-			TypeWrapper cli_System_Exception = ClassLoaderWrapper.LoadClassCritical("cli.System.Exception");
 			// HACK we may need to redirect finalize or clone from java.lang.Object/Throwable
 			// to a more specific base type.
-			if (thisType.IsAssignableTo(cli_System_Object))
+			if (thisType.IsAssignableTo(CoreClasses.cli.System.Object.Wrapper))
 			{
-				mw = cli_System_Object.GetMethodWrapper(mw.Name, mw.Signature, true);
+				mw = CoreClasses.cli.System.Object.Wrapper.GetMethodWrapper(mw.Name, mw.Signature, true);
 			}
-			else if (thisType.IsAssignableTo(cli_System_Exception))
+			else if (thisType.IsAssignableTo(CoreClasses.cli.System.Exception.Wrapper))
 			{
-				mw = cli_System_Exception.GetMethodWrapper(mw.Name, mw.Signature, true);
+				mw = CoreClasses.cli.System.Exception.Wrapper.GetMethodWrapper(mw.Name, mw.Signature, true);
 			}
 			else if (thisType.IsAssignableTo(CoreClasses.java.lang.Throwable.Wrapper))
 			{
@@ -788,9 +877,31 @@ static partial class MethodHandleUtil
 			return dm.CreateDelegate();
 		}
 
-		private sealed class DynamicCallerID : ikvm.@internal.CallerID
+
+		internal static Delegate CreateMethodHandleInvoke(MemberName mn)
 		{
-			internal static readonly DynamicCallerID Instance = new DynamicCallerID();
+			MethodType type = mn.getMethodType().insertParameterTypes(0, mn.getDeclaringClass());
+			Type targetDelegateType = MethodHandleUtil.GetMemberWrapperDelegateType(type);
+			DynamicMethodBuilder dm = new DynamicMethodBuilder("DirectMethodHandle." + mn.getName() + type, type,
+				typeof(Container<,>).MakeGenericType(typeof(object), typeof(IKVM.Runtime.InvokeCache<>).MakeGenericType(targetDelegateType)), null, null, null, true);
+			dm.Ldarg(0);
+			dm.EmitCheckcast(CoreClasses.java.lang.invoke.MethodHandle.Wrapper);
+			switch (mn.getName())
+			{
+				case "invokeExact":
+					dm.Call(ByteCodeHelperMethods.GetDelegateForInvokeExact.MakeGenericMethod(targetDelegateType));
+					break;
+				case "invoke":
+					dm.LoadValueAddress();
+					dm.Call(ByteCodeHelperMethods.GetDelegateForInvoke.MakeGenericMethod(targetDelegateType));
+					break;
+				case "invokeBasic":
+					dm.Call(ByteCodeHelperMethods.GetDelegateForInvokeBasic.MakeGenericMethod(targetDelegateType));
+					break;
+				default:
+					throw new InvalidOperationException();
+			}
+			dm.Ldarg(0);
 
 			private DynamicCallerID() { }
 
@@ -823,6 +934,7 @@ static partial class MethodHandleUtil
 
 		internal static Delegate CreateMemberName(MethodWrapper mw, MethodType type, bool doDispatch)
 		{
+			FinishTypes(type);
 			TypeWrapper tw = mw.DeclaringType;
 			Type owner = tw.TypeAsBaseType;
 #if NET_4_0
@@ -836,10 +948,10 @@ static partial class MethodHandleUtil
 			}
 #endif
 			DynamicMethodBuilder dm = new DynamicMethodBuilder("MemberName:" + mw.DeclaringType.Name + "::" + mw.Name + mw.Signature, type, null,
-				mw.HasCallerID ? DynamicCallerID.Instance : null, null, owner, true);
+				mw.HasCallerID ? DynamicCallerIDProvider.Instance : null, null, owner, true);
 			for (int i = 0, count = type.parameterCount(); i < count; i++)
 			{
-				if (i == 0 && !mw.IsStatic && (tw.IsGhost || tw.IsNonPrimitiveValueType || tw.IsRemapped))
+				if (i == 0 && !mw.IsStatic && (tw.IsGhost || tw.IsNonPrimitiveValueType || tw.IsRemapped) && (!mw.IsConstructor || tw != CoreClasses.java.lang.String.Wrapper))
 				{
 					if (tw.IsGhost || tw.IsNonPrimitiveValueType)
 					{
@@ -854,7 +966,7 @@ static partial class MethodHandleUtil
 						{
 							dm.EmitCastclass(tw.TypeAsBaseType);
 						}
-						else
+						else if (tw != CoreClasses.cli.System.Object.Wrapper)
 						{
 							dm.EmitCheckcast(tw);
 						}
@@ -987,6 +1099,7 @@ static partial class MethodHandleUtil
 		internal void LoadCallerID()
 		{
 			ilgen.Emit(OpCodes.Ldarg_0);
+			ilgen.Emit(OpCodes.Call, ByteCodeHelperMethods.DynamicCallerID);
 		}
 
 		internal void LoadValueAddress()
@@ -1092,6 +1205,17 @@ static partial class MethodHandleUtil
 		{
 			Console.WriteLine(dm.Name + ", type = " + delegateType);
 			ilgen.DumpMethod();
+		}
+
+		private static void FinishTypes(MethodType type)
+		{
+			// FXBUG(?) DynamicILGenerator doesn't like SymbolType (e.g. an array of a TypeBuilder)
+			// so we have to finish the signature types
+			TypeWrapper.FromClass(type.returnType()).Finish();
+			for (int i = 0; i < type.parameterCount(); i++)
+			{
+				TypeWrapper.FromClass(type.parameterType(i)).Finish();
+			}
 		}
 	}
 

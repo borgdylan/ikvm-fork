@@ -247,14 +247,19 @@ namespace IKVM.Reflection
 			get { return null; }
 		}
 
-		public virtual string __Name
+		internal virtual TypeName TypeName
 		{
 			get { throw new InvalidOperationException(); }
 		}
 
-		public virtual string __Namespace
+		public string __Name
 		{
-			get { throw new InvalidOperationException(); }
+			get { return TypeName.Name; }
+		}
+
+		public string __Namespace
+		{
+			get { return TypeName.Namespace; }
 		}
 
 		public abstract override string Name
@@ -504,6 +509,7 @@ namespace IKVM.Reflection
 			return names.ToArray();
 		}
 
+#if !CORECLR
 		public string GetEnumName(object value)
 		{
 			if (!IsEnum)
@@ -539,6 +545,7 @@ namespace IKVM.Reflection
 			}
 			return null;
 		}
+#endif
 
 		public bool IsEnumDefined(object value)
 		{
@@ -1062,7 +1069,7 @@ namespace IKVM.Reflection
 		{
 			foreach (Type type in __GetDeclaredTypes())
 			{
-				if (type.__Namespace == name.Namespace && type.__Name == name.Name)
+				if (type.TypeName == name)
 				{
 					return type;
 				}
@@ -1074,7 +1081,7 @@ namespace IKVM.Reflection
 		{
 			foreach (Type type in __GetDeclaredTypes())
 			{
-				if (new TypeName(type.__Namespace, type.__Name).ToLowerInvariant() == lowerCaseName)
+				if (type.TypeName.ToLowerInvariant() == lowerCaseName)
 				{
 					return type;
 				}
@@ -1315,6 +1322,7 @@ namespace IKVM.Reflection
 			get { return IsClass && IsImport; }
 		}
 
+#if !CORECLR
 		public bool IsContextful
 		{
 			get { return IsSubclassOf(this.Module.universe.Import(typeof(ContextBoundObject))); }
@@ -1324,6 +1332,7 @@ namespace IKVM.Reflection
 		{
 			get { return IsSubclassOf(this.Module.universe.Import(typeof(MarshalByRefObject))); }
 		}
+#endif
 
 		public virtual bool IsVisible
 		{
@@ -1801,49 +1810,90 @@ namespace IKVM.Reflection
 		public InterfaceMapping GetInterfaceMap(Type interfaceType)
 		{
 			CheckBaked();
-			InterfaceMapping map = new InterfaceMapping();
-			if (!IsDirectlyImplementedInterface(interfaceType))
+			InterfaceMapping map;
+			map.InterfaceMethods = interfaceType.GetMethods(BindingFlags.DeclaredOnly | BindingFlags.Instance | BindingFlags.Public);
+			map.InterfaceType = interfaceType;
+			map.TargetMethods = new MethodInfo[map.InterfaceMethods.Length];
+			map.TargetType = this;
+			FillInInterfaceMethods(interfaceType, map.InterfaceMethods, map.TargetMethods);
+			return map;
+		}
+
+		private void FillInInterfaceMethods(Type interfaceType, MethodInfo[] interfaceMethods, MethodInfo[] targetMethods)
+		{
+			FillInExplicitInterfaceMethods(interfaceMethods, targetMethods);
+			bool direct = IsDirectlyImplementedInterface(interfaceType);
+			if (direct)
 			{
-				Type baseType = this.BaseType;
-				if (baseType == null)
+				FillInImplicitInterfaceMethods(interfaceMethods, targetMethods);
+			}
+			Type baseType = this.BaseType;
+			if (baseType != null)
+			{
+				baseType.FillInInterfaceMethods(interfaceType, interfaceMethods, targetMethods);
+				ReplaceOverriddenMethods(targetMethods);
+			}
+			if (direct)
+			{
+				for (Type type = this.BaseType; type != null && type.Module == Module; type = type.BaseType)
 				{
-					throw new ArgumentException();
-				}
-				else
-				{
-					map = baseType.GetInterfaceMap(interfaceType);
-					ReplaceOverriddenMethods(map.TargetMethods);
+					type.FillInImplicitInterfaceMethods(interfaceMethods, targetMethods);
 				}
 			}
-			else
+		}
+
+		private void FillInImplicitInterfaceMethods(MethodInfo[] interfaceMethods, MethodInfo[] targetMethods)
+		{
+			MethodBase[] methods = null;
+			for (int i = 0; i < targetMethods.Length; i++)
 			{
-				map.InterfaceMethods = interfaceType.GetMethods(BindingFlags.DeclaredOnly | BindingFlags.Instance | BindingFlags.Public);
-				map.InterfaceType = interfaceType;
-				map.TargetMethods = new MethodInfo[map.InterfaceMethods.Length];
-				FillInExplicitInterfaceMethods(map.InterfaceMethods, map.TargetMethods);
-				MethodInfo[] methods = GetMethods(BindingFlags.Instance | BindingFlags.Public);
-				for (int i = 0; i < map.TargetMethods.Length; i++)
+				if (targetMethods[i] == null)
 				{
-					if (map.TargetMethods[i] == null)
+					if (methods == null)
 					{
-						// TODO use proper method resolution (also take into account that no implicit base class implementation is used across assembly boundaries)
-						for (int j = 0; j < methods.Length; j++)
+						methods = __GetDeclaredMethods();
+					}
+					for (int j = 0; j < methods.Length; j++)
+					{
+						if (methods[j].IsVirtual
+							&& methods[j].Name == interfaceMethods[i].Name
+							&& methods[j].MethodSignature.Equals(interfaceMethods[i].MethodSignature))
 						{
-							if (methods[j].Name == map.InterfaceMethods[i].Name
-								&& methods[j].MethodSignature.Equals(map.InterfaceMethods[i].MethodSignature))
-							{
-								map.TargetMethods[i] = methods[j];
-							}
+							targetMethods[i] = (MethodInfo)methods[j];
+							break;
 						}
 					}
 				}
-				for (Type baseType = this.BaseType; baseType != null && interfaceType.IsAssignableFrom(baseType); baseType = baseType.BaseType)
-				{
-					baseType.FillInExplicitInterfaceMethods(map.InterfaceMethods, map.TargetMethods);
-				}
 			}
-			map.TargetType = this;
-			return map;
+		}
+
+		private void ReplaceOverriddenMethods(MethodInfo[] baseMethods)
+		{
+			__MethodImplMap impl = __GetMethodImplMap();
+			for (int i = 0; i < baseMethods.Length; i++)
+			{
+				if (baseMethods[i] != null && !baseMethods[i].IsFinal)
+				{
+					MethodInfo def = baseMethods[i].GetBaseDefinition();
+					for (int j = 0; j < impl.MethodDeclarations.Length; j++)
+					{
+						for (int k = 0; k < impl.MethodDeclarations[j].Length; k++)
+						{
+							if (impl.MethodDeclarations[j][k].GetBaseDefinition() == def)
+							{
+								baseMethods[i] = impl.MethodBodies[j];
+								goto next;
+							}
+						}
+					}
+					MethodInfo candidate = FindMethod(def.Name, def.MethodSignature) as MethodInfo;
+					if (candidate != null && candidate.IsVirtual && !candidate.IsNewSlot)
+					{
+						baseMethods[i] = candidate;
+					}
+				}
+			next: ;
+			}
 		}
 
 		private void ReplaceOverriddenMethods(MethodInfo[] baseMethods)
@@ -2070,9 +2120,8 @@ namespace IKVM.Reflection
 		{
 			if (this.Assembly == this.Universe.Mscorlib
 				|| this.Assembly.GetName().Name.Equals("mscorlib", StringComparison.OrdinalIgnoreCase)
-				|| this.Assembly.GetName().Name.Equals("System.Runtime", StringComparison.OrdinalIgnoreCase)
 				// check if mscorlib forwards the type (.NETCore profile reference mscorlib forwards System.Enum and System.ValueType to System.Runtime.dll)
-				|| this.Universe.Mscorlib.FindType(new TypeName(__Namespace, __Name)) == this)
+				|| this.Universe.Mscorlib.FindType(TypeName) == this)
 			{
 				typeFlags = (typeFlags & ~TypeFlags.PotentialEnumOrValueType) | TypeFlags.EnumOrValueType;
 				return true;
@@ -2692,8 +2741,6 @@ namespace IKVM.Reflection
 
 		internal static Type Make(Type type, Type[] typeArguments, CustomModifiers[] mods)
 		{
-			if (type.Universe.SupressReferenceTypeIdentityConversion)
-				return type.Universe.CanonicalizeType(new GenericTypeInstance(type, typeArguments, mods));
 			bool identity = true;
 			if (type is TypeBuilder || type is BakedType || type.__IsMissing)
 			{

@@ -115,6 +115,12 @@ namespace IKVM.Reflection
 	 *      - Module.__ReadDataFromRVA()
 	 *      - MethodBase.GetMethodBody()
 	 *      - FieldInfo.__GetDataFromRVA()
+	 *
+	 *   DeterministicOutput
+	 *      The generated output file will depend only on the input. In other words,
+	 *      the PE file header time stamp will be set to zero and the module version
+	 *      id will be based on a SHA1 of the contents, instead of a random guid.
+	 *      This option can not be used in combination with PDB file generation.
 	 */
 
 	[Flags]
@@ -129,7 +135,7 @@ namespace IKVM.Reflection
 		ResolveMissingMembers = 32,
 		DisableWindowsRuntimeProjection = 64,
 		DecodeVersionInfoAttributeBlobs = 128,
-		SupressReferenceTypeIdentityConversion = 1 << 20
+		DeterministicOutput = 256,
 	}
 
 	public sealed class Universe : IDisposable
@@ -172,26 +178,16 @@ namespace IKVM.Reflection
 		private Type typeof_System_DateTime;
 		private Type typeof_System_DBNull;
 		private Type typeof_System_Decimal;
-		private Type typeof_System_NonSerializedAttribute;
-		private Type typeof_System_SerializableAttribute;
 		private Type typeof_System_AttributeUsageAttribute;
 		private Type typeof_System_Runtime_InteropServices_DllImportAttribute;
 		private Type typeof_System_Runtime_InteropServices_FieldOffsetAttribute;
-		private Type typeof_System_Runtime_InteropServices_InAttribute;
 		private Type typeof_System_Runtime_InteropServices_MarshalAsAttribute;
 		private Type typeof_System_Runtime_InteropServices_UnmanagedType;
 		private Type typeof_System_Runtime_InteropServices_VarEnum;
-		private Type typeof_System_Runtime_InteropServices_OutAttribute;
-		private Type typeof_System_Runtime_InteropServices_StructLayoutAttribute;
-		private Type typeof_System_Runtime_InteropServices_OptionalAttribute;
 		private Type typeof_System_Runtime_InteropServices_PreserveSigAttribute;
 		private Type typeof_System_Runtime_InteropServices_CallingConvention;
 		private Type typeof_System_Runtime_InteropServices_CharSet;
-		private Type typeof_System_Runtime_InteropServices_ComImportAttribute;
 		private Type typeof_System_Runtime_CompilerServices_DecimalConstantAttribute;
-		private Type typeof_System_Runtime_CompilerServices_SpecialNameAttribute;
-		private Type typeof_System_Runtime_CompilerServices_MethodImplAttribute;
-		private Type typeof_System_Security_SuppressUnmanagedCodeSecurityAttribute;
 		private Type typeof_System_Reflection_AssemblyCopyrightAttribute;
 		private Type typeof_System_Reflection_AssemblyTrademarkAttribute;
 		private Type typeof_System_Reflection_AssemblyProductAttribute;
@@ -391,16 +387,6 @@ namespace IKVM.Reflection
 			get { return typeof_System_Decimal ?? (typeof_System_Decimal = ImportMscorlibType("System", "Decimal")); }
 		}
 
-		internal Type System_NonSerializedAttribute
-		{
-			get { return typeof_System_NonSerializedAttribute ?? (typeof_System_NonSerializedAttribute = ImportMscorlibType("System", "NonSerializedAttribute")); }
-		}
-
-		internal Type System_SerializableAttribute
-		{
-			get { return typeof_System_SerializableAttribute ?? (typeof_System_SerializableAttribute = ImportMscorlibType("System", "SerializableAttribute")); }
-		}
-
 		internal Type System_AttributeUsageAttribute
 		{
 			get { return typeof_System_AttributeUsageAttribute ?? (typeof_System_AttributeUsageAttribute = ImportMscorlibType("System", "AttributeUsageAttribute")); }
@@ -414,11 +400,6 @@ namespace IKVM.Reflection
 		internal Type System_Runtime_InteropServices_FieldOffsetAttribute
 		{
 			get { return typeof_System_Runtime_InteropServices_FieldOffsetAttribute ?? (typeof_System_Runtime_InteropServices_FieldOffsetAttribute = ImportMscorlibType("System.Runtime.InteropServices", "FieldOffsetAttribute")); }
-		}
-
-		internal Type System_Runtime_InteropServices_InAttribute
-		{
-			get { return typeof_System_Runtime_InteropServices_InAttribute ?? (typeof_System_Runtime_InteropServices_InAttribute = ImportMscorlibType("System.Runtime.InteropServices", "InAttribute")); }
 		}
 
 		internal Type System_Runtime_InteropServices_MarshalAsAttribute
@@ -436,21 +417,6 @@ namespace IKVM.Reflection
 			get { return typeof_System_Runtime_InteropServices_VarEnum ?? (typeof_System_Runtime_InteropServices_VarEnum = ImportMscorlibType("System.Runtime.InteropServices", "VarEnum")); }
 		}
 
-		internal Type System_Runtime_InteropServices_OutAttribute
-		{
-			get { return typeof_System_Runtime_InteropServices_OutAttribute ?? (typeof_System_Runtime_InteropServices_OutAttribute = ImportMscorlibType("System.Runtime.InteropServices", "OutAttribute")); }
-		}
-
-		internal Type System_Runtime_InteropServices_StructLayoutAttribute
-		{
-			get { return typeof_System_Runtime_InteropServices_StructLayoutAttribute ?? (typeof_System_Runtime_InteropServices_StructLayoutAttribute = ImportMscorlibType("System.Runtime.InteropServices", "StructLayoutAttribute")); }
-		}
-
-		internal Type System_Runtime_InteropServices_OptionalAttribute
-		{
-			get { return typeof_System_Runtime_InteropServices_OptionalAttribute ?? (typeof_System_Runtime_InteropServices_OptionalAttribute = ImportMscorlibType("System.Runtime.InteropServices", "OptionalAttribute")); }
-		}
-
 		internal Type System_Runtime_InteropServices_PreserveSigAttribute
 		{
 			get { return typeof_System_Runtime_InteropServices_PreserveSigAttribute ?? (typeof_System_Runtime_InteropServices_PreserveSigAttribute = ImportMscorlibType("System.Runtime.InteropServices", "PreserveSigAttribute")); }
@@ -466,29 +432,9 @@ namespace IKVM.Reflection
 			get { return typeof_System_Runtime_InteropServices_CharSet ?? (typeof_System_Runtime_InteropServices_CharSet = ImportMscorlibType("System.Runtime.InteropServices", "CharSet")); }
 		}
 
-		internal Type System_Runtime_InteropServices_ComImportAttribute
-		{
-			get { return typeof_System_Runtime_InteropServices_ComImportAttribute ?? (typeof_System_Runtime_InteropServices_ComImportAttribute = ImportMscorlibType("System.Runtime.InteropServices", "ComImportAttribute")); }
-		}
-
 		internal Type System_Runtime_CompilerServices_DecimalConstantAttribute
 		{
 			get { return typeof_System_Runtime_CompilerServices_DecimalConstantAttribute ?? (typeof_System_Runtime_CompilerServices_DecimalConstantAttribute = ImportMscorlibType("System.Runtime.CompilerServices", "DecimalConstantAttribute")); }
-		}
-
-		internal Type System_Runtime_CompilerServices_SpecialNameAttribute
-		{
-			get { return typeof_System_Runtime_CompilerServices_SpecialNameAttribute ?? (typeof_System_Runtime_CompilerServices_SpecialNameAttribute = ImportMscorlibType("System.Runtime.CompilerServices", "SpecialNameAttribute")); }
-		}
-
-		internal Type System_Runtime_CompilerServices_MethodImplAttribute
-		{
-			get { return typeof_System_Runtime_CompilerServices_MethodImplAttribute ?? (typeof_System_Runtime_CompilerServices_MethodImplAttribute = ImportMscorlibType("System.Runtime.CompilerServices", "MethodImplAttribute")); }
-		}
-
-		internal Type System_Security_SuppressUnmanagedCodeSecurityAttribute
-		{
-			get { return typeof_System_Security_SuppressUnmanagedCodeSecurityAttribute ?? (typeof_System_Security_SuppressUnmanagedCodeSecurityAttribute = ImportMscorlibType("System.Security", "SuppressUnmanagedCodeSecurityAttribute")); }
 		}
 
 		internal Type System_Reflection_AssemblyCopyrightAttribute
@@ -818,6 +764,9 @@ namespace IKVM.Reflection
 			{
 				return asm;
 			}
+#if CORECLR
+			return null;
+#else
 			string fileName;
 			if (throwOnError)
 			{
@@ -848,6 +797,7 @@ namespace IKVM.Reflection
 				}
 			}
 			return LoadFile(fileName);
+#endif
 		}
 
 		public Type GetType(string assemblyQualifiedTypeName)
@@ -920,9 +870,13 @@ namespace IKVM.Reflection
 		// this is equivalent to the Fusion CompareAssemblyIdentity API
 		public bool CompareAssemblyIdentity(string assemblyIdentity1, bool unified1, string assemblyIdentity2, bool unified2, out AssemblyComparisonResult result)
 		{
+#if CORECLR
+			return Fusion.CompareAssemblyIdentityPure(assemblyIdentity1, unified1, assemblyIdentity2, unified2, out result);
+#else
 			return useNativeFusion
 				? Fusion.CompareAssemblyIdentityNative(assemblyIdentity1, unified1, assemblyIdentity2, unified2, out result)
 				: Fusion.CompareAssemblyIdentityPure(assemblyIdentity1, unified1, assemblyIdentity2, unified2, out result);
+#endif
 		}
 
 		public AssemblyBuilder DefineDynamicAssembly(AssemblyName name, AssemblyBuilderAccess access)
@@ -940,6 +894,7 @@ namespace IKVM.Reflection
 			return new AssemblyBuilder(this, name, dir, null);
 		}
 
+#if !CORECLR
 #if NET_4_0
 		[Obsolete]
 #endif
@@ -959,6 +914,7 @@ namespace IKVM.Reflection
 				ab.__AddDeclarativeSecurity(CustomAttributeBuilder.__FromBlob(CustomAttributeBuilder.LegacyPermissionSet, (int)action, Encoding.Unicode.GetBytes(permissionSet.ToXml().ToString())));
 			}
 		}
+#endif
 
 		internal void RegisterDynamicAssembly(AssemblyBuilder asm)
 		{
@@ -1103,7 +1059,11 @@ namespace IKVM.Reflection
 				}
 				return method;
 			}
+#if CORECLR
+			throw new MissingMethodException(declaringType.ToString() + "." + name);
+#else
 			throw new MissingMethodException(declaringType.ToString(), name);
+#endif
 		}
 
 		internal FieldInfo GetMissingFieldOrThrow(Module requester, Type declaringType, string name, FieldSignature signature)
@@ -1117,7 +1077,11 @@ namespace IKVM.Reflection
 				}
 				return field;
 			}
+#if CORECLR
+			throw new MissingFieldException(declaringType.ToString() + "." + name);
+#else
 			throw new MissingFieldException(declaringType.ToString(), name);
+#endif
 		}
 
 		internal PropertyInfo GetMissingPropertyOrThrow(Module requester, Type declaringType, string name, PropertySignature propertySignature)
@@ -1133,7 +1097,11 @@ namespace IKVM.Reflection
 				}
 				return property;
 			}
+#if CORECLR
+			throw new System.MissingMemberException(declaringType.ToString() + "." + name);
+#else
 			throw new System.MissingMemberException(declaringType.ToString(), name);
+#endif
 		}
 
 		internal Type CanonicalizeType(Type type)
@@ -1224,9 +1192,9 @@ namespace IKVM.Reflection
 			get { return (options & UniverseOptions.DecodeVersionInfoAttributeBlobs) != 0; }
 		}
 
-		internal bool SupressReferenceTypeIdentityConversion
+		internal bool Deterministic
 		{
-			get { return (options & UniverseOptions.SupressReferenceTypeIdentityConversion) != 0; }
+			get { return (options & UniverseOptions.DeterministicOutput) != 0; }
 		}
 	}
 }
