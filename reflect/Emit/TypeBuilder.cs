@@ -144,6 +144,11 @@ namespace IKVM.Reflection.Emit
 			throw new NotImplementedException();
 		}
 
+		public override CustomModifiers[] __GetGenericParameterConstraintCustomModifiers()
+		{
+			throw new NotImplementedException();
+		}
+
 		public override GenericParameterAttributes GenericParameterAttributes
 		{
 			get
