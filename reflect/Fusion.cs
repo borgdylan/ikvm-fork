@@ -221,13 +221,15 @@ namespace IKVM.Reflection
 			bool fxUnified = false;
 
 			// build and revision numbers are ignored
-			bool fxVersionMatch = version1.Major == version2.Major && version1.Minor == version2.Minor;
+			bool fxVersionMatch = version1.Major == version2.Major;
+			// && version1.Minor == version2.Minor;
 			if (IsFrameworkAssembly(name1))
 			{
 				fxUnified |= !fxVersionMatch;
 				version1 = FrameworkVersion;
 			}
-			if (IsFrameworkAssembly(name2) && version2 < FrameworkVersionNext)
+			// && version2 < FrameworkVersionNext
+			if (IsFrameworkAssembly(name2))
 			{
 				fxUnified |= !fxVersionMatch;
 				version2 = FrameworkVersion;
